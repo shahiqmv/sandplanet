@@ -123,7 +123,7 @@ class CostHeadMasterTests(TestCase):
 
     def test_an_overhead_head_leaves_the_project_cost_report(self):
         materials = self.head("MATERIALS")
-        rent = CostHead.objects.create(code="RENT", name="Office Rent")
+        rent = CostHead.objects.create(code="OFFICE_RENT", name="Office Rent")
         costing.post(site=self.site, cost_head=materials, state="INCURRED",
                      source="PR", amount=Decimal("100000"))
         costing.post(site=self.site, cost_head=rent, state="INCURRED",
@@ -150,7 +150,7 @@ class CostHeadMasterTests(TestCase):
     def test_the_money_taken_out_is_counted_somewhere(self):
         """An overhead leaves every project report, so without this it would
         be money that left the company and appeared nowhere."""
-        rent = CostHead.objects.create(code="RENT", name="Office Rent",
+        rent = CostHead.objects.create(code="OFFICE_RENT", name="Office Rent",
                                        overhead=True)
         costing.post(site=self.site, cost_head=rent, state="PAID",
                      source="PR", amount=Decimal("40000"))

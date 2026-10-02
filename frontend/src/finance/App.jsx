@@ -24,6 +24,7 @@ import ImportPage from "./ImportPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
 import PostingPage from "./PostingPage.jsx";
 import ReconcilePage from "./ReconcilePage.jsx";
+import RentalsPage from "./RentalsPage.jsx";
 import { LedgerPage, TrialBalancePage } from "./ReportsPages.jsx";
 import { fmtDate, money } from "./shared.jsx";
 
@@ -54,6 +55,7 @@ const SECTIONS = [
     ["vouchers", "Payment vouchers", PAYERS],
     ["payables", "Payables", PAYERS],
     ["import-payments", "International payables", PAYERS],
+    ["rentals", "Rentals", BOOK_ROLES],
     ["receivables", "Receivables", RECEIVABLE]]],
   ["books", "Books", [
     ["accounts", "Chart of accounts", BOOK_ROLES],
@@ -266,7 +268,8 @@ export default function App() {
   const active = sections.find(([, , pages]) => pages.some(([k]) => k === page)) || sections[0];
   const canWrite = ["FINANCE", "ADMIN"].includes(me.role);
   // A document opens where it lives — in Projects, in its own tab.
-  const openDoc = (ref) => window.open(`${planetUrl}#/open/${encodeURIComponent(ref)}`, "_blank", "noopener");
+  const openDoc = (ref) => (/^RENT-/i.test(ref || "") ? go("rentals", ref)
+    : window.open(`${planetUrl}#/open/${encodeURIComponent(ref)}`, "_blank", "noopener"));
 
   return (
     <div className="t-app f-app">
@@ -305,6 +308,7 @@ export default function App() {
         )}
         {page === "vouchers" && <PaymentVouchersPage me={me} onOpenDoc={openDoc} openRef={sub} key={sub || "list"} />}
         {page === "payables" && <PayablesPage me={me} onOpenDoc={openDoc} />}
+        {page === "rentals" && <RentalsPage sub={sub} go={go} key={sub || "list"} />}
         {page === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
         {page === "receivables" && <ReceivablesPage me={me} />}
         {page === "banking" && <BankingPage sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "home"} />}

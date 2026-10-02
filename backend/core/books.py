@@ -87,7 +87,7 @@ def meta():
 # books as each hand-entered form, and what to tell the person keying it
 _GUARD = {
     "EXPENSE": (("purchases", "payment_requests", "petty_cash", "payroll",
-                 "subcontract", "imports"),
+                 "subcontract", "rent", "imports"),
                 "payments made on a voucher in Planet post to the books by "
                 "themselves. Enter here only what did not go through a "
                 "voucher — a bank charge, say"),

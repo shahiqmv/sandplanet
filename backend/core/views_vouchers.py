@@ -92,10 +92,14 @@ def _line_info(line):
         if pay is not None:
             purpose = (f"Salary {pay.run.year}-{pay.run.month:02d} · "
                        f"{pay.employee.emp_no}")
+        elif p.rent_due_id:
+            purpose = f"{p.terms} · due {p.due_date or '—'}"
         else:
             purpose = (f"Credit payable · terms {p.terms or '—'} · due "
                        f"{p.due_date or '—'}")
-        return {"line_id": line.id, "ref": p.document.ref,
+        return {"line_id": line.id, "ref": p.ref_label,
+                "rent_contract": (p.rent_due.contract_id
+                                  if p.rent_due_id else None),
                 "doc_type": "PAYABLE",
                 "site_code": p.site.code if p.site_id else "HO",
                 "amount": line.amount, "currency": line.currency,
@@ -158,6 +162,7 @@ def _voucher_info(pv):
         "source_milestone__order__document",
         "source_milestone__order__supplier",
         "source_payable__document", "source_payable__site",
+        "source_payable__rent_due__contract",
         "source_payable__payroll_line__employee",
         "source_payable__payroll_line__run").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
@@ -238,14 +243,16 @@ def _payable_row(p, today):
     line = p.payroll_line if p.payroll_line_id else None
     row = {
         "kind": "PAYABLE", "payable_id": p.id,
-        "ref": p.document.ref, "doc_type": "PAYABLE",
+        "ref": p.ref_label, "doc_type": "PAYABLE",
+        "rent_contract": p.rent_due.contract_id if p.rent_due_id else None,
         "site_code": p.site.code if p.site_id else "HO",
         "doc_date": p.due_date, "due_date": p.due_date,
         "overdue": bool(p.due_date and p.due_date < today),
         "amount": p.amount, "currency": vouchers.payable_currency(p),
         "payee": p.vendor, "group": "SALARY" if line else "CREDIT",
-        "cost_head": "Salary" if line else "Credit payable",
-        "purpose": f"Terms {p.terms or '—'}"}
+        "cost_head": ("Salary" if line else "Rent" if p.rent_due_id
+                      else "Credit payable"),
+        "purpose": p.terms if p.rent_due_id else f"Terms {p.terms or '—'}"}
     if line is None:
         return row
     emp = line.employee
@@ -309,12 +316,13 @@ def payables(request):
         # kept alongside for traceability (owner 2026-08-22).
         po_ref = (p.document_line.po_ref or "").strip() \
             if p.document_line_id else ""
-        ref = po_ref or p.document.ref
+        ref = po_ref or p.ref_label
         if q and q not in (p.vendor or "").lower() \
-                and q not in ref.lower() and q not in p.document.ref.lower():
+                and q not in ref.lower() and q not in p.ref_label.lower() \
+                and q not in (p.terms or "").lower():
             continue
         row = _payable_row(p, today)
-        row.update({"ref": ref, "po_ref": po_ref, "pr_ref": p.document.ref})
+        row.update({"ref": ref, "po_ref": po_ref, "pr_ref": p.ref_label})
         rows.append(row)
     total = sum((Decimal(str(r["amount"] or 0)) for r in rows), Decimal("0"))
     overdue = sum(1 for r in rows if r["overdue"])
@@ -357,7 +365,7 @@ def payable_due_date(request, pk):
     p.save(update_fields=["due_date", "terms"])
     audit("payable", p.id, "PAYABLE_DUE_DATE_CHANGED", actor=request.user,
           detail={"vendor": p.vendor, "from": str(was), "to": str(new_due),
-                  "reason": reason, "document": p.document.ref})
+                  "reason": reason, "document": p.ref_label})
     return Response({"payable_id": p.id, "due_date": p.due_date,
                      "terms": p.terms})
 
@@ -511,13 +519,14 @@ def finance_dashboard(request):
             "doc_date", "ref"):
         plines = list(pv.voucher_lines.select_related(
             "source_document", "source_payable__document",
+            "source_payable__rent_due__contract",
             "source_milestone__order__document").all())
         holds = []
         for ln in plines:
             if ln.source_document_id:
                 holds.append(ln.source_document.ref)
             elif ln.source_payable_id:
-                holds.append(ln.source_payable.document.ref)
+                holds.append(ln.source_payable.ref_label)
             elif ln.source_milestone_id:
                 holds.append(ln.source_milestone.order.document.ref)
         in_flight.append({

@@ -344,7 +344,7 @@ class ControlTests(PostingBase):
 
     def test_nothing_posts_until_a_rule_is_switched_on(self):
         d = self.c.get("/api/v1/ledger/posting").data
-        self.assertEqual(len(d["rules"]), 10)
+        self.assertEqual(len(d["rules"]), 11)
         self.assertFalse(any(r["on"] for r in d["rules"]))
         call_command("post_books", stdout=open("/dev/null", "w"))
         self.assertEqual(JournalEntry.objects.count(), 0)

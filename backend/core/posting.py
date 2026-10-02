@@ -80,6 +80,10 @@ RULES = [
      "When a valuation is authorised: debit subcontract cost and input GST; "
      "credit subcontractors payable. When it is paid: debit the payable; "
      "credit the bank."),
+    ("rent", "P_RENT", "Rent",
+     "When a period's rent is raised on a rental: debit the rent's cost (by "
+     "site) and input GST; credit the landlord (payable). When it is paid: "
+     "debit the payable; credit the bank account on the voucher."),
     ("imports", "P_IPR", "Import payments and store issues",
      "When a telegraphic transfer is paid on an import order: debit goods "
      "in transit, with the exchange difference to exchange gain or loss; "
@@ -98,7 +102,7 @@ HEAD_DEFAULT = {
     "IMPORT_CHARGES": "GOODS_IN_TRANSIT", "TRD_COGS": "COS_TRADING",
     "TRANSPORT": "#5160", "PLANT": "#5150", "SITE_OVERHEADS": "#5180",
     "OTHER": "#5180", "PERMITS": "#6240", "RECRUITMENT": "#6150",
-    "INSURANCE_BONDS": "#6210", "TRD_FREIGHT": "#5120",
+    "INSURANCE_BONDS": "#6210", "TRD_FREIGHT": "#5120", "RENT": "#6220",
 }
 # Accounts a rule needs that the standard chart did not have: added, under
 # a free code, the first time they are wanted.
@@ -833,6 +837,45 @@ def _subcontract(ctx, hold):
             hold(what, str(h), key)
 
 
+def _rent(ctx, hold):
+    ap = ctx.account("AP_TRADE")
+    groups = OrderedDict()
+    for r in (_cost_rows(["RENT"], ["INCURRED", "PAID"], ctx.start)
+              .select_related("rent_due", "rent_due__contract")):
+        groups.setdefault((r.state, r.rent_due_id, r.posted_on), []).append(r)
+    for (state, due_id, on), rows in groups.items():
+        due = rows[0].rent_due
+        c = due.contract if due else None
+        ref = c.ref if c else "RENT"
+        what = (f"Rent {ref}, period from {due.period_start:%d %b %Y}"
+                if due else "Rent")
+        if state == "PAID":
+            what = "Payment of " + what[0].lower() + what[1:]
+        key = f"{'RNI' if state == 'INCURRED' else 'RNP'}:{due_id}:{on}"
+        try:
+            who = c.landlord if c else ""
+            e = Entry(key, on, f"{what} · {c.title}" if c else what, ref,
+                      due_id)
+            for r in rows:
+                amt = ctx.mvr(r.amount, r.currency)
+                if state == "INCURRED":
+                    e.add(ctx.head(r.cost_head), amt, site=r.site,
+                          cost_head=r.cost_head, party=who)
+                    e.add(ap, -amt, party=who)
+                else:
+                    e.add(ap, amt, party=who)
+            if state == "PAID":
+                paid = e.out_of_balance()
+                if paid:
+                    payable = getattr(due, "payable", None)
+                    e.bank(_voucher_bank(ctx, what, payable=payable), -paid,
+                           due.currency, -q2(due.total), ctx, party=who)
+            if e.lines():
+                yield e
+        except Hold as h:
+            hold(what, str(h), key)
+
+
 def _imports(ctx, hold):
     git = ctx.account("GOODS_IN_TRANSIT")
     groups = OrderedDict()
@@ -892,7 +935,7 @@ COLLECT = {
     "trading_invoices": _trading_invoices, "receipts": _receipts,
     "purchases": _purchases, "payment_requests": _payment_requests,
     "petty_cash": _petty_cash, "payroll": _payroll,
-    "subcontract": _subcontract, "imports": _imports,
+    "subcontract": _subcontract, "rent": _rent, "imports": _imports,
 }
 
 

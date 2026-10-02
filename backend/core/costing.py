@@ -47,7 +47,7 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
          ipr_line=None, ipr_milestone=None, is_stock_pool=False,
          staff_year=None, staff_month=None,
          work_package="", reversal_of=None, actor=None, currency="MVR",
-         book="PROJECT", vehicle=None):
+         book="PROJECT", vehicle=None, rent_due=None):
     """Append one cost posting. The single low-level writer — callers are
     the typed trigger functions below, never views directly.
 
@@ -63,7 +63,7 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
         posted_on=posted_on or date.today(),
         document=document, document_line=document_line,
         petty_cash_entry=petty_cash_entry, ipr_line=ipr_line,
-        ipr_milestone=ipr_milestone,
+        ipr_milestone=ipr_milestone, rent_due=rent_due,
         is_stock_pool=is_stock_pool, staff_year=staff_year,
         staff_month=staff_month, work_package=work_package,
         reversal_of=reversal_of, created_by=actor,

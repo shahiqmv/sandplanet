@@ -108,11 +108,12 @@
   <li><a href="#s8"><span class="n">8</span>Import from Excel</a></li>
   <li><a href="#s9"><span class="n">9</span>Journal entries</a></li>
   <li><a href="#s10"><span class="n">10</span>Posting from Planet</a></li>
-  <li><a href="#s11"><span class="n">11</span>Reports</a></li>
-  <li><a href="#s12"><span class="n">12</span>GST: treatments, the return and MIRA's statements</a></li>
-  <li><a href="#s13"><span class="n">13</span>Month-end checklist</a></li>
-  <li><a href="#s14"><span class="n">14</span>Messages you may see, and what to do</a></li>
-  <li><a href="#s15"><span class="n">15</span>What is not in the app yet</a></li>
+  <li><a href="#s11"><span class="n">11</span>Rentals: what the company rents, and its dues</a></li>
+  <li><a href="#s12"><span class="n">12</span>Reports</a></li>
+  <li><a href="#s13"><span class="n">13</span>GST: treatments, the return and MIRA's statements</a></li>
+  <li><a href="#s14"><span class="n">14</span>Month-end checklist</a></li>
+  <li><a href="#s15"><span class="n">15</span>Messages you may see, and what to do</a></li>
+  <li><a href="#s16"><span class="n">16</span>What is not in the app yet</a></li>
 </ul>
 
 <div class="box" style="margin-top: 14pt;">
@@ -135,7 +136,7 @@
   <tr><td><b>Banking</b></td><td>Accounts · Reconcile</td><td>Money paid out, received and moved between the company's accounts; each account's register; agreeing an account to its bank statement.</td></tr>
   <tr><td><b>Purchases</b></td><td>Bills · Suppliers · What we owe</td><td>Bills to be paid later, paying them, each supplier's account, and what is owed by age.</td></tr>
   <tr><td><b>Sales</b></td><td>Invoices · Customers · What we are owed</td><td>Invoices to be collected later, receiving payment, each customer's account, and what is owed to us by age.</td></tr>
-  <tr><td><b>Operations</b></td><td>Dashboard · Payment vouchers · Payables · International payables · Receivables</td><td>The pages Finance already used in Planet: building and paying vouchers, supplier dues from purchase orders, import payments, client invoices and statements. They work exactly as before.</td></tr>
+  <tr><td><b>Operations</b></td><td>Dashboard · Payment vouchers · Payables · International payables · Rentals · Receivables</td><td>The pages Finance already used in Planet: building and paying vouchers, supplier dues from purchase orders, import payments, client invoices and statements. They work exactly as before. <b>Rentals</b> is new (section 11).</td></tr>
   <tr><td><b>Books</b></td><td>Chart of accounts · Journal entries · Import from Excel</td><td>The accounts themselves, entries made by the accountant, and bringing in a spreadsheet of transactions.</td></tr>
   <tr><td><b>Reports</b></td><td>Profit and loss · Balance sheet · GST return · Trial balance · Account ledger</td><td>The statements, each with Excel.</td></tr>
   <tr><td><b>Setup</b></td><td>Posting from Planet · Cost heads · Books settings</td><td>Which of Planet's own events post to the books; closing a period.</td></tr>
@@ -263,7 +264,7 @@
 <ol class="steps">
   <li><b class="ui">+ Expense</b>. Choose the account it was <b class="ui">Paid from</b>, the date, who was paid, and the cheque or transfer reference.</li>
   <li>On each line pick <b>what it was for</b> — type the account's code or name — a description and the amount. One payment can have several lines. Choose a <b class="ui">Site</b> on a line if the cost belongs to a site.</li>
-  <li>Choose the <b>GST</b> treatment of each line (section 12). Say whether the amounts you typed are before GST or include it; the app works out the rest. The GST figure can be corrected to match the invoice.</li>
+  <li>Choose the <b>GST</b> treatment of each line (section 13). Say whether the amounts you typed are before GST or include it; the app works out the rest. The GST figure can be corrected to match the invoice.</li>
   <li>If GST was charged and you hold the supplier's tax invoice, enter the <b class="ui">Supplier TIN</b> and <b class="ui">Tax invoice no.</b> and tick the box. Without the tick the GST cannot be claimed and is added to the cost.</li>
   <li>Attach the bill or receipt, add a memo, <b class="ui">Save expense</b>.</li>
 </ol>
@@ -487,7 +488,7 @@
 
 <h2>10.1 How it works</h2>
 <ul>
-  <li>There are ten rules. <b>Each is off until it is switched on.</b></li>
+  <li>There are eleven rules. <b>Each is off until it is switched on.</b></li>
   <li><b class="ui">Preview</b> (one rule) or <b class="ui">Preview all</b> shows exactly what would be posted over Planet's history — the count, the total, sample entries with their debits and credits, and anything held back. A preview only reads; nothing is saved.</li>
   <li><b class="ui">Switch on</b> posts everything the rule covers from the “post from” date, and from then on the books are brought into step every twenty minutes. <b class="ui">Post now</b> does it at once.</li>
   <li>Each event has one entry. A new event is posted; one that changed in Planet has its entry reversed and posted afresh; one that was deleted or voided is reversed. Running it again changes nothing.</li>
@@ -506,6 +507,7 @@
   <tr><td>Petty cash spending</td><td>The PM approves the entries.</td><td>Debit each cost; credit petty cash.</td></tr>
   <tr><td>Payroll</td><td>A payroll run is locked.</td><td>Debit wages at gross, by site; credit wages payable. Advances recovered and fines come out of wages payable.</td></tr>
   <tr><td>Subcontract valuations</td><td>A valuation is authorised; then paid.</td><td>Debit subcontract cost and input GST; credit subcontractors payable. Paid: debit the payable; credit the bank.</td></tr>
+  <tr><td>Rent</td><td>A period's rent is raised on a rental (section 11); then paid.</td><td>Debit the rent's cost (by site) and input GST; credit the landlord. Paid: debit the payable; credit the bank on the voucher.</td></tr>
   <tr><td>Import payments and store issues</td><td>A telegraphic transfer is paid; imported goods reach a site.</td><td>Debit goods in transit, with the exchange difference; credit the bank. On issue: debit materials; credit stock.</td></tr>
 </table>
 <div class="box">
@@ -537,7 +539,35 @@
 </div>
 
 <!-- ================================================================== -->
-<h1 id="s11"><span class="n">11</span>Reports</h1>
+<h1 id="s11"><span class="n">11</span>Rentals</h1>
+<p class="lead"><b class="ui">Operations → Rentals</b> is the register of what the company rents and pays for period after period — offices, staff accommodation, warehouses, yards, vehicles and equipment on hire. Each period's rent is raised by itself and lands on Payables, ready for a payment voucher.</p>
+
+<h2>11.1 Adding a rental</h2>
+<ol class="steps">
+  <li><b class="ui">+ Rental</b>. Say <b>what is rented</b>, its kind, the <b>landlord</b>, where the rent is paid to, and the <b>site that bears the cost</b>.</li>
+  <li>The rent per period before GST, the currency (MVR or USD), how often it is paid — monthly, quarterly, half-yearly, yearly — and whether it falls due <b>in advance</b> (as the period starts) or <b>in arrears</b> (as it ends). A day of the month can be fixed.</li>
+  <li><b class="ui">Rental starts</b>, and <b class="ui">Ends</b> if the agreement has an end. A last part-period pays for its days only.</li>
+  <li><b class="ui">Raise dues from</b>: left blank, dues start from today — earlier periods are taken as already paid outside Planet. Give an earlier date to have those periods raised too.</li>
+  <li>Tick <b class="ui">The landlord charges GST</b> if it does. Add any <b class="ui">agreed changes of rent</b> with the date each applies from. Attach the agreement. <b class="ui">Save rental</b>.</li>
+</ol>
+<p>The cost head decides where the rent shows in Planet's cost reports and, through Posting from Planet, in the books; it starts as <b>Rent</b>.</p>
+
+<h2>11.2 How dues are raised and paid</h2>
+<ul>
+  <li>Every morning Planet raises each period that has come up — by default seven days before its due date. <b class="ui">Raise dues now</b> does the same at once; on a rental, <b class="ui">Raise … now</b> brings the next period forward.</li>
+  <li>A due appears on <b class="ui">Operations → Payables</b> under the rental's reference (RENT-001) with the period it is for. Tick it, <b class="ui">Create voucher</b>, and it follows the usual path: submitted, approved by the signatory, paid, settled.</li>
+  <li>The rental's own page lists every due with its status — due, overdue, paid — and the voucher it is on.</li>
+</ul>
+<h2>11.3 Changes</h2>
+<table>
+  <tr><th style="width: 34%">To</th><th>Do</th></tr>
+  <tr><td>Change the rent or the terms</td><td>Edit the rental and save. Dues already raised are not touched.</td></tr>
+  <tr><td>Take back a due raised wrongly</td><td><b class="ui">Cancel…</b> on the due, with the reason. If it is on a voucher, take it off the voucher first. A cancelled period is not raised again by itself; use <b class="ui">Raise again</b> once the rental is corrected.</td></tr>
+  <tr><td>End a rental</td><td>Set its end date, or its status to <b>Ended</b>. No more dues are raised; dues already raised stay to be paid or cancelled.</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h1 id="s12"><span class="n">12</span>Reports</h1>
 <p class="lead">All reports use posted entries only, are in rufiyaa, and have <b class="ui">⬇ Excel</b>. Click any figure to see the entries behind it.</p>
 <table>
   <tr><th style="width: 24%">Report</th><th>What it shows</th></tr>
@@ -545,7 +575,7 @@
   <tr><td><b>Balance sheet</b></td><td>Assets, liabilities and equity as at any date. Profit not yet moved to retained earnings is shown on its own lines under equity, so the sheet balances on any date; a tick confirms it.</td></tr>
   <tr><td><b>Trial balance</b></td><td>Every account with its opening balance, the period's movement and its closing balance, and whether the books are in balance.</td></tr>
   <tr><td><b>Account ledger</b></td><td>One account, line by line, with a running balance.</td></tr>
-  <tr><td><b>GST return</b></td><td>Section 12.</td></tr>
+  <tr><td><b>GST return</b></td><td>Section 13.</td></tr>
   <tr><td><b>What we owe / What we are owed</b></td><td>Under Purchases and Sales: open bills and invoices by age, tied to the control accounts.</td></tr>
   <tr><td><b>Register</b></td><td>Under Banking: each bank and cash account as its statement reads.</td></tr>
   <tr><td><b>Reconciliation</b></td><td>Under Banking → Reconcile: each finished statement with its outstanding items.</td></tr>
@@ -553,10 +583,10 @@
 <p>The auditors can be given the trial balance, the account ledgers and the journal list in Excel, and read access through a Finance sign-in.</p>
 
 <!-- ================================================================== -->
-<h1 id="s12"><span class="n">12</span>GST</h1>
+<h1 id="s13"><span class="n">13</span>GST</h1>
 <p class="lead">The books follow the Maldives Inland Revenue Authority's published rules. The return page is laid out on MIRA's own forms: MIRA 205 (GST Return — General Goods and Services), the Output Tax Statement and the Input Tax Statement, version 25.1.</p>
 
-<h2>12.1 The GST treatment of a line</h2>
+<h2>13.1 The GST treatment of a line</h2>
 <table>
   <tr><th style="width: 20%">Treatment</th><th>Use it for</th><th style="width: 33%">Effect</th></tr>
   <tr><td>Standard rated</td><td>Goods and services taxed at the general rate (the company setting, 8%).</td><td>GST is added. On a sale it goes to GST payable; on a purchase with a tax invoice, to input tax.</td></tr>
@@ -575,7 +605,7 @@
   </ul>
 </div>
 
-<h2>12.2 The return</h2>
+<h2>13.2 The return</h2>
 <ol class="steps">
   <li><b class="ui">Reports → GST return</b>. Choose the taxable period — <b class="ui">Last month</b>, <b class="ui">Last quarter</b>, or any dates.</li>
   <li>Read the warnings at the top first: a sale with no GST treatment, a purchase missing the TIN or invoice number, an invoice over twelve months old. Put them right at the source.</li>
@@ -595,7 +625,7 @@
 </table>
 <p>The page also shows the date the return and payment are due — the 28th of the month after the period ends.</p>
 
-<h2>12.3 The two statements</h2>
+<h2>13.3 The two statements</h2>
 <p>The tabs under the boxes list every sale (<b class="ui">Output tax statement</b>) and every purchase with a tax invoice (<b class="ui">Input tax statement</b>). <b class="ui">⬇ Excel, in MIRA's layout</b> gives each in MIRA's own columns, ready to file with the return. The third tab, <b class="ui">Other entries on the GST accounts</b>, lists anything else that touched those accounts in the period — the payment to MIRA, a journal — so nothing there is unexplained.</p>
 <div class="box warn">
   <b class="t">Before filing</b>
@@ -603,7 +633,7 @@
 </div>
 
 <!-- ================================================================== -->
-<h1 id="s13"><span class="n">13</span>Month-end checklist</h1>
+<h1 id="s14"><span class="n">14</span>Month-end checklist</h1>
 <ol class="steps">
   <li><b>Everything entered.</b> Expenses, deposits and transfers for the month; bills received; invoices issued outside Planet.</li>
   <li><b>Posting from Planet.</b> On <b class="ui">Setup → Posting from Planet</b>, <b class="ui">Preview all</b>: nothing left to post for the rules that are on, and the held-back list cleared or explained.</li>
@@ -616,7 +646,7 @@
 </ol>
 
 <!-- ================================================================== -->
-<h1 id="s14"><span class="n">14</span>Messages you may see</h1>
+<h1 id="s15"><span class="n">15</span>Messages you may see</h1>
 <table class="small">
   <tr><th style="width: 44%">Message</th><th>Meaning, and what to do</th></tr>
   <tr><td>The books start on 01 Jan 2026. Balances before that go in as opening balances.</td><td>The date is before the books. For something unpaid from 2025 use an opening bill or invoice; otherwise correct the date.</td></tr>
@@ -635,7 +665,7 @@
 </table>
 
 <!-- ================================================================== -->
-<h1 id="s15"><span class="n">15</span>What is not in the app yet</h1>
+<h1 id="s16"><span class="n">16</span>What is not in the app yet</h1>
 <p class="lead">So nobody looks for them, or assumes the books cover them. Until they are built, the accountant handles these by journal.</p>
 <div class="two">
 <ul>

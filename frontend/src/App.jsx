@@ -777,6 +777,12 @@ export default function App() {
 
   async function openDoc(ref, returnTo = null) {
     setError(null);
+    // A rental (rent the company pays) lives in the Finance app, not here.
+    if (/^RENT-/i.test(ref || "")) {
+      const fin = (getBrand()?.apps || []).find((a) => a.key === "finance");
+      if (fin) window.open(`${fin.url}#/rentals/${encodeURIComponent(ref)}`, "_blank", "noopener");
+      return;
+    }
     try {
       const doc = await api(`/documents/${ref}`);
       if (doc.doc_type === "IPR") {

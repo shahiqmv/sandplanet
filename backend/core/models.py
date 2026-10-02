@@ -5729,6 +5729,7 @@ class CostPosting(models.Model):
         STOCK_ADJ = "STOCK_ADJ"      # Phase 1B
         SUBCONTRACT = "SUBCONTRACT"  # subcontractor valuations (SVC)
         SALE = "SALE"                # trading revenue / output GST / credit notes
+        RENT = "RENT"                # rent the company pays (core/rent.py)
 
     class Book(models.TextChoices):
         PROJECT = "PROJECT"
@@ -5764,6 +5765,9 @@ class CostPosting(models.Model):
                                          blank=True, related_name="+")
     ipr_line = models.ForeignKey("ImportOrderLine", on_delete=models.PROTECT,
                                  null=True, blank=True, related_name="+")
+    rent_due = models.ForeignKey("RentDue", on_delete=models.PROTECT,
+                                 null=True, blank=True,
+                                 related_name="cost_postings")
     ipr_milestone = models.ForeignKey("ImportPaymentMilestone",
                                       on_delete=models.PROTECT, null=True,
                                       blank=True, related_name="+")
@@ -5901,10 +5905,17 @@ class Payable(models.Model):
     PR, cleared when Finance settles it on terms (§4A). One per credit
     vendor row."""
 
+    # the PR, the SVC or the payroll PYR it arises from — none for a rent due
     document = models.ForeignKey(Document, on_delete=models.PROTECT,
+                                 null=True, blank=True,
                                  related_name="payables")
     document_line = models.ForeignKey(DocumentLine, on_delete=models.PROTECT,
                                       null=True, blank=True, related_name="+")
+    # A period's rent falling due on something the company rents: raised by
+    # the rent module so Finance can put it on a voucher (owner 2026-10-02).
+    rent_due = models.OneToOneField("RentDue", on_delete=models.PROTECT,
+                                    null=True, blank=True,
+                                    related_name="payable")
     # A salary payable: one person, their own bank account. The run's PYR is
     # still the parent document — it is the Director's authorisation to pay
     # the run — but the money leaves per head, so Finance picks the people to
@@ -5925,6 +5936,127 @@ class Payable(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["status", "due_date"])]
+
+    @property
+    def ref_label(self):
+        """What Finance and the payee both call it."""
+        if self.document_id:
+            return self.document.ref
+        if self.rent_due_id:
+            return self.rent_due.contract.ref
+        return f"PAYABLE-{self.id}"
+
+
+def rent_agreement_path(instance, filename):
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"rent/{uuid.uuid4().hex[:14]}{ext}"
+
+
+class RentContract(models.Model):
+    """Something the company rents and pays for period after period — an
+    office, staff accommodation, a warehouse, a yard, a vehicle or vessel on
+    hire. Its dues are raised by themselves as each period comes up
+    (core/rent.py), so Finance finds them on the payables list and puts them
+    on a voucher. (Nothing to do with RentalAgreement, which is what Marine
+    hires OUT.)"""
+
+    class Kind(models.TextChoices):
+        OFFICE = "OFFICE", "Office"
+        ACCOMMODATION = "ACCOMMODATION", "Staff accommodation"
+        WAREHOUSE = "WAREHOUSE", "Warehouse / store"
+        LAND = "LAND", "Land / yard"
+        VEHICLE = "VEHICLE", "Vehicle / vessel"
+        EQUIPMENT = "EQUIPMENT", "Equipment"
+        OTHER = "OTHER", "Other"
+
+    class Frequency(models.TextChoices):
+        MONTHLY = "MONTHLY", "Monthly"
+        QUARTERLY = "QUARTERLY", "Quarterly"
+        HALF_YEARLY = "HALF_YEARLY", "Half-yearly"
+        YEARLY = "YEARLY", "Yearly"
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        ENDED = "ENDED", "Ended"
+
+    MONTHS = {"MONTHLY": 1, "QUARTERLY": 3, "HALF_YEARLY": 6, "YEARLY": 12}
+
+    ref = models.CharField(max_length=20, unique=True)        # RENT-001
+    title = models.CharField(max_length=200)                  # what and where
+    kind = models.CharField(max_length=14, choices=Kind.choices,
+                            default=Kind.OFFICE)
+    landlord = models.CharField(max_length=160)
+    landlord_tin = models.CharField(max_length=40, blank=True)
+    landlord_contact = models.CharField(max_length=200, blank=True)
+    payee_account = models.TextField(blank=True)      # where the rent is sent
+    # who bears the cost, and under which head
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="rent_contracts")
+    cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
+                                  related_name="+")
+    currency = models.CharField(max_length=3, default="MVR")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)  # per period, before GST
+    # agreed changes: [{"from": "2027-01-01", "amount": "16000.00"}]
+    steps = models.JSONField(default=list, blank=True)
+    gst_applicable = models.BooleanField(default=False)
+    frequency = models.CharField(max_length=12, choices=Frequency.choices,
+                                 default=Frequency.MONTHLY)
+    in_advance = models.BooleanField(default=True)    # due as the period starts
+    due_day = models.PositiveSmallIntegerField(null=True, blank=True)  # 1–28
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    # the first period Planet raises; earlier ones were paid outside it
+    dues_from = models.DateField()
+    lead_days = models.PositiveSmallIntegerField(default=7)
+    deposit_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                         null=True, blank=True)
+    notes = models.TextField(blank=True)
+    agreement = models.FileField(upload_to=rent_agreement_path, null=True,
+                                 blank=True)
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.ACTIVE)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["ref"]
+
+    def __str__(self):
+        return f"{self.ref} — {self.title}"
+
+
+class RentDue(models.Model):
+    """One period's rent on a contract, raised as it comes up. It carries a
+    payable (Payable.rent_due) and its cost postings."""
+
+    class Status(models.TextChoices):
+        RAISED = "RAISED", "Due"
+        PAID = "PAID", "Paid"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    contract = models.ForeignKey(RentContract, on_delete=models.PROTECT,
+                                 related_name="dues")
+    period_start = models.DateField()
+    period_end = models.DateField()
+    due_date = models.DateField()
+    currency = models.CharField(max_length=3, default="MVR")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)   # before GST
+    gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.RAISED)
+    paid_on = models.DateField(null=True, blank=True)
+    paid_ref = models.CharField(max_length=120, blank=True)
+    cancel_reason = models.CharField(max_length=300, blank=True)
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")  # None = the daily job
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["contract_id", "period_start"]
+        indexes = [models.Index(fields=["contract", "period_start"])]
 
 
 class PaymentVoucherLine(models.Model):

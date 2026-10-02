@@ -361,6 +361,20 @@ the split between 1510 and 1520 is not); trading cost of sales at despatch
 is not posted; a subcontract advance recovered on a valuation is not moved
 off supplier advances; import GST is in landed cost, not input tax.
 
+## Rent the company pays (built 2026-10-02, `core/rent.py`)
+
+Owner: "set all rentals and post dues automatically so that accounts can
+create PV." **Operations → Rentals** holds each thing the company rents
+(`RentContract`, `RENT-001`): landlord, the site and cost head that bear it,
+rent per period, monthly to yearly, in advance or arrears, agreed changes,
+GST, start and end. A daily job (`manage.py rent_dues`, 06:10) raises each
+period as it comes up — a `RentDue` with a **payable** (no parent document)
+that Finance finds on Payables and puts on a voucher; settling it marks the
+due paid. The cost goes to Planet's cost ledger for the period (source
+`RENT`), and the posting rule **Rent** carries it into the books (head Rent
+→ 6220). Earlier periods of a rental already under way are taken as paid
+outside Planet unless "raise dues from" says otherwise.
+
 ## To settle before automatic posting (stage 3)
 PLANET holds purchases, payments, payroll and claims from July 2026. If the
 staff key July-onwards bills and invoices by hand and the rules then replay
