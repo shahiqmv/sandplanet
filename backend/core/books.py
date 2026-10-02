@@ -77,7 +77,82 @@ def meta():
         "suppliers": names(known["SUPPLIER"], suppliers),
         "customers": names(known["CUSTOMER"], customers),
         "settings": ledger.settings_dict(),
+        "guard": planet_guard(),
     }
+
+
+# ---- not twice: what Planet posts by itself ------------------------------------
+
+# the posting rules (core/posting.py) that would put the same thing in the
+# books as each hand-entered form, and what to tell the person keying it
+_GUARD = {
+    "EXPENSE": (("purchases", "payment_requests", "petty_cash", "payroll",
+                 "subcontract", "imports"),
+                "payments made on a voucher in Planet post to the books by "
+                "themselves. Enter here only what did not go through a "
+                "voucher — a bank charge, say"),
+    "BILL": (("purchases", "subcontract"),
+             "purchases ordered in Planet post to the books by themselves "
+             "when the order is signed. Enter here only a bill for something "
+             "not ordered through Planet"),
+    "INVOICE": (("claims", "manual_invoices", "trading_invoices"),
+                "invoices raised in Projects and Trading post to the books "
+                "by themselves. Enter here only an invoice that was not "
+                "raised there"),
+    "DEPOSIT": (("receipts",),
+                "receipts recorded in Planet post to the books by "
+                "themselves. Enter here only money that was not receipted "
+                "there"),
+}
+
+
+def _planet_since(typ):
+    """The first date Planet holds anything of this kind — before it there
+    is nothing for a rule to post, so nothing to enter twice."""
+    from django.db.models import Min
+    from .models import (ClientReceipt, CostPosting, ManualInvoice,
+                         OfficialReceipt, ProgressClaim, TradingInvoice,
+                         TradingReceipt)
+
+    def first(qs, field):
+        return qs.aggregate(d=Min(field))["d"]
+    if typ in ("EXPENSE", "BILL"):
+        found = [first(CostPosting.objects.filter(
+            state__in=("INCURRED", "PAID")), "posted_on")]
+    elif typ == "INVOICE":
+        claim = first(ProgressClaim.objects.exclude(invoice_no=""),
+                      "certified_at")
+        found = [timezone.localtime(claim).date() if claim else None,
+                 first(ManualInvoice.objects.filter(is_void=False),
+                       "invoice_date"),
+                 first(TradingInvoice.objects.filter(
+                     status__in=("ISSUED", "PAID")), "invoice_date")]
+    else:
+        found = [first(OfficialReceipt.objects, "receipt_date"),
+                 first(ClientReceipt.objects, "received_on"),
+                 first(TradingReceipt.objects, "receipt_date")]
+    found = [d for d in found if d]
+    return min(found) if found else None
+
+
+def planet_guard():
+    """For each form Planet's posting rules overlap: the date from which a
+    hand entry has to be confirmed as not in Planet, and why. Empty while no
+    overlapping rule is switched on."""
+    from . import posting
+    on = set(posting.rules_on())
+    if not on:
+        return {}
+    start, out = posting.posting_from(), {}
+    for typ, (rules, why) in _GUARD.items():
+        if not on.intersection(rules):
+            continue
+        since = _planet_since(typ)
+        if since is None:
+            continue
+        d = max(since, start)
+        out[typ] = {"from": d, "why": f"From {d:%d %b %Y}, {why}."}
+    return out
 
 
 # ---- suppliers and customers -------------------------------------------------
@@ -457,6 +532,7 @@ def _clean(data, typ, txn=None):
         "party": (data.get("party") or "").strip()[:160],
         "party_tin": (data.get("party_tin") or "").strip()[:40],
         "party_ref": None, "due_date": None, "is_opening": False,
+        "outside_planet": bool(data.get("outside_planet")),
         "reference": (data.get("reference") or "").strip()[:80],
         "memo": (data.get("memo") or "").strip(),
         "currency": account.currency or BASE, "fx_rate": None,
@@ -465,6 +541,12 @@ def _clean(data, typ, txn=None):
         "tax_invoice_date": ledger._as_date(data.get("tax_invoice_date")),
         "tax_invoice_held": bool(data.get("tax_invoice_held")),
     }
+    guard = planet_guard().get(typ)
+    if guard is None or d < guard["from"]:
+        head["outside_planet"] = False          # nothing to confirm
+    elif not head["outside_planet"]:
+        raise ValueError(guard["why"] + " Tick the box to confirm this one "
+                         "is not in Planet.")
     if typ in DOC_TYPES:
         _clean_doc_head(data, typ, head, txn)
         if head["is_opening"]:

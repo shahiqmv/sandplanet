@@ -344,6 +344,15 @@ and re-posted, a vanished one reversed. Nothing is posted twice. Entries are
 - **From**: events dated before "post from" (default: the books' start) are
   left to the opening balances and hand entry.
 - A rule switched off can have its entries taken out again (each reversed).
+- **Not twice** (owner 2026-10-02: "doesn't the expense form duplicate the PV
+  process?"). The Expense, Bill, Invoice and Deposit forms exist for what
+  Planet does not hold — January to June 2026, and bank charges and the
+  like. While a rule that overlaps a form is on, an entry dated from the
+  first day Planet holds that kind of thing (and not before "post from")
+  must be confirmed as not in Planet — a tick on the form, a "Not in
+  Planet" column in the import sheet; kept on the entry
+  (`LedgerTxn.outside_planet`, `books.planet_guard`). Earlier dates are not
+  asked.
 
 Open for the consultant: revenue on certification (vs stage of completion —
 a WIP journal at period end); fines to other income; goods in transit are

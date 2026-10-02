@@ -70,6 +70,9 @@ COLUMNS = [
      "arrived, in the other account's currency."),
     ("control", "Payable / receivable account", 24,
      "Bill, invoice: only if not the usual one (2010 / 1210)."),
+    ("outside_planet", "Not in Planet", 9,
+     "Only for a date from which Planet posts these itself: Y to confirm "
+     "this one did not go through Planet, so it is not in the books twice."),
     ("site", "Site", 8, "The site code, if the line belongs to a site."),
     ("memo", "Memo", 30, "A note on the whole transaction."),
 ]
@@ -261,6 +264,7 @@ def _data(t, look, gst_rate):
             "memo": _text(h.get("memo")),
             "fx_rate": None if rate is None else str(h.get("rate")).strip(),
             "tax_invoice_held": _yes(h.get("tax_invoice")),
+            "outside_planet": _yes(h.get("outside_planet")),
             "tax_invoice_no": _text(h.get("tax_invoice_no"))}
     if typ in books.DOC_TYPES:
         ctrl = look.account(h.get("control"), f"Row {n}: account")
@@ -336,6 +340,10 @@ def run(upload, actor, commit=False):
                     row["date"] = data["date"]
                     saved, msg = books.save_txn(typ, data, actor)
                     if msg:
+                        # a sheet has a column where the form has a box
+                        msg = msg.replace(
+                            "Tick the box to confirm",
+                            "Put Y in the “Not in Planet” column to confirm")
                         raise ValueError(f"Row {t['row']}: {msg}")
                     made.append(saved.pk)
                     row.update(number=saved.number, currency=saved.currency,

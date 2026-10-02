@@ -127,7 +127,8 @@ export default function PostingPage() {
       <p style={{ fontSize: 13.5, color: "var(--muted)", marginTop: -4, maxWidth: 900 }}>
         Each rule takes something Planet already records and gives it one entry in the books. A rule posts nothing until it is
         switched on; once on, the books are kept in step every twenty minutes — a new event is posted, a changed one re-posted,
-        a deleted one reversed. Preview shows exactly what a rule would do, and saves nothing.</p>
+        a deleted one reversed. Preview shows exactly what a rule would do, and saves nothing. While a rule is on, the
+        forms that could enter the same thing by hand ask for a tick confirming it is not in Planet.</p>
       {error && <p className="f-bad" style={{ fontSize: 13.5 }}>{error}</p>}
       {result && <Report report={result.report} saved={result.saved} />}
 

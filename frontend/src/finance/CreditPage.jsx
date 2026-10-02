@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { api, apiDownload, apiUpload } from "../api.js";
 import { Btn, Chip, card, ghostButton, inputStyle } from "../ui.jsx";
 import { amt, fmtDate, money, today } from "./shared.jsx";
-import { LinesTable, VoidBar, blank, field, lab, lineSums, linesFromTxn, linesPayload, num, r2, useBooks } from "./forms.jsx";
+import { LinesTable, PlanetGuard, VoidBar, blank, field, guarded, lab, lineSums, linesFromTxn, linesPayload, num, r2, useBooks } from "./forms.jsx";
 
 const SIDE = {
   AP: { doc: "BILL", pay: "BILL_PAY", kind: "SUPPLIER", page: "bills", partyPage: "suppliers", control: "AP",
@@ -119,7 +119,8 @@ function DocForm({ S, id, opening, go, settings, canEdit }) {
   const { meta, fx, pick, accounts } = books;
   const supplier = S.doc === "BILL";
   const [h, setH] = useState({ party: "", party_tin: "", reference: "", date: opening ? (settings?.opening_date || "") : today(),
-    due_date: "", currency: "MVR", fx_rate: "", account: "", memo: "", tax_invoice_held: false, is_opening: !!opening, amount: "" });
+    due_date: "", currency: "MVR", fx_rate: "", account: "", memo: "", tax_invoice_held: false, is_opening: !!opening, amount: "",
+    outside_planet: false });
   const [dueTouched, setDueTouched] = useState(false);
   const [lines, setLines] = useState([blank(), blank()]);
   const [inclusive, setInclusive] = useState(false);
@@ -141,7 +142,8 @@ function DocForm({ S, id, opening, go, settings, canEdit }) {
       setExisting(t); setDueTouched(true);
       setH({ party: t.party, party_tin: t.party_tin, reference: t.reference, date: t.date, due_date: t.due_date || "",
              currency: t.currency, fx_rate: t.fx_rate || "", account: String(t.account), memo: t.memo,
-             tax_invoice_held: t.tax_invoice_held, is_opening: t.is_opening, amount: t.is_opening ? String(t.amount) : "" });
+             tax_invoice_held: t.tax_invoice_held, is_opening: t.is_opening, amount: t.is_opening ? String(t.amount) : "",
+             outside_planet: !!t.outside_planet });
       if (t.lines.length) setLines(linesFromTxn(t));
     }).catch((e) => setError(e.message));
   }, [id, pick.length]);
@@ -160,6 +162,8 @@ function DocForm({ S, id, opening, go, settings, canEdit }) {
   const settled = existing && Number(existing.paid) > 0;
   const isVoid = existing?.status === "VOID";
   const readOnly = !canEdit || settled || isVoid;
+  const guard = meta?.guard?.[S.doc];
+  const unconfirmed = guarded(guard, h.date) && !h.outside_planet;
 
   async function save() {
     setBusy(true); setError(null);
@@ -248,6 +252,9 @@ function DocForm({ S, id, opening, go, settings, canEdit }) {
           </label>
         </div>)}
 
+      <PlanetGuard guard={guard} date={h.date} checked={h.outside_planet} disabled={readOnly}
+                   onChange={(v) => setH({ ...h, outside_planet: v })} />
+
       <div style={{ ...card, marginTop: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
           <label style={field}>{lab("Memo")}
@@ -274,7 +281,7 @@ function DocForm({ S, id, opening, go, settings, canEdit }) {
         It has a payment against it, so it can't be changed. To correct it, void the payment first.</p>}
       {!readOnly && (
         <div className="f-bar" style={{ marginTop: 12 }}>
-          <Btn disabled={busy || !h.party.trim() || !h.reference.trim() || amount <= 0} onClick={save}>
+          <Btn disabled={busy || !h.party.trim() || !h.reference.trim() || amount <= 0 || unconfirmed} onClick={save}>
             {busy ? "Saving…" : existing ? "Save changes" : `Save ${S.Doc.toLowerCase()}`}</Btn>
           {existing && <VoidBar txnId={existing.id} onError={setError} onDone={() => go(S.page)} />}
           {existing && !h.is_opening && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>

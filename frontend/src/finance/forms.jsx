@@ -131,3 +131,21 @@ export function VoidBar({ txnId, onDone, onError }) {
     </>
   );
 }
+
+// Planet posts some things to the books by itself (Setup → Posting from
+// Planet). From the date it does, a form that could enter the same thing a
+// second time asks for a confirmation that this one is not in Planet.
+export const guarded = (guard, date) => !!(guard && date && date >= guard.from);
+
+export function PlanetGuard({ guard, date, checked, onChange, disabled }) {
+  if (!guarded(guard, date)) return null;
+  return (
+    <div style={{ ...card, marginTop: 12, background: checked ? undefined : "var(--amber-bg, #fff4de)" }}>
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13.5, cursor: "pointer" }}>
+        <input type="checkbox" checked={!!checked} disabled={disabled} style={{ marginTop: 3 }} onChange={(e) => onChange(e.target.checked)} />
+        <span><b>This is not in Planet.</b> {guard.why} Entered here as well, it would be in the books twice.</span>
+      </label>
+    </div>
+  );
+}
+

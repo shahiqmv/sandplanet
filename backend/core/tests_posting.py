@@ -403,3 +403,104 @@ class ControlTests(PostingBase):
         pm = APIClient()
         pm.force_authenticate(make_user("pm9", User.Role.PM))
         self.assertEqual(pm.get("/api/v1/ledger/posting").status_code, 403)
+
+
+class NotTwiceTests(PostingBase):
+    """A form that could key what a posting rule already posts asks for a
+    confirmation, from the date Planet holds that kind of thing."""
+
+    def setUp(self):
+        super().setUp()
+        pr = self.doc("PR")
+        self.cost("MATERIALS", "1000", document=pr)       # Planet's first: 10 Aug
+
+    def expense(self, on, **kw):
+        return self.c.post("/api/v1/ledger/txns", {
+            "type": "EXPENSE", "date": on, "account": self.bank.id,
+            "party": "Bank of Maldives", "lines": [
+                {"account": self.acc["7510"].id, "amount": "50"}], **kw},
+            format="json")
+
+    def test_no_rule_on_no_question_asked(self):
+        self.assertEqual(self.c.get("/api/v1/ledger/meta").data["guard"], {})
+        self.assertEqual(self.expense("2026-08-15").status_code, 201)
+
+    def test_an_expense_planet_would_post_must_be_confirmed(self):
+        posting.save_settings({"on": ["payment_requests"]}, self.finance)
+        g = self.c.get("/api/v1/ledger/meta").data["guard"]
+        self.assertEqual(list(g), ["EXPENSE"])
+        self.assertEqual(str(g["EXPENSE"]["from"]), "2026-08-10")
+        self.assertIn("From 10 Aug 2026, payments made on a voucher",
+                      g["EXPENSE"]["why"])
+        # before Planet held payments there is nothing to double: no question
+        self.assertEqual(self.expense("2026-03-10").status_code, 201)
+        # from then on, it has to be said that this one is not in Planet
+        r = self.expense("2026-08-15")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Tick the box to confirm", r.data["detail"])
+        r = self.expense("2026-08-15", outside_planet=True)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["outside_planet"])
+        # and it is asked again when the entry is changed
+        tid = r.data["id"]
+        body = {"date": "2026-08-15", "account": self.bank.id,
+                "party": "Bank of Maldives", "lines": [
+                    {"account": self.acc["7510"].id, "amount": "60"}]}
+        self.assertEqual(self.c.patch(f"/api/v1/ledger/txns/{tid}", body,
+                                      format="json").status_code, 400)
+        self.assertEqual(self.c.patch(
+            f"/api/v1/ledger/txns/{tid}", {**body, "outside_planet": True},
+            format="json").status_code, 200)
+        # a deposit and an invoice are not Planet's to post while only the
+        # payments rule is on
+        self.assertEqual(self.c.post("/api/v1/ledger/txns", {
+            "type": "DEPOSIT", "date": "2026-08-15", "account": self.bank.id,
+            "party": "Walk-in", "lines": [
+                {"account": self.acc["4120"].id, "amount": "10"}]},
+            format="json").status_code, 201)
+
+    def test_the_date_to_post_from_moves_the_question_with_it(self):
+        posting.save_settings({"on": ["purchases"], "from": "2026-09-01"},
+                              self.finance)
+        self.assertEqual(self.expense("2026-08-15").status_code, 201)
+        self.assertEqual(self.expense("2026-09-02").status_code, 400)
+        # a bill is asked too, when purchases post by themselves
+        r = self.c.post("/api/v1/ledger/txns", {
+            "type": "BILL", "date": "2026-09-02", "party": "Manas Hardware",
+            "reference": "MH-1", "lines": [
+                {"account": self.acc["5110"].id, "amount": "10"}]},
+            format="json")
+        self.assertIn("purchases ordered in Planet", r.data["detail"])
+
+    def test_the_spreadsheet_has_the_same_question(self):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
+
+        from . import books_import
+        posting.save_settings({"on": ["payment_requests"]}, self.finance)
+        head = [h for _, h, _, _ in books_import.COLUMNS]
+        self.assertIn("Not in Planet", head)
+
+        def sheet(**row):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Transactions"
+            ws.append(head)
+            base = {"Type": "Expense", "Date": "15/08/2026",
+                    "Bank / cash account": "BML MVR", "Name": "BML",
+                    "Account": "7510", "Amount": 50, **row}
+            ws.append([base.get(h) for h in head])
+            buf = io.BytesIO()
+            wb.save(buf)
+            return SimpleUploadedFile("aug.xlsx", buf.getvalue())
+        r = self.c.post("/api/v1/ledger/imports", {"file": sheet()},
+                        format="multipart")
+        self.assertIn("Put Y in the “Not in Planet” column",
+                      r.data["rows"][0]["error"])
+        r = self.c.post("/api/v1/ledger/imports",
+                        {"file": sheet(**{"Not in Planet": "Y"})},
+                        format="multipart")
+        self.assertIsNone(r.data["rows"][0]["error"])
+

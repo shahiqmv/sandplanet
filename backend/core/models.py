@@ -8930,6 +8930,10 @@ class LedgerTxn(models.Model):
     journal = models.ForeignKey(JournalEntry, on_delete=models.PROTECT,
                                 null=True, blank=True, related_name="+")
     void_reason = models.CharField(max_length=300, blank=True)
+    # Keyed by hand on a date from which Planet posts this kind of thing
+    # itself: whoever entered it confirmed it is not in Planet, so it is not
+    # in the books twice (core/books.py planet_guard).
+    outside_planet = models.BooleanField(default=False)
     # brought in from a spreadsheet, and which one
     import_batch = models.ForeignKey("LedgerImport", on_delete=models.SET_NULL,
                                      null=True, blank=True,

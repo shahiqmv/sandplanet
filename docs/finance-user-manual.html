@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sand Planet Finance — User Manual</title>
+<style>
+  @page {
+    size: A4; margin: 20mm 17mm 19mm 17mm;
+    @bottom-left { content: "Sand Planet Finance · User Manual · October 2026"; font: 8pt "Helvetica Neue", Arial, sans-serif; color: #6b7a86; }
+    @bottom-right { content: counter(page); font: 8pt "Helvetica Neue", Arial, sans-serif; color: #6b7a86; }
+  }
+  @page cover { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
+  * { box-sizing: border-box; }
+  body { font: 9.7pt/1.43 "Helvetica Neue", Arial, sans-serif; color: #1b2733; margin: 0; }
+  h1 { font-size: 19pt; color: #16527E; margin: 0 0 4pt; padding-bottom: 5pt; border-bottom: 2.2pt solid #29ABE2; break-before: page; string-set: chapter content(); }
+  h1 .n { color: #29ABE2; margin-right: 6pt; }
+  h2 { font-size: 12.5pt; color: #16527E; margin: 12pt 0 3.5pt; break-after: avoid; }
+  h3 { font-size: 10.5pt; margin: 11pt 0 3pt; color: #1b2733; break-after: avoid; }
+  p { margin: 0 0 6pt; }
+  ul, ol { margin: 0 0 7pt; padding-left: 16pt; }
+  li { margin-bottom: 2.5pt; }
+  ol.steps { counter-reset: s; list-style: none; padding-left: 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding-left: 21pt; margin-bottom: 4pt; }
+  ol.steps > li::before { content: counter(s); position: absolute; left: 0; top: 0.5pt; width: 14.5pt; height: 14.5pt; border-radius: 50%;
+    background: #16527E; color: #fff; font-size: 8pt; font-weight: 700; text-align: center; line-height: 14.5pt; }
+  .lead { font-size: 10.5pt; color: #3c4b58; margin-bottom: 9pt; }
+  b.ui, .ui { font-weight: 700; color: #16527E; white-space: nowrap; }
+  code { font: 9pt Menlo, Consolas, monospace; background: #EAF1F6; padding: 0.5pt 3pt; border-radius: 2pt; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 8pt; font-size: 9pt; break-inside: auto; }
+  th { background: #EAF1F6; text-align: left; font-weight: 700; color: #16527E; }
+  th, td { border: 0.6pt solid #A9B6C0; padding: 2.8pt 5.5pt; vertical-align: top; }
+  tr { break-inside: avoid; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .box { border: 0.7pt solid #A9B6C0; border-left: 3.2pt solid #29ABE2; background: #F6FAFC; padding: 5.5pt 9pt; margin: 6pt 0 8pt; break-inside: avoid; }
+  .box.warn { border-left-color: #D98A1F; background: #FFF8EC; }
+  .box.mira { border-left-color: #16527E; background: #F1F5F9; }
+  .box b.t { display: block; color: #16527E; margin-bottom: 1.5pt; }
+  .box.warn b.t { color: #9A5B06; }
+  .box p:last-child, .box ul:last-child { margin-bottom: 0; }
+  .posts { width: auto; min-width: 62%; margin: 4pt 0 9pt 0; font-size: 9pt; }
+  .posts caption { caption-side: top; text-align: left; font-weight: 700; color: #3c4b58; padding-bottom: 2pt; font-size: 8.8pt; }
+  .posts td.cr { padding-left: 20pt; }
+  .screen { border: 0.8pt solid #A9B6C0; border-radius: 4pt; margin: 6pt 0 10pt; break-inside: avoid; overflow: hidden; }
+  .screen .bar { background: #23272F; color: #fff; padding: 4pt 8pt; font-size: 8.4pt; }
+  .screen .bar b { color: #E0B252; }
+  .screen .bar span { margin-left: 10pt; opacity: .75; }
+  .screen .bar span.on { opacity: 1; border-bottom: 1.4pt solid #E0B252; padding-bottom: 1pt; }
+  .screen .pad { padding: 7pt 9pt; }
+  .screen .ttl { font-weight: 700; font-size: 11pt; margin-bottom: 5pt; }
+  .f { display: inline-block; vertical-align: top; margin: 0 7pt 5pt 0; }
+  .f label { display: block; font-size: 7.6pt; font-weight: 700; color: #5c6b78; }
+  .f span { display: block; border: 0.6pt solid #A9B6C0; border-radius: 2.5pt; padding: 2.4pt 6pt; font-size: 8.6pt; min-width: 72pt; background: #fff; }
+  .btn { display: inline-block; background: #16527E; color: #fff; border-radius: 3pt; padding: 2.6pt 8pt; font-size: 8.4pt; font-weight: 700; margin-right: 5pt; }
+  .btn.sec { background: #fff; color: #16527E; border: 0.7pt solid #16527E; }
+  .screen table { font-size: 8pt; margin: 4pt 0 5pt; table-layout: auto; }
+  .screen th, .screen td { padding: 2.4pt 5pt; }
+  .ok { color: #1a7f37; font-weight: 700; } .bad { color: #b3261e; font-weight: 700; }
+  .muted { color: #6b7a86; }
+  .two { column-count: 2; column-gap: 16pt; }
+  .small { font-size: 9pt; }
+
+  /* cover */
+  .cover { page: cover; height: 297mm; position: relative; background: #fff; }
+  .cover .band { position: absolute; left: 0; right: 0; top: 0; height: 11mm; background: #16527E; border-bottom: 3mm solid #29ABE2; }
+  .cover .inner { position: absolute; left: 24mm; right: 24mm; top: 62mm; }
+  .cover img { height: 26mm; margin-bottom: 24mm; }
+  .cover .kicker { font-size: 12pt; letter-spacing: 2.5pt; text-transform: uppercase; color: #29ABE2; font-weight: 700; }
+  .cover .title { font-size: 40pt; font-weight: 800; color: #16527E; line-height: 1.08; margin: 5pt 0 9pt; }
+  .cover .sub { font-size: 13pt; color: #3c4b58; max-width: 130mm; }
+  .cover .meta { position: absolute; left: 24mm; right: 24mm; bottom: 30mm; font-size: 9.5pt; color: #5c6b78; border-top: 0.8pt solid #A9B6C0; padding-top: 7pt; }
+  .cover .foot { position: absolute; left: 0; right: 0; bottom: 0; height: 8mm; background: #29ABE2; border-top: 3mm solid #16527E; }
+
+  /* contents */
+  .toc { list-style: none; padding: 0; margin: 8pt 0 0; }
+  .toc li { margin: 0; padding: 3.2pt 0; border-bottom: 0.5pt dotted #A9B6C0; }
+  .toc a { color: #1b2733; text-decoration: none; display: block; }
+  .toc a::after { content: target-counter(attr(href), page); float: right; color: #16527E; font-weight: 700; }
+  .toc .n { display: inline-block; width: 20pt; color: #29ABE2; font-weight: 700; }
+  h1.nobreak { break-before: auto; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="band"></div>
+  <div class="inner">
+    <img src="../backend/pdf_templates/assets/sp-logo.png" alt="Sand Planet">
+    <div class="kicker">User manual</div>
+    <div class="title">Sand Planet<br>Finance</div>
+    <div class="sub">Keeping the company's books in Planet: banking, bills, invoices, reconciliation, posting from operations, the statements and the GST return.</div>
+  </div>
+  <div class="meta">
+    Sand Planet Pvt Ltd &nbsp;·&nbsp; For the accounts team, the accounting consultant and those who read the books<br>
+    Edition of 2 October 2026 — describes the Finance app as it is on that date &nbsp;·&nbsp; app.sandplanet.mv/f/
+  </div>
+  <div class="foot"></div>
+</div>
+
+<h1 class="nobreak" style="break-before: page;">Contents</h1>
+<ul class="toc">
+  <li><a href="#s1"><span class="n">1</span>What the Finance app is, and who does what</a></li>
+  <li><a href="#s2"><span class="n">2</span>Five rules the books keep</a></li>
+  <li><a href="#s3"><span class="n">3</span>Setting up: chart of accounts, opening balances, settings</a></li>
+  <li><a href="#s4"><span class="n">4</span>Banking: expenses, deposits, transfers, the register</a></li>
+  <li><a href="#s5"><span class="n">5</span>Purchases: bills, paying them, suppliers</a></li>
+  <li><a href="#s6"><span class="n">6</span>Sales: invoices, receiving payment, customers</a></li>
+  <li><a href="#s7"><span class="n">7</span>Reconciling a bank account</a></li>
+  <li><a href="#s8"><span class="n">8</span>Import from Excel</a></li>
+  <li><a href="#s9"><span class="n">9</span>Journal entries</a></li>
+  <li><a href="#s10"><span class="n">10</span>Posting from Planet</a></li>
+  <li><a href="#s11"><span class="n">11</span>Reports</a></li>
+  <li><a href="#s12"><span class="n">12</span>GST: treatments, the return and MIRA's statements</a></li>
+  <li><a href="#s13"><span class="n">13</span>Month-end checklist</a></li>
+  <li><a href="#s14"><span class="n">14</span>Messages you may see, and what to do</a></li>
+  <li><a href="#s15"><span class="n">15</span>What is not in the app yet</a></li>
+</ul>
+
+<div class="box" style="margin-top: 14pt;">
+  <b class="t">How to read this manual</b>
+  <p>Words in <b class="ui">blue bold</b> are what you see on the screen — a menu, a button, a field. Numbered circles are steps to do in order.
+  Grey tables headed “What it posts” show the entry the app makes for you; you never type debits and credits on a form.</p>
+</div>
+
+<!-- ================================================================== -->
+<h1 id="s1"><span class="n">1</span>What the Finance app is, and who does what</h1>
+<p class="lead">Sand Planet Finance is the company's set of books, kept inside Planet. It is a separate front door — like Trading — with the same sign-in and the same data, so nothing is entered twice.</p>
+
+<h2>Opening it</h2>
+<p>Sign in to Planet as usual, then use the app switcher beside the company name at the top left and choose <b class="ui">Finance</b> — or go straight to <code>app.sandplanet.mv/f/</code>.</p>
+
+<h2>The menu</h2>
+<table>
+  <tr><th style="width: 22%">Menu</th><th style="width: 30%">Pages under it</th><th>What it is for</th></tr>
+  <tr><td><b>Overview</b></td><td>—</td><td>Whether the books balance, the number of entries, cash and bank per the books, and shortcuts.</td></tr>
+  <tr><td><b>Banking</b></td><td>Accounts · Reconcile</td><td>Money paid out, received and moved between the company's accounts; each account's register; agreeing an account to its bank statement.</td></tr>
+  <tr><td><b>Purchases</b></td><td>Bills · Suppliers · What we owe</td><td>Bills to be paid later, paying them, each supplier's account, and what is owed by age.</td></tr>
+  <tr><td><b>Sales</b></td><td>Invoices · Customers · What we are owed</td><td>Invoices to be collected later, receiving payment, each customer's account, and what is owed to us by age.</td></tr>
+  <tr><td><b>Operations</b></td><td>Dashboard · Payment vouchers · Payables · International payables · Receivables</td><td>The pages Finance already used in Planet: building and paying vouchers, supplier dues from purchase orders, import payments, client invoices and statements. They work exactly as before.</td></tr>
+  <tr><td><b>Books</b></td><td>Chart of accounts · Journal entries · Import from Excel</td><td>The accounts themselves, entries made by the accountant, and bringing in a spreadsheet of transactions.</td></tr>
+  <tr><td><b>Reports</b></td><td>Profit and loss · Balance sheet · GST return · Trial balance · Account ledger</td><td>The statements, each with Excel.</td></tr>
+  <tr><td><b>Setup</b></td><td>Posting from Planet · Cost heads · Books settings</td><td>Which of Planet's own events post to the books; closing a period.</td></tr>
+</table>
+
+<h2>Who can do what</h2>
+<table>
+  <tr><th style="width: 30%">Role</th><th>In the Finance app</th></tr>
+  <tr><td>Finance, Admin</td><td>Everything: enter, change, void, reconcile, import, switch posting rules, close a period.</td></tr>
+  <tr><td>Signatory, Director, PA</td><td>Read every page and report, download Excel. Cannot enter or change anything in the books. (Voucher approvals work as they always have.)</td></tr>
+  <tr><td>QS</td><td>Receivables only. Every other role has no access and is sent back to Projects.</td></tr>
+</table>
+<div class="box">
+  <b class="t">Documents still open in Projects</b>
+  <p>A payment requisition, a purchase order or an import order opened from a Finance page opens in Projects, in its own tab — that is where the document lives. Approvals stay on My Tasks and on the phone.</p>
+</div>
+
+<!-- ================================================================== -->
+<h1 id="s2"><span class="n">2</span>Five rules the books keep</h1>
+<p class="lead">These are what make the books something an auditor and MIRA can rely on. The app enforces them; it helps to know them.</p>
+<ol class="steps">
+  <li><b>Every entry balances.</b> Debits equal credits, in rufiyaa, to the laari. The forms do this for you; a journal cannot be posted until it balances.</li>
+  <li><b>Posted is permanent.</b> Nothing posted is edited or deleted. When you change a transaction, the app reverses its old entry and posts a new one; when you void it, the app reverses it. Both stay on record in <b class="ui">Books → Journal entries</b>, numbered without gaps (<code>JV-001</code>, <code>JV-002</code> …).</li>
+  <li><b>The books start on 1 January 2026.</b> Nothing can be dated earlier, except the opening balances, which are dated 31 December 2025 — the audited closing figures.</li>
+  <li><b>A closed period stays closed.</b> Once a lock date is set, nothing can be posted, changed or voided on or before it, until it is reopened.</li>
+  <li><b>The books are in rufiyaa.</b> A dollar transaction keeps its own amount and the rate beside the rufiyaa value. A bank account held in dollars shows dollars in its register and rufiyaa in the statements.</li>
+</ol>
+
+<h2>The numbers you will see</h2>
+<table>
+  <tr><th>Prefix</th><th>What</th><th>Prefix</th><th>What</th></tr>
+  <tr><td><code>EXP-</code></td><td>Expense</td><td><code>BILL-</code></td><td>Supplier's bill</td></tr>
+  <tr><td><code>DEP-</code></td><td>Deposit</td><td><code>BPAY-</code></td><td>Bill payment</td></tr>
+  <tr><td><code>TRF-</code></td><td>Transfer between own accounts</td><td><code>SALE-</code></td><td>Sales invoice entered in the books</td></tr>
+  <tr><td><code>JV-</code></td><td>Journal entry (every posting has one)</td><td><code>RCPT-</code></td><td>Payment received</td></tr>
+</table>
+<p class="small muted">A sales invoice keeps its own invoice number (INV-2026-0031) as well; <code>SALE-</code> is only the books' reference to it.</p>
+
+<h2>Which form do I use?</h2>
+<table>
+  <tr><th style="width: 46%">What happened</th><th>Use</th></tr>
+  <tr><td>We paid for something on the spot — cash, cheque, transfer</td><td><b class="ui">Banking → + Expense</b></td></tr>
+  <tr><td>Money came in on the spot — a cash sale, a refund, a loan, the owner's money</td><td><b class="ui">Banking → + Deposit</b></td></tr>
+  <tr><td>Money moved between two of the company's own accounts (including buying dollars, topping up petty cash)</td><td><b class="ui">Banking → + Transfer</b></td></tr>
+  <tr><td>A supplier's bill arrived, to be paid later</td><td><b class="ui">Purchases → + Bill</b>, then <b class="ui">Pay bills</b> when it is paid</td></tr>
+  <tr><td>We invoiced a customer, to be collected later</td><td><b class="ui">Sales → + Invoice</b>, then <b class="ui">Receive payment</b></td></tr>
+  <tr><td>A bank charge or interest that only shows on the statement</td><td>From <b class="ui">Reconcile</b>: “Enter as an expense / deposit”</td></tr>
+  <tr><td>Depreciation, an accrual, a correction between accounts</td><td><b class="ui">Books → Journal entries → + New journal</b></td></tr>
+  <tr><td>Something Planet already records (a claim invoice, a purchase order, a paid requisition, payroll)</td><td>Nothing — <b class="ui">Posting from Planet</b> posts it (section 10)</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h1 id="s3"><span class="n">3</span>Setting up</h1>
+<p class="lead">Done once, in this order: the chart of accounts, the bank accounts, the opening balances, then what was still unpaid when the books opened.</p>
+
+<h2>3.1 Chart of accounts</h2>
+<p><b class="ui">Books → Chart of accounts</b>. On empty books the page offers <b class="ui">Start with the standard chart</b>. The standard chart follows the headings of the audited 2025 statements and uses QuickBooks' account types, so it maps one-to-one to the auditors' file. The accounting consultant then makes it the company's own.</p>
+<table>
+  <tr><th style="width: 30%">To</th><th>Do</th></tr>
+  <tr><td>Add an account</td><td><b class="ui">+ New account</b>: code, name, type, and — for a sub-account — the group it sits under (<b class="ui">Sub-account of</b>, same type). Tick “A group” for a heading that holds other accounts and takes no entries itself.</td></tr>
+  <tr><td>Rename or re-code</td><td><b class="ui">edit</b> at the end of the account's row. Entries follow the account, not its name. (Clicking the row itself opens the account's ledger.)</td></tr>
+  <tr><td>Change its type</td><td>Only while it has no entries.</td></tr>
+  <tr><td>Stop using it</td><td><b class="ui">edit</b>, untick <b class="ui">In use</b>. It keeps its history, shows as “closed” and can no longer be posted to. Tick <b class="ui">show closed</b> to see it again. An account with entries cannot be deleted.</td></tr>
+  <tr><td>Add a bank account</td><td>Add it on Planet's <b class="ui">Company</b> page, where the company's bank accounts are kept, then on the chart press <b class="ui">Add accounts for new bank accounts</b>. A dollar account is created held in USD.</td></tr>
+</table>
+<h3>Account types</h3>
+<table class="small">
+  <tr><th>Balance sheet</th><th>Profit and loss</th></tr>
+  <tr><td>Bank · Accounts receivable · Other current assets · Fixed assets · Other assets<br>Accounts payable · Credit card · Other current liabilities · Long term liabilities · Equity</td>
+      <td>Income · Cost of goods sold · Expenses · Other income · Other expenses</td></tr>
+</table>
+<div class="box warn">
+  <b class="t">Accounts with a role</b>
+  <p>Some accounts carry a role the app relies on — GST payable, GST input tax recoverable, the receivable and payable accounts, exchange gain and loss, retained earnings. Rename and re-code them freely, but do not close them: forms and posting rules look for the role.</p>
+</div>
+
+<h2>3.2 Opening balances</h2>
+<p>The audited balances at 31 December 2025 go in as one entry.</p>
+<ol class="steps">
+  <li><b class="ui">Books → Journal entries → Opening balances</b>. The date is fixed at 31 Dec 2025.</li>
+  <li>Enter each balance sheet account with its debit or credit, as on the audited statement of financial position: assets as debits; liabilities, share capital and retained earnings as credits.</li>
+  <li>The foot of the form shows the two totals. When they agree, <b class="ui">Post entry</b>.</li>
+</ol>
+<div class="box">
+  <b class="t">Check</b>
+  <p><b class="ui">Reports → Balance sheet</b> “as at” 31 Dec 2025 should now read exactly as the audited statement, and <b class="ui">Trial balance</b> should say it is in balance.</p>
+</div>
+
+<h2>3.3 What was still unpaid when the books opened</h2>
+<p>The opening entry carries receivables and payables as single totals. So that a 2026 payment has something to be set against, list each invoice or bill that was still unpaid on 31 Dec 2025:</p>
+<ol class="steps">
+  <li><b class="ui">Sales → Invoices → + Opening invoice</b> (or <b class="ui">Purchases → Bills → + Opening bill</b>).</li>
+  <li>Customer, the invoice number as issued, its date in 2025, and the amount <i>still unpaid</i>.</li>
+  <li>Save. It posts no entry — the amount is already inside the opening balances.</li>
+</ol>
+<p>When all are listed, <b class="ui">Sales → What we are owed</b> ends with a green line: “Accounts receivable per the books … agrees with the invoices above.” Until then it tells you the difference.</p>
+
+<h2>3.4 Books settings</h2>
+<p><b class="ui">Setup → Books settings</b> shows when the books start and holds the <b>lock date</b> (“Books closed up to”). Set it when a month has been checked and reconciled; clear it to reopen. Each change is recorded with who made it.</p>
+
+<!-- ================================================================== -->
+<h1 id="s4"><span class="n">4</span>Banking</h1>
+<p class="lead"><b class="ui">Banking → Accounts</b> shows each bank and cash account with its balance per the books and how far it is reconciled, and the latest transactions. Click an account to open its register.</p>
+
+<h2>4.1 Expense — money paid out on the spot</h2>
+<div class="screen">
+  <div class="bar"><b>FINANCE</b><span>Overview</span><span class="on">Banking</span><span>Purchases</span><span>Sales</span><span>Operations</span><span>Books</span><span>Reports</span><span>Setup</span></div>
+  <div class="pad">
+    <div class="ttl">New expense</div>
+    <div class="f"><label>Paid from</label><span>BML MVR Current</span></div>
+    <div class="f"><label>Date</label><span>15 Jan 2026</span></div>
+    <div class="f"><label>Paid to</label><span style="min-width: 110pt;">STELCO</span></div>
+    <div class="f"><label>Cheque / transfer ref</label><span>TRF 1182</span></div>
+    <table>
+      <tr><th>What for (account)</th><th>Description</th><th class="num">Amount</th><th>GST</th><th class="num">GST amount</th><th>Site</th></tr>
+      <tr><td>6320 Electricity</td><td>Office electricity, December</td><td class="num">1,000.00</td><td>Standard rated 8%</td><td class="num">80.00</td><td>—</td></tr>
+      <tr><td colspan="2" class="muted">Amounts are ◉ before GST ○ including GST</td><td class="num"><b>MVR 1,080.00</b></td><td colspan="3"><b>paid</b></td></tr>
+    </table>
+    <div class="f"><label>Supplier TIN</label><span>1000123GST501</span></div>
+    <div class="f"><label>Tax invoice no.</label><span>ST-551</span></div>
+    <div class="f"><label>&nbsp;</label><span style="border: 0; background: none;">☑ We hold a valid tax invoice for this.</span></div><br>
+    <span class="btn">Save expense</span>
+  </div>
+</div>
+<ol class="steps">
+  <li><b class="ui">+ Expense</b>. Choose the account it was <b class="ui">Paid from</b>, the date, who was paid, and the cheque or transfer reference.</li>
+  <li>On each line pick <b>what it was for</b> — type the account's code or name — a description and the amount. One payment can have several lines. Choose a <b class="ui">Site</b> on a line if the cost belongs to a site.</li>
+  <li>Choose the <b>GST</b> treatment of each line (section 12). Say whether the amounts you typed are before GST or include it; the app works out the rest. The GST figure can be corrected to match the invoice.</li>
+  <li>If GST was charged and you hold the supplier's tax invoice, enter the <b class="ui">Supplier TIN</b> and <b class="ui">Tax invoice no.</b> and tick the box. Without the tick the GST cannot be claimed and is added to the cost.</li>
+  <li>Attach the bill or receipt, add a memo, <b class="ui">Save expense</b>.</li>
+</ol>
+<div class="box warn">
+  <b class="t">“This is not in Planet”</b>
+  <p>Payments made on a voucher reach the books by themselves once Posting from Planet is on (section 10). From the date Planet holds them, the form shows this box and will not save until it is ticked — your confirmation that this payment did not go through a voucher. Bank charges and the months before Planet are what the form is for. Bills, invoices and deposits ask the same.</p>
+</div>
+<table class="posts">
+  <caption>What it posts (the example above)</caption>
+  <tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr>
+  <tr><td>6320 Electricity</td><td class="num">1,000.00</td><td></td></tr>
+  <tr><td>1430 GST input tax recoverable</td><td class="num">80.00</td><td></td></tr>
+  <tr><td class="cr">Bank — BML MVR Current</td><td></td><td class="num">1,080.00</td></tr>
+</table>
+<p class="small muted">Without a tax invoice the whole 1,080.00 is debited to Electricity.</p>
+
+<h2>4.2 Deposit — money received on the spot</h2>
+<p><b class="ui">+ Deposit</b> is the same form the other way round: <b class="ui">Deposit to</b> an account, <b class="ui">Received from</b>, and lines saying what the money was — an income account for a cash sale, a liability account for a loan or the owner's money. A sale needs its GST treatment; a line with <b>No GST</b> is not a sale and stays off the GST return.</p>
+
+<h2>4.3 Transfer — between the company's own accounts</h2>
+<p><b class="ui">+ Transfer</b>: <b class="ui">From</b>, <b class="ui">To</b>, the amount sent, date, reference. When the two accounts are in different currencies, also enter the <b class="ui">Amount received</b> — the app shows the rate that implies. A bank's charge for the transfer is a separate expense.</p>
+
+<h2>4.4 The register</h2>
+<p>Each account's register reads like its bank statement: date, number, payee, what it was for, money out, money in and the balance after each line, starting from a balance brought forward. A dollar account's register is in dollars. Use the dates to change the period and <b class="ui">⬇ Excel</b> to take it out.</p>
+
+<h2>4.5 Changing or voiding</h2>
+<ul>
+  <li><b>Change:</b> click the line in the register, correct it, <b class="ui">Save changes</b>. It keeps its number; the register shows it once.</li>
+  <li><b>Void:</b> <b class="ui">Void…</b>, say why, <b class="ui">Void it</b>. It leaves the register; its history stays in the journals.</li>
+  <li>Neither is possible once the transaction is on a <b>finished reconciliation</b> or in a <b>closed period</b> — reopen that first.</li>
+</ul>
+
+<!-- ================================================================== -->
+<h1 id="s5"><span class="n">5</span>Purchases</h1>
+<p class="lead">For what is bought now and paid later. The bill puts the cost in the books and shows the supplier as owed; the payment clears it.</p>
+
+<h2>5.1 Entering a bill</h2>
+<ol class="steps">
+  <li><b class="ui">Purchases → Bills → + Bill</b>.</li>
+  <li><b class="ui">Supplier</b>: type or pick. A new name is added to the supplier list on saving; a name Purchasing already has brings its credit days.</li>
+  <li><b class="ui">Supplier's bill / invoice no.</b> exactly as printed. The same number from the same supplier is refused a second time.</li>
+  <li>Bill date. <b class="ui">Due</b> fills from the supplier's credit days; change it if the bill says otherwise.</li>
+  <li><b class="ui">Currency</b> — for a dollar bill also the rate to rufiyaa on the bill date. <b class="ui">Payable account</b>: local suppliers, overseas suppliers or subcontractors.</li>
+  <li>The lines, as on an expense. If the bill is a valid tax invoice and you hold it, tick the box — the supplier's TIN is then required.</li>
+  <li>Attach the bill, <b class="ui">Save bill</b>.</li>
+</ol>
+<table class="posts">
+  <caption>What it posts — cement 12,000 + 8% GST, tax invoice held</caption>
+  <tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr>
+  <tr><td>5110 Materials</td><td class="num">12,000.00</td><td></td></tr>
+  <tr><td>1430 GST input tax recoverable</td><td class="num">960.00</td><td></td></tr>
+  <tr><td class="cr">2010 Trade payables — local suppliers</td><td></td><td class="num">12,960.00</td></tr>
+</table>
+
+<h2>5.2 Paying bills</h2>
+<ol class="steps">
+  <li><b class="ui">Pay bills</b> (on the Bills page, or on an open bill).</li>
+  <li>Pick the <b class="ui">Supplier</b> — only those with open bills are listed, with what is open.</li>
+  <li><b class="ui">Paid from</b>, date, cheque or transfer reference.</li>
+  <li>Tick each bill being paid. The amount fills with what is open; type less for a part payment.</li>
+  <li>The button shows the total: <b class="ui">Pay MVR 12,960.00</b>.</li>
+</ol>
+<table class="posts">
+  <caption>What it posts</caption>
+  <tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr>
+  <tr><td>2010 Trade payables — local suppliers</td><td class="num">12,960.00</td><td></td></tr>
+  <tr><td class="cr">Bank — BML MVR Current</td><td></td><td class="num">12,960.00</td></tr>
+</table>
+<div class="box">
+  <b class="t">A dollar bill</b>
+  <p>One payment settles bills in one currency. Paid from the rufiyaa account, enter the rufiyaa that left the bank; paid from the dollar account, enter the rate on the day. The bill leaves the books at the rate it went in at; any difference goes to exchange gain or loss, as the audited statements' policy has it.</p>
+</div>
+
+<h2>5.3 Correcting</h2>
+<ul>
+  <li>A bill with <b>no payment</b> against it can be changed or voided like an expense.</li>
+  <li>A bill with a payment against it is fixed. Void the payment first (<b class="ui">Payments made</b> → open it → <b class="ui">Void…</b>); the bill reopens and can then be corrected.</li>
+  <li>A payment is never edited — void it and enter it again.</li>
+</ul>
+
+<h2>5.4 Suppliers and what we owe</h2>
+<p><b class="ui">Purchases → Suppliers</b> lists every supplier in the books with what is open. Click one for its account — every bill and payment with a running balance, with Excel — and <b class="ui">Edit details</b> for TIN, credit days, usual currency and contact.</p>
+<p><b class="ui">Purchases → What we owe</b> shows the open bills by supplier and by how long past due (not yet due, 1–30, 31–60, 61–90, over 90 days), as at any date. Click a supplier to see the bills. The last line says whether the total agrees with the payable accounts in the books.</p>
+
+<!-- ================================================================== -->
+<h1 id="s6"><span class="n">6</span>Sales</h1>
+<p class="lead">The mirror of Purchases. One thing is different: the invoice entered here is a <i>record</i> of an invoice already issued.</p>
+<div class="box warn">
+  <b class="t">Where tax invoices are raised</b>
+  <p>The tax invoice itself — the PDF the customer receives — is still raised where it always was: a claim invoice or other project invoice in Projects, a trading invoice in Trading. With <b>Posting from Planet</b> switched on (section 10) those reach the books by themselves; do not enter them again here. Use <b class="ui">Sales → + Invoice</b> for sales Planet does not hold — chiefly January to June 2026.</p>
+</div>
+
+<h2>6.1 Entering an invoice</h2>
+<ol class="steps">
+  <li><b class="ui">Sales → Invoices → + Invoice</b>.</li>
+  <li><b class="ui">Customer</b>, the <b class="ui">Invoice no. (as issued)</b>, customer TIN, invoice date, due date, currency and rate.</li>
+  <li><b class="ui">Receivable account</b>: construction clients, resort supply customers or retention.</li>
+  <li>Lines: the income account, amount, and the GST treatment — every sale is standard-rated, zero-rated, exempt or out of scope.</li>
+  <li><b class="ui">Save invoice</b>.</li>
+</ol>
+<table class="posts">
+  <caption>What it posts — resort supply 50,000 + 8% GST</caption>
+  <tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr>
+  <tr><td>1220 Trade receivables — resort supply customers</td><td class="num">54,000.00</td><td></td></tr>
+  <tr><td class="cr">4120 Resort supply sales</td><td></td><td class="num">50,000.00</td></tr>
+  <tr><td class="cr">2210 GST payable</td><td></td><td class="num">4,000.00</td></tr>
+</table>
+
+<h2>6.2 Receiving payment</h2>
+<p><b class="ui">Receive payment</b>: pick the customer, the account it was <b class="ui">Deposited to</b>, the date and their transfer reference; tick the invoices and the amounts received. Part payments leave the rest open. It posts a debit to the bank and a credit to the receivable.</p>
+<p>Dollars received for a rufiyaa invoice, or rufiyaa for a dollar invoice: the form asks for the amount that actually reached the bank and works out the rate.</p>
+
+<h2>6.3 Customers and what we are owed</h2>
+<p><b class="ui">Sales → Customers</b> and <b class="ui">Sales → What we are owed</b> work exactly as their Purchases counterparts: each customer's account with a running balance, and the open invoices by age with a line saying whether they agree with the receivable accounts.</p>
+
+<!-- ================================================================== -->
+<h1 id="s7"><span class="n">7</span>Reconciling a bank account</h1>
+<p class="lead">Each month, each bank and cash account is agreed to the bank's statement. What the bank also shows is ticked off; what is left is outstanding — a cheque not yet presented, a deposit not yet credited.</p>
+
+<h2>7.1 Starting</h2>
+<ol class="steps">
+  <li><b class="ui">Banking → Reconcile</b> lists every account and how far it is reconciled. Click the account.</li>
+  <li>Enter the date the <b class="ui">Statement ends on</b> and its <b class="ui">Closing balance</b>, in the account's own currency. <b class="ui">Start reconciling</b>.</li>
+</ol>
+<div class="screen">
+  <div class="pad">
+    <div class="ttl">BML MVR Current <span style="font-size: 8pt; font-weight: 400; background: #FFF1D6; padding: 1pt 6pt; border-radius: 8pt;">Reconciling</span></div>
+    <table>
+      <tr><th>Statement ends</th><th class="num">Closing balance</th><th class="num">Opening</th><th class="num">− Out ticked</th><th class="num">+ In ticked</th><th class="num">= Ticked balance</th><th class="num">Difference</th></tr>
+      <tr><td>31 Jan 2026</td><td class="num">2,396,698.00</td><td class="num">0.00</td><td class="num">20,470.00</td><td class="num">2,417,168.00</td><td class="num">2,396,698.00</td><td class="num ok">✓ 0.00</td></tr>
+    </table>
+    <span class="btn sec">⬆ Import the bank's statement</span><span class="btn">Finish</span>
+  </div>
+</div>
+
+<h2>7.2 Ticking</h2>
+<p>The screen has two lists — <b>Money out</b> and <b>Money in</b> — holding everything in the books up to the statement date that no earlier statement has ticked. Tick each line the statement shows. The bar at the top keeps the running result; the aim is a <b>Difference</b> of 0.00. Ticks are saved as you go — you can leave and come back.</p>
+<div class="box">
+  <b class="t">The first reconciliation</b>
+  <p>It starts from nil, and the audited opening balance appears in <b>Money in</b> as a line of its own — tick it. If the bank's own balance on 31 Dec 2025 was different (cheques then outstanding), ask the accountant to split the opening entry so those items are separate lines.</p>
+</div>
+
+<h2>7.3 Letting the bank's file do the ticking</h2>
+<ol class="steps">
+  <li>Download the statement from internet banking as <b>Excel (.xlsx) or CSV</b>.</li>
+  <li><b class="ui">⬆ Import the bank's statement</b> and choose the file.</li>
+  <li>The app pairs each statement line with a line in the books of the same amount — first by a cheque or transfer reference the bank quotes, then by the nearest date — and ticks it. It reports how many it found.</li>
+</ol>
+<p>The file needs a header row with a <b>Date</b> column and either <b>Debit</b> and <b>Credit</b> columns or one <b>Amount</b> column (with a Dr/Cr marker); title lines above it do not matter. The old <code>.xls</code> format and PDF statements cannot be read — save as .xlsx, or tick by hand.</p>
+
+<h2>7.4 What the bank shows that the books don't</h2>
+<p>Bank charges, interest, a direct credit: these appear in a list headed “On the bank's statement, not in the books”. Click <b class="ui">Enter as an expense</b> (or deposit) — the form opens already filled in with the date, amount and description; pick the account (for a charge, 7510 Bank charges) and save. You are brought back, and the line is ticked.</p>
+
+<div style="break-inside: avoid;">
+<h2>7.5 Finishing, and afterwards</h2>
+<ul>
+  <li><b class="ui">Finish</b> is available only when the difference is 0.00.</li>
+  <li>The finished statement then shows the proof: balance per the bank statement, plus deposits not yet credited, less payments not yet presented, equals the balance per the books. <b class="ui">⬇ Excel</b> gives it for the file.</li>
+  <li>A transaction ticked on a finished statement cannot be changed or voided. If one must be, <b class="ui">Reopen</b> the reconciliation — only the latest one of an account can be reopened. The next statement starts where this one ended.</li>
+</ul>
+</div>
+
+<!-- ================================================================== -->
+<h1 id="s8"><span class="n">8</span>Import from Excel</h1>
+<p class="lead">For catching up the months before Planet held the operations — January to June 2026 — without keying every form. Each row goes through the same rules as its form.</p>
+<ol class="steps">
+  <li><b class="ui">Books → Import from Excel → ⬇ Download the template</b>. It has a sheet to fill, a sheet explaining each column, and the chart of accounts and the sites to pick from.</li>
+  <li>Fill the <b>Transactions</b> sheet: one row per expense, deposit, transfer, bill or invoice. A row with <b>Type</b> left blank is another line of the transaction above it.</li>
+  <li>Choose the file and <b class="ui">Check the file</b>. Nothing is saved. Every problem is listed by row number.</li>
+  <li>Correct the file and check again until every row is in order, then <b class="ui">Import</b>. It goes in whole, or not at all.</li>
+</ol>
+<table class="small">
+  <tr><th style="width: 23%">Column</th><th>What goes in it</th></tr>
+  <tr><td>Type</td><td>Expense, Deposit, Transfer, Bill or Invoice. Blank = another line of the row above.</td></tr>
+  <tr><td>Date</td><td>The date of the transaction, bill or invoice.</td></tr>
+  <tr><td>Bank / cash account</td><td>Expense: paid from. Deposit: paid into. Transfer: from. Its name or code. Blank for a bill or invoice.</td></tr>
+  <tr><td>To account</td><td>Transfer only.</td></tr>
+  <tr><td>Name</td><td>Who was paid, who paid, the supplier or the customer.</td></tr>
+  <tr><td>Reference</td><td>Bill: the supplier's bill number. Invoice: the invoice number as issued. Otherwise the cheque or transfer reference.</td></tr>
+  <tr><td>Account</td><td>What it was for: the code, or code and name (6320 or 6320 Electricity).</td></tr>
+  <tr><td>Description · Amount</td><td>The line.</td></tr>
+  <tr><td>GST · Amount includes GST</td><td>None, Standard, Zero rated, Exempt or Out of scope · Y if the amount is the total including GST.</td></tr>
+  <tr><td>Tax invoice held · Tax invoice no. · TIN</td><td>Y to claim the GST on an expense or bill — the number and the supplier's TIN are then needed.</td></tr>
+  <tr><td>Due date · Currency · Rate to MVR</td><td>For a bill or invoice; blank currency is rufiyaa.</td></tr>
+  <tr><td>Amount received</td><td>A transfer between currencies: what arrived.</td></tr>
+  <tr><td>Payable / receivable account</td><td>Only if not the usual one.</td></tr>
+  <tr><td>Not in Planet</td><td>Y — only for a date from which Planet posts these itself — to confirm the row did not go through Planet.</td></tr>
+  <tr><td>Site · Memo</td><td>The site code, if the line belongs to a site · a note.</td></tr>
+</table>
+<ul>
+  <li>At most 2,000 transactions a file — a month or two at a time.</li>
+  <li>The same file is refused a second time, so nothing is entered twice.</li>
+  <li><b class="ui">Files imported</b> lists each import. <b class="ui">Undo…</b> voids every transaction of a file — unless one has since been paid, reconciled or closed, in which case nothing is undone and the reason is given.</li>
+</ul>
+
+<!-- ================================================================== -->
+<h1 id="s9"><span class="n">9</span>Journal entries</h1>
+<p class="lead"><b class="ui">Books → Journal entries</b> is the full record: every entry any form or rule has posted, and the place where the accountant makes entries no form covers.</p>
+<h2>Making a journal</h2>
+<ol class="steps">
+  <li><b class="ui">+ New journal</b>. Date and what the entry is for.</li>
+  <li>Each line: account, debit <i>or</i> credit, and where useful the site, project and party. A line on a dollar account also takes the dollar amount and rate.</li>
+  <li><b class="ui">Save as draft</b> to come back to it, or <b class="ui">Post entry</b>. It posts only if the two sides are equal. A draft can be edited or deleted; a posted entry cannot.</li>
+</ol>
+<h2>Correcting a posted journal</h2>
+<p>Open it, <b class="ui">Reverse this entry…</b>, give the reason. A mirror entry is posted and both stay on record, each pointing to the other. Then post the correct entry.</p>
+<h2>Reading the list</h2>
+<table>
+  <tr><th style="width: 26%">Kind</th><th>Where it came from</th></tr>
+  <tr><td>Journal</td><td>Entered by the accountant on this page.</td></tr>
+  <tr><td>Opening balances</td><td>The audited balances at 31 Dec 2025.</td></tr>
+  <tr><td>Transaction</td><td>Posted by a form — an expense, a bill, a payment …</td></tr>
+  <tr><td>Posted from operations</td><td>Posted by a rule from something recorded in Planet (section 10).</td></tr>
+  <tr><td>Reversal</td><td>The mirror of an entry that was changed, voided or reversed.</td></tr>
+</table>
+<p>Filter by kind, status or date. Every figure on every report opens the entries behind it, and an entry made by a form opens that form.</p>
+
+<!-- ================================================================== -->
+<h1 id="s10"><span class="n">10</span>Posting from Planet</h1>
+<p class="lead">Planet already records purchases, payments, payroll, claims and receipts, with their approvals. <b class="ui">Setup → Posting from Planet</b> gives each of those events its entry in the books — so they are not keyed again.</p>
+
+<h2>10.1 How it works</h2>
+<ul>
+  <li>There are ten rules. <b>Each is off until it is switched on.</b></li>
+  <li><b class="ui">Preview</b> (one rule) or <b class="ui">Preview all</b> shows exactly what would be posted over Planet's history — the count, the total, sample entries with their debits and credits, and anything held back. A preview only reads; nothing is saved.</li>
+  <li><b class="ui">Switch on</b> posts everything the rule covers from the “post from” date, and from then on the books are brought into step every twenty minutes. <b class="ui">Post now</b> does it at once.</li>
+  <li>Each event has one entry. A new event is posted; one that changed in Planet has its entry reversed and posted afresh; one that was deleted or voided is reversed. Running it again changes nothing.</li>
+  <li><b class="ui">Switch off</b> stops new postings and leaves the entries. A rule that is off can have its entries <b class="ui">taken out</b> — each is reversed, nothing is deleted.</li>
+</ul>
+
+<h2>10.2 The rules</h2>
+<table class="small">
+  <tr><th style="width: 19%">Rule</th><th style="width: 26%">Posts when</th><th>Entry</th></tr>
+  <tr><td>Claim invoices</td><td>A claim is certified and its tax invoice raised. (Reopened → reversed.)</td><td>Debit the client; credit contract revenue and output GST. Retention held → retention receivable. An advance invoiced → advances from clients, and off it as it is recovered.</td></tr>
+  <tr><td>Other project invoices</td><td>An invoice is raised in Receivables.</td><td>Debit the client; credit contract revenue and output GST.</td></tr>
+  <tr><td>Trading invoices and credit notes</td><td>A trading invoice is issued.</td><td>Debit the customer; credit resort supply sales and output GST. A credit note does the opposite.</td></tr>
+  <tr><td>Money received</td><td>A receipt is recorded.</td><td>Debit the bank the receipt names; credit the client or customer.</td></tr>
+  <tr><td>Local purchases</td><td>The order is signed by the signatory, or a cash purchase is approved on a voucher. Then when it is paid.</td><td>Debit the cost (by site) and input GST; credit the supplier. Paid: debit the supplier; credit the bank on the voucher.</td></tr>
+  <tr><td>Payment requisitions</td><td>A requisition is paid.</td><td>Debit its cost; credit the bank on the voucher. A salary advance → staff advances; a petty cash top-up → petty cash; a payroll payment → wages payable; an import charge → goods in transit.</td></tr>
+  <tr><td>Petty cash spending</td><td>The PM approves the entries.</td><td>Debit each cost; credit petty cash.</td></tr>
+  <tr><td>Payroll</td><td>A payroll run is locked.</td><td>Debit wages at gross, by site; credit wages payable. Advances recovered and fines come out of wages payable.</td></tr>
+  <tr><td>Subcontract valuations</td><td>A valuation is authorised; then paid.</td><td>Debit subcontract cost and input GST; credit subcontractors payable. Paid: debit the payable; credit the bank.</td></tr>
+  <tr><td>Import payments and store issues</td><td>A telegraphic transfer is paid; imported goods reach a site.</td><td>Debit goods in transit, with the exchange difference; credit the bank. On issue: debit materials; credit stock.</td></tr>
+</table>
+<div class="box">
+  <b class="t">Two questions that come up</b>
+  <p><b>Does approving a purchase order post anything?</b> No. A purchase is posted when Planet's cost ledger counts it as incurred — the order signed by the signatory, or the cash purchase approved on a voucher — and its payment when the payment is recorded.<br>
+  <b>Does a claim post when it is submitted?</b> No — when it is certified and its tax invoice exists.</p>
+</div>
+
+<h2>10.3 Held back, never guessed</h2>
+<p>When a rule cannot post an event, it leaves it out and says why, by name. The usual reasons and their cure:</p>
+<table class="small">
+  <tr><th style="width: 46%">Reason shown</th><th>What to do</th></tr>
+  <tr><td>voucher PV-… names no bank account</td><td>Open the voucher under <b class="ui">Operations → Payment vouchers</b> and set its debit account.</td></tr>
+  <tr><td>it is on no payment voucher …</td><td>The payment was recorded without a voucher; the bank it left from is not known. Enter that one by hand, or put it on a voucher.</td></tr>
+  <tr><td>cost head “…” has no account</td><td>Map it at the foot of the Posting page (10.4).</td></tr>
+  <tr><td>… statement reconciled to … — reopen that reconciliation first</td><td>The entry it would replace is on a finished reconciliation. Reopen it, post, re-finish.</td></tr>
+  <tr><td>The books are closed up to …</td><td>The event is dated in a closed period. The accountant decides: reopen, or adjust in the open period.</td></tr>
+</table>
+<p>A held event is picked up on the next run after it is put right.</p>
+
+<h2>10.4 Where each cost head lands</h2>
+<p>A cost in Planet carries a cost head; the books need an account. The table at the foot of the page shows the account each head posts to — Materials to 5110, Labour to 5130, and so on. Choose another account where the consultant wants it elsewhere. A head with no account holds its costs back until one is chosen.</p>
+
+<h2>10.5 Post events dated from</h2>
+<p>Events before this date are left to the opening balances and to hand entry. It starts as the first day of the books. Dollar invoices and receipts are taken at the company rate, because Planet stores no rate on them.</p>
+<div class="box warn">
+  <b class="t">Do not enter by hand what a rule posts</b>
+  <p>Once a rule is on, do not also key the same purchase, payment or invoice on a form — it would be in the books twice. Hand entry and Excel import are for what Planet does not hold: January to June 2026, and things that never go through Planet, such as bank charges. The forms help: from the date Planet holds that kind of thing, an expense, bill, invoice or deposit will not save until you tick <b class="ui">This is not in Planet</b>.</p>
+</div>
+
+<!-- ================================================================== -->
+<h1 id="s11"><span class="n">11</span>Reports</h1>
+<p class="lead">All reports use posted entries only, are in rufiyaa, and have <b class="ui">⬇ Excel</b>. Click any figure to see the entries behind it.</p>
+<table>
+  <tr><th style="width: 24%">Report</th><th>What it shows</th></tr>
+  <tr><td><b>Profit and loss</b></td><td>Income, cost of goods sold, gross profit, expenses, operating profit, other income and expenses, net profit — for any period. Choose <b class="ui">The whole company</b> or one site: a site's result is built from the lines that carry that site.</td></tr>
+  <tr><td><b>Balance sheet</b></td><td>Assets, liabilities and equity as at any date. Profit not yet moved to retained earnings is shown on its own lines under equity, so the sheet balances on any date; a tick confirms it.</td></tr>
+  <tr><td><b>Trial balance</b></td><td>Every account with its opening balance, the period's movement and its closing balance, and whether the books are in balance.</td></tr>
+  <tr><td><b>Account ledger</b></td><td>One account, line by line, with a running balance.</td></tr>
+  <tr><td><b>GST return</b></td><td>Section 12.</td></tr>
+  <tr><td><b>What we owe / What we are owed</b></td><td>Under Purchases and Sales: open bills and invoices by age, tied to the control accounts.</td></tr>
+  <tr><td><b>Register</b></td><td>Under Banking: each bank and cash account as its statement reads.</td></tr>
+  <tr><td><b>Reconciliation</b></td><td>Under Banking → Reconcile: each finished statement with its outstanding items.</td></tr>
+</table>
+<p>The auditors can be given the trial balance, the account ledgers and the journal list in Excel, and read access through a Finance sign-in.</p>
+
+<!-- ================================================================== -->
+<h1 id="s12"><span class="n">12</span>GST</h1>
+<p class="lead">The books follow the Maldives Inland Revenue Authority's published rules. The return page is laid out on MIRA's own forms: MIRA 205 (GST Return — General Goods and Services), the Output Tax Statement and the Input Tax Statement, version 25.1.</p>
+
+<h2>12.1 The GST treatment of a line</h2>
+<table>
+  <tr><th style="width: 20%">Treatment</th><th>Use it for</th><th style="width: 33%">Effect</th></tr>
+  <tr><td>Standard rated</td><td>Goods and services taxed at the general rate (the company setting, 8%).</td><td>GST is added. On a sale it goes to GST payable; on a purchase with a tax invoice, to input tax.</td></tr>
+  <tr><td>Zero rated</td><td>Taxable at 0% — exports, the essential goods MIRA lists.</td><td>No GST; reported on the return.</td></tr>
+  <tr><td>Exempt</td><td>Supplies MIRA exempts — electricity, water, education, health, financial services, rent of immovable property and others.</td><td>No GST; reported on the return.</td></tr>
+  <tr><td>Out of scope</td><td>A supply outside the Maldives' GST.</td><td>No GST; reported on the return.</td></tr>
+  <tr><td>No GST</td><td>Not a supply at all — a loan, the owner's money, a transfer, wages.</td><td>Not on the return.</td></tr>
+</table>
+<div class="box mira">
+  <b class="t">MIRA's rules the app applies</b>
+  <ul>
+    <li><b>Input tax needs a valid tax invoice.</b> It is claimed only where the box is ticked, and the app then requires the supplier's TIN and the tax invoice number — MIRA's input tax statement lists both. Otherwise the GST is part of the cost.</li>
+    <li><b>Twelve months.</b> Input tax cannot be claimed more than 12 months after the period it could first have been claimed in; the page flags such an invoice.</li>
+    <li><b>Excess input tax is not refunded</b> — it is carried forward against later output tax.</li>
+    <li><b>Records are kept five years.</b> Entries are permanent and numbered; attach the tax invoice to the transaction.</li>
+  </ul>
+</div>
+
+<h2>12.2 The return</h2>
+<ol class="steps">
+  <li><b class="ui">Reports → GST return</b>. Choose the taxable period — <b class="ui">Last month</b>, <b class="ui">Last quarter</b>, or any dates.</li>
+  <li>Read the warnings at the top first: a sale with no GST treatment, a purchase missing the TIN or invoice number, an invoice over twelve months old. Put them right at the source.</li>
+  <li>The boxes are those of MIRA 205, rounded to the nearest rufiyaa as the form asks.</li>
+</ol>
+<table class="small">
+  <tr><th style="width: 9%">Box</th><th>On the form</th><th style="width: 34%">Where the figure comes from</th></tr>
+  <tr><td>1</td><td>Sales of supplies subject to GST at 8% (inclusive of GST)</td><td rowspan="4">Invoices and deposits dated in the period, by the treatment on each line.</td></tr>
+  <tr><td>2</td><td>Sales of zero-rated supplies</td></tr>
+  <tr><td>3</td><td>Sales of exempt supplies</td></tr>
+  <tr><td>4</td><td>Sales of supplies out of scope of GST</td></tr>
+  <tr><td>5</td><td>Total sales (boxes 1 to 4)</td><td>Added up.</td></tr>
+  <tr><td>6</td><td>Output tax</td><td>The GST on standard-rated sales.</td></tr>
+  <tr><td>7</td><td>Input tax</td><td>The GST on expenses and bills with a tax invoice held.</td></tr>
+  <tr><td>8, 9</td><td>GST on bad debts written off and certain credit notes; GST collected in excess</td><td>Not from the books — fill in by hand if they apply.</td></tr>
+  <tr><td>10</td><td>GST liability for the period (6 − 7 − 8 + 9)</td><td>Worked out.</td></tr>
+</table>
+<p>The page also shows the date the return and payment are due — the 28th of the month after the period ends.</p>
+
+<h2>12.3 The two statements</h2>
+<p>The tabs under the boxes list every sale (<b class="ui">Output tax statement</b>) and every purchase with a tax invoice (<b class="ui">Input tax statement</b>). <b class="ui">⬇ Excel, in MIRA's layout</b> gives each in MIRA's own columns, ready to file with the return. The third tab, <b class="ui">Other entries on the GST accounts</b>, lists anything else that touched those accounts in the period — the payment to MIRA, a journal — so nothing there is unexplained.</p>
+<div class="box warn">
+  <b class="t">Before filing</b>
+  <p>Have the consultant check a period against MIRAconnect. The app does not yet work out: GST paid to Customs on imports as input tax; excess input tax brought forward from an earlier period; a split by taxable activity number; boxes 8, 9 and 11 to 13.</p>
+</div>
+
+<!-- ================================================================== -->
+<h1 id="s13"><span class="n">13</span>Month-end checklist</h1>
+<ol class="steps">
+  <li><b>Everything entered.</b> Expenses, deposits and transfers for the month; bills received; invoices issued outside Planet.</li>
+  <li><b>Posting from Planet.</b> On <b class="ui">Setup → Posting from Planet</b>, <b class="ui">Preview all</b>: nothing left to post for the rules that are on, and the held-back list cleared or explained.</li>
+  <li><b>Reconcile every bank and cash account</b> to its statement; enter the bank's charges and interest; finish each.</li>
+  <li><b>What we owe / What we are owed</b>: both agree with the books (the green line). Chase what is overdue.</li>
+  <li><b>Accountant's journals</b>: accruals, prepayments, depreciation, corrections.</li>
+  <li><b>Review</b> the trial balance, profit and loss and balance sheet. Look into anything unexpected by clicking through to its entries.</li>
+  <li><b>GST return</b> for the period if one is due: clear the warnings, download the two statements, file and pay by the 28th; enter the payment to MIRA as an expense to GST payable.</li>
+  <li><b>Close the month</b>: <b class="ui">Setup → Books settings</b>, set the lock date to the last day of the month.</li>
+</ol>
+
+<!-- ================================================================== -->
+<h1 id="s14"><span class="n">14</span>Messages you may see</h1>
+<table class="small">
+  <tr><th style="width: 44%">Message</th><th>Meaning, and what to do</th></tr>
+  <tr><td>The books start on 01 Jan 2026. Balances before that go in as opening balances.</td><td>The date is before the books. For something unpaid from 2025 use an opening bill or invoice; otherwise correct the date.</td></tr>
+  <tr><td>The books are closed up to …</td><td>The date falls in a closed period. Date it after the lock, or have the period reopened under Books settings.</td></tr>
+  <tr><td>… from … is already entered, as BILL-012.</td><td>That supplier's bill number is in the books already. Open the one named.</td></tr>
+  <tr><td>… has a payment against it (BPAY-004) — void the payment first …</td><td>A paid bill or invoice is fixed. Void the payment, correct, pay again.</td></tr>
+  <tr><td>A payment isn't changed — void it and enter it again.</td><td>As it says.</td></tr>
+  <tr><td>… is on the … statement reconciled to … Reopen that reconciliation first.</td><td>The transaction is ticked on a finished reconciliation. Reopen it (the latest one only), correct, re-finish.</td></tr>
+  <tr><td>To claim the GST, enter the supplier's TIN and the tax invoice number …</td><td>Enter both, or untick the tax invoice box so the GST goes into the cost.</td></tr>
+  <tr><td>From …, payments made on a voucher in Planet post to the books by themselves … Tick the box to confirm this one is not in Planet.</td><td>Posting from Planet is on for this kind of entry. If it went through Planet, do not enter it. If it did not — a bank charge, say — tick the box and save.</td></tr>
+  <tr><td>Those bills are in different currencies …</td><td>One payment settles one currency. Make a payment for each.</td></tr>
+  <tr><td>It doesn't agree yet — the statement says …</td><td>The reconciliation still has a difference. Look for a line not ticked, a missing bank charge, or a wrong closing balance.</td></tr>
+  <tr><td>This file was already imported on …</td><td>The same spreadsheet was brought in before. If it was a mistake, undo that import first.</td></tr>
+  <tr><td>The chart has no account in the role …</td><td>An account the app relies on was closed. Reopen it on the chart of accounts.</td></tr>
+  <tr><td>The books are open to Finance, the Director and the signatory. / Finance keeps the books.</td><td>Your role can't open, or can't change, that page.</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h1 id="s15"><span class="n">15</span>What is not in the app yet</h1>
+<p class="lead">So nobody looks for them, or assumes the books cover them. Until they are built, the accountant handles these by journal.</p>
+<div class="two">
+<ul>
+  <li>Supplier and customer credit notes on the Finance forms</li>
+  <li>A payment on account (not set against a bill or invoice)</li>
+  <li>Writing off a small balance</li>
+  <li>Withholding tax on a payment</li>
+  <li>Month and year-end close with the move of profit to retained earnings (the lock date exists)</li>
+  <li>Cash flow statement</li>
+  <li>Fixed asset register and depreciation</li>
+  <li>Recurring journals, budgets</li>
+  <li>Revaluing foreign-currency balances at a period end</li>
+  <li>From Planet: moving goods in transit into stock when goods are received; trading cost of sales at despatch; a subcontract advance recovered on a valuation</li>
+  <li>GST: import GST as input tax; excess brought forward; the split by taxable activity; the back page of MIRA 205</li>
+  <li>The books of Sandplanet Marine — a separate company, to follow</li>
+</ul>
+</div>
+<div class="box" style="margin-top: 10pt;">
+  <b class="t">Questions and changes</b>
+  <p>The plan and the status of each part are kept with the system (FINANCE_BUILD_BRIEF). When MIRA issues a new version of its forms, or the consultant wants a posting rule done differently, raise it and the app is brought up to date.</p>
+</div>
+
+</body>
+</html>

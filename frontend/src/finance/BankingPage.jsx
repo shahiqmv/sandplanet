@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, apiDownload, apiUpload } from "../api.js";
 import { Btn, Chip, card, ghostButton, inputStyle } from "../ui.jsx";
 import { amt, fmtDate, money, today, tree } from "./shared.jsx";
-import { LinesTable, MONEY, VoidBar, blank, field, lab, lineSums, linesFromTxn, linesPayload, num, useBooks } from "./forms.jsx";
+import { LinesTable, MONEY, PlanetGuard, VoidBar, blank, field, guarded, lab, lineSums, linesFromTxn, linesPayload, num, useBooks } from "./forms.jsx";
 
 const TITLE = { EXPENSE: "Expense", DEPOSIT: "Deposit", TRANSFER: "Transfer" };
 // payments made and received live with their bills and invoices
@@ -19,7 +19,8 @@ function MoneyForm({ type, id, presetAccount, go }) {
   const { meta, fx, banks, pick } = books;
   const expense = type === "EXPENSE";
   const [h, setH] = useState({ date: today(), account: presetAccount || "", party: "", party_tin: "", reference: "",
-                               memo: "", fx_rate: "", tax_invoice_no: "", tax_invoice_date: "", tax_invoice_held: false });
+                               memo: "", fx_rate: "", tax_invoice_no: "", tax_invoice_date: "", tax_invoice_held: false,
+                               outside_planet: false });
   const [lines, setLines] = useState([blank(), blank()]);
   const [inclusive, setInclusive] = useState(false);
   const [file, setFile] = useState(null);
@@ -52,7 +53,8 @@ function MoneyForm({ type, id, presetAccount, go }) {
       setExisting(t);
       setH({ date: t.date, account: String(t.account), party: t.party, party_tin: t.party_tin, reference: t.reference,
              memo: t.memo, fx_rate: t.fx_rate || "", tax_invoice_no: t.tax_invoice_no,
-             tax_invoice_date: t.tax_invoice_date || "", tax_invoice_held: t.tax_invoice_held });
+             tax_invoice_date: t.tax_invoice_date || "", tax_invoice_held: t.tax_invoice_held,
+             outside_planet: !!t.outside_planet });
       setLines(linesFromTxn(t));
     }).catch((e) => setError(e.message));
   }, [id, pick.length]);
@@ -77,6 +79,8 @@ function MoneyForm({ type, id, presetAccount, go }) {
 
   const isVoid = existing?.status === "VOID";
   const hasGst = gst > 0;
+  const guard = meta?.guard?.[type];
+  const unconfirmed = guarded(guard, h.date) && !h.outside_planet;
   return (
     <div className="t-page">
       <div className="f-bar">
@@ -136,6 +140,9 @@ function MoneyForm({ type, id, presetAccount, go }) {
         </div>
       )}
 
+      <PlanetGuard guard={guard} date={h.date} checked={h.outside_planet} disabled={isVoid}
+                   onChange={(v) => setH({ ...h, outside_planet: v })} />
+
       <div style={{ ...card, marginTop: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
           <label style={field}>{lab("Memo")}
@@ -150,7 +157,7 @@ function MoneyForm({ type, id, presetAccount, go }) {
       {error && <p className="f-bad" style={{ fontSize: 13 }}>{error}</p>}
       {!isVoid && (
         <div className="f-bar" style={{ marginTop: 12 }}>
-          <Btn disabled={busy || !h.account || total <= 0} onClick={save}>{busy ? "Saving…" : existing ? "Save changes" : `Save ${TITLE[type].toLowerCase()}`}</Btn>
+          <Btn disabled={busy || !h.account || total <= 0 || unconfirmed} onClick={save}>{busy ? "Saving…" : existing ? "Save changes" : `Save ${TITLE[type].toLowerCase()}`}</Btn>
           {existing && <VoidBar txnId={existing.id} onError={setError} onDone={() => go("banking", `reg-${existing.account}`)} />}
           {existing && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
             Saving a change reverses the old entry and posts a new one — the history stays in the journals.</span>}

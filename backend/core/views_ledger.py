@@ -390,7 +390,7 @@ def _txn(t, lines=True):
         "void_reason": t.void_reason,
         "created_by": t.created_by.full_name if t.created_by_id else "",
         "party_ref": t.party_ref_id, "due_date": t.due_date,
-        "is_opening": t.is_opening,
+        "is_opening": t.is_opening, "outside_planet": t.outside_planet,
     }
     if t.type in ("BILL", "INVOICE"):
         paid = getattr(t, "paid", 0) if t.status == "POSTED" else 0
