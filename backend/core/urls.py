@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
-    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_cameras as cameras_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_ledger as ledger_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
@@ -693,6 +693,22 @@ urlpatterns = [
          name="employee-biometric"),
     path("employees/<int:pk>/cost-report", hr.employee_cost_report,
          name="employee-cost-report"),
+    # The books — double-entry general ledger (FINANCE_BUILD_BRIEF.md)
+    path("ledger/accounts", ledger_api.accounts, name="ledger-accounts"),
+    path("ledger/accounts/<int:pk>", ledger_api.account_detail,
+         name="ledger-account"),
+    path("ledger/accounts/<int:pk>/ledger", ledger_api.account_ledger,
+         name="ledger-account-ledger"),
+    path("ledger/setup", ledger_api.setup, name="ledger-setup"),
+    path("ledger/sync-banks", ledger_api.sync_banks, name="ledger-sync-banks"),
+    path("ledger/settings", ledger_api.settings, name="ledger-settings"),
+    path("ledger/journals", ledger_api.journals, name="ledger-journals"),
+    path("ledger/journals/<int:pk>", ledger_api.journal_detail,
+         name="ledger-journal"),
+    path("ledger/journals/<int:pk>/<str:action>", ledger_api.journal_action,
+         name="ledger-journal-action"),
+    path("ledger/trial-balance", ledger_api.trial_balance,
+         name="ledger-trial-balance"),
     path("fines", fines_api.fines, name="fines"),
     path("fines/workers", fines_api.fine_workers, name="fine-workers"),
     path("fines/offences", fines_api.offences, name="fine-offences"),

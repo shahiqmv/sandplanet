@@ -34,7 +34,10 @@ TEXT = {
     "brand_short_code": "SP",
 }
 
-FEATURES = {"trading": True, "rental": False, "profile": True}
+# "books": the Finance app and general ledger (FINANCE_BUILD_BRIEF.md). On
+# for Sand Planet; a sister company keeps its own books later, so its
+# instance switches this off in its `features` parameter.
+FEATURES = {"trading": True, "rental": False, "profile": True, "books": True}
 
 # Sister apps offered in the header switcher: [{"key","name","url"}]. The
 # current instance's own app is added by the endpoint.
@@ -79,6 +82,10 @@ def brand(fresh=False):
             raw = None
     if isinstance(raw, dict):
         feats.update({k: bool(v) for k, v in raw.items() if k in FEATURES})
+        # An instance that spells out its features (a sister company) keeps
+        # its own books only once it says so — not by inheriting the default.
+        if "books" not in raw:
+            feats["books"] = False
     apps = p.get("apps")
     if isinstance(apps, str):
         try:
@@ -116,6 +123,9 @@ def public_dict(request=None):
     if b["features"]["trading"]:
         apps.insert(0, {"key": "trading", "name": f"{b['brand_name'].title()} Trading",
                         "url": f"{prefix}/t/"})
+    if b["features"]["books"]:
+        apps.insert(0, {"key": "finance", "name": f"{b['brand_name'].title()} Finance",
+                        "url": f"{prefix}/f/"})
     apps.insert(0, {"key": "planet", "name": f"{b['brand_name'].title()} Projects",
                     "url": f"{prefix}/"})
     return {

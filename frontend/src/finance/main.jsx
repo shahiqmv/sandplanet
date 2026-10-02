@@ -1,0 +1,30 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+// Self-hosted fonts (design brief: island bandwidth — no CDN)
+import "@fontsource/barlow-condensed/600.css";
+import "@fontsource/barlow-condensed/700.css";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/inter/700.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+import App from "./App.jsx";
+import ErrorBoundary from "../ErrorBoundary.jsx";
+import { loadBrand } from "../brand.js";
+import "../index.css";
+import "../trading/trading.css";
+import "./finance.css";
+
+loadBrand();
+
+// Sand Planet Finance — payments, receivables and the books on their own
+// surface (FINANCE_BUILD_BRIEF.md). Same server, same session, same API
+// origin as Planet; its own entry and its own navigation.
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  </React.StrictMode>
+);

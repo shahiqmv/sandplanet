@@ -1,0 +1,41 @@
+/* Sand Planet Finance — on top of index.css tokens and the trading shell.
+   Charcoal and gold, so nobody mistakes it for Projects (blue) or Marine
+   (teal) and keys an entry into the wrong app. */
+
+.f-app .t-header { background: #23272f; }
+.f-app .t-brand-arm { color: #e0b252; }
+.f-app .t-nav-item.is-active { border-bottom-color: #e0b252; }
+.f-app .t-main { max-width: 1320px; }
+
+.f-sub {
+  display: flex; gap: 2px; padding: 0 24px; background: #fff;
+  border-bottom: 1px solid var(--line, #dcd5c6); overflow-x: auto;
+}
+.f-sub-item {
+  background: none; border: 0; font: inherit; font-size: 13.5px; font-weight: 500;
+  color: var(--muted, #5a6b78); padding: 10px 14px; cursor: pointer;
+  border-bottom: 2.5px solid transparent; white-space: nowrap;
+}
+.f-sub-item:hover { color: var(--ink, #182430); }
+.f-sub-item.is-active { color: var(--ink, #182430); font-weight: 700; border-bottom-color: #c9952c; }
+
+.f-num { text-align: right; font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.f-table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--paper, #fff); }
+.f-table th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted, #5a6b78); padding: 8px 10px; border-bottom: 2px solid var(--line, #dcd5c6); white-space: nowrap; }
+.f-table td { padding: 7px 10px; border-bottom: 1px solid var(--line, #eee7d9); vertical-align: top; }
+.f-table tr.f-group td { font-weight: 700; background: #faf7f0; }
+.f-table tr.f-total td { font-weight: 800; border-top: 2px solid var(--ink, #182430); border-bottom: 0; }
+.f-table tr.f-click { cursor: pointer; }
+.f-table tr.f-click:hover td { background: #fbf6ea; }
+.f-link { background: none; border: 0; padding: 0; font: inherit; color: var(--navy, #16527e); text-decoration: underline; cursor: pointer; }
+
+.f-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.f-bar .spacer { flex: 1; }
+.f-ok { color: var(--green-fg, #1a7f37); font-weight: 700; }
+.f-bad { color: var(--red-fg, #b3261e); font-weight: 700; }
+
+.f-lines input, .f-lines select { width: 100%; box-sizing: border-box; padding: 6px 8px;
+  border: 1px solid var(--line, #dcd5c6); border-radius: 5px; font: inherit; font-size: 13px; background: #fff; }
+.f-lines td { padding: 3px 4px; border-bottom: 0; }
+.f-lines input.f-amt { text-align: right; font-family: "IBM Plex Mono", monospace; }

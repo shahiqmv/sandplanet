@@ -30,7 +30,9 @@ class BrandTests(BaseCase):
         self.assertEqual(r.data["colours"]["accent"], "#29ABE2")
         self.assertTrue(r.data["features"]["trading"])
         self.assertFalse(r.data["features"]["rental"])
-        self.assertEqual([a["key"] for a in r.data["apps"]], ["planet", "trading"])
+        # Finance joined the switcher with the books (2026-10-02)
+        self.assertEqual([a["key"] for a in r.data["apps"]],
+                         ["planet", "finance", "trading"])
         self.assertIsNone(r.data["wordmark_white_url"])
 
     def test_a_sister_instance_sets_its_own_brand(self):
@@ -50,7 +52,9 @@ class BrandTests(BaseCase):
         self.assertEqual(r["short_code"], "SPM")
         self.assertEqual(r["colours"]["primary_deep"], "#0E1C29")
         self.assertEqual(r["colours"]["primary"], "#16527E")      # untouched → default
-        self.assertEqual(r["features"], {"trading": False, "rental": True, "profile": True})
+        # a sister company keeps no books until its features say so
+        self.assertEqual(r["features"], {"trading": False, "rental": True,
+                                         "profile": True, "books": False})
         self.assertEqual([a["key"] for a in r["apps"]], ["planet", "planet-sp"])   # no trading
         # the PDF templates read the same values through the tag
         t = Template('{% load brand %}{% brand "primary_deep" %}|{% brand "accent" %}')
@@ -97,4 +101,5 @@ class BrandTests(BaseCase):
     def test_the_switcher_carries_the_instances_own_prefix(self):
         with override_settings(FORCE_SCRIPT_NAME="/marine"):
             r = self.client.get("/api/v1/brand").data
-        self.assertEqual([a["url"] for a in r["apps"]], ["/marine/", "/marine/t/"])
+        self.assertEqual([a["url"] for a in r["apps"]],
+                         ["/marine/", "/marine/f/", "/marine/t/"])

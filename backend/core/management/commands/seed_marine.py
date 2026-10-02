@@ -24,7 +24,8 @@ COMPANY = [
     ("brand_short_code", "SPM"),
     # The palette is applied by the brand_palette command (the "marine"
     # preset) after the parameters below, so it stays in one place.
-    ("features", {"trading": False, "rental": True, "profile": False}),
+    ("features", {"trading": False, "rental": True, "profile": False,
+                  "books": False}),      # Marine's accounting comes later
     ("apps", [{"key": "sandplanet", "name": "Sand Planet Projects", "url": "/"}]),
 ]
 

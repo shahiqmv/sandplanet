@@ -76,6 +76,15 @@ if (settings.BASE_DIR.parent / "frontend" / "dist" / "t.html").exists():
                 TemplateView.as_view(template_name="t.html"),
                 name="trading-shell"))
 
+# Finance app shell (frontend/dist/f.html) — the books and the finance
+# pages on their own surface at /f/ (FINANCE_BUILD_BRIEF.md). Same session,
+# same API origin, own nav.
+if (settings.BASE_DIR.parent / "frontend" / "dist" / "f.html").exists():
+    urlpatterns.append(
+        re_path(r"^f(/.*)?$",
+                TemplateView.as_view(template_name="f.html"),
+                name="finance-shell"))
+
 # Serve the built SPA (frontend/dist) same-origin — used by the team-review
 # tunnel and by production; harmless in dev (dist may not exist).
 if (settings.BASE_DIR.parent / "frontend" / "dist" / "index.html").exists():

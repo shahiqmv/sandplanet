@@ -8,7 +8,8 @@ import react from "@vitejs/plugin-react";
 //
 // Entry points sharing one build: the desktop SPA (index.html), Planet
 // Mobile, the installable PWA (m.html → served by Django at /m/), the client
-// portal (portal.html → /portal/) and Sand Planet Trading (t.html → /t/).
+// portal (portal.html → /portal/), Sand Planet Trading (t.html → /t/) and
+// Sand Planet Finance (f.html → /f/).
 export default defineConfig(({ mode }) => ({
   base: mode === "production" ? "/static/" : "/",
   plugins: [react()],
@@ -19,6 +20,7 @@ export default defineConfig(({ mode }) => ({
         mobile: resolve(__dirname, "m.html"),
         portal: resolve(__dirname, "portal.html"),
         trading: resolve(__dirname, "t.html"),
+        finance: resolve(__dirname, "f.html"),
       },
     },
   },

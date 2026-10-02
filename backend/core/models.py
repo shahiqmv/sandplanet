@@ -8677,3 +8677,166 @@ class WorkerFine(models.Model):
 
     def __str__(self):
         return f"{self.ref} {self.employee.emp_no} {self.amount}"
+
+
+# ===== The books: double-entry general ledger (FINANCE_BUILD_BRIEF.md) =====
+# The company's own set of books, opened 1 January 2026 on the audited 2025
+# balances (owner 2026-10-02). CostPosting above is a COST ledger — what a
+# project cost; this is the accounting one — every entry balanced, posted
+# entries permanent, statements in rufiyaa.
+
+class LedgerAccount(models.Model):
+    """One account in the chart of accounts. The chart ships with a standard
+    set; the company's accounting consultant creates, renames, re-codes and
+    re-groups accounts themselves."""
+
+    # QuickBooks' own account types, in its order (owner 2026-10-02: "I
+    # actually need QB style accounting"). The auditors keep their copy of
+    # the books in QuickBooks, so the chart maps one-to-one onto theirs, and
+    # the type alone places an account on the balance sheet or the P&L.
+    class Type(models.TextChoices):
+        BANK = "BANK", "Bank"
+        AR = "AR", "Accounts receivable"
+        OTHER_CURRENT_ASSET = "OTHER_CURRENT_ASSET", "Other current assets"
+        FIXED_ASSET = "FIXED_ASSET", "Fixed assets"
+        OTHER_ASSET = "OTHER_ASSET", "Other assets"
+        AP = "AP", "Accounts payable"
+        CREDIT_CARD = "CREDIT_CARD", "Credit card"
+        OTHER_CURRENT_LIABILITY = ("OTHER_CURRENT_LIABILITY",
+                                   "Other current liabilities")
+        LONG_TERM_LIABILITY = "LONG_TERM_LIABILITY", "Long term liabilities"
+        EQUITY = "EQUITY", "Equity"
+        INCOME = "INCOME", "Income"
+        COGS = "COGS", "Cost of goods sold"
+        EXPENSE = "EXPENSE", "Expenses"
+        OTHER_INCOME = "OTHER_INCOME", "Other income"
+        OTHER_EXPENSE = "OTHER_EXPENSE", "Other expenses"
+
+    DEBIT_NORMAL = ("BANK", "AR", "OTHER_CURRENT_ASSET", "FIXED_ASSET",
+                    "OTHER_ASSET", "COGS", "EXPENSE", "OTHER_EXPENSE")
+    BALANCE_SHEET = ("BANK", "AR", "OTHER_CURRENT_ASSET", "FIXED_ASSET",
+                     "OTHER_ASSET", "AP", "CREDIT_CARD",
+                     "OTHER_CURRENT_LIABILITY", "LONG_TERM_LIABILITY",
+                     "EQUITY")
+
+    code = models.CharField(max_length=12, unique=True)
+    name = models.CharField(max_length=120)
+    type = models.CharField(max_length=24, choices=Type.choices)
+    # A sub-account, QuickBooks-style: always the same type as its parent.
+    parent = models.ForeignKey("self", on_delete=models.PROTECT, null=True,
+                               blank=True, related_name="children")
+    # A heading in the chart: holds other accounts, takes no postings.
+    is_group = models.BooleanField(default=False)
+    # Set on an account held in another currency (a USD bank account): every
+    # line on it must carry that currency's own amount beside the rufiyaa.
+    currency = models.CharField(max_length=3, blank=True)
+    # The role automatic postings look an account up by ("AP_TRADE",
+    # "INPUT_GST"). A rule never names a code, so the consultant can rename
+    # or re-code the account without breaking it. Blank on ordinary accounts.
+    system_key = models.CharField(max_length=40, blank=True)
+    bank_account = models.OneToOneField(
+        CompanyBankAccount, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="ledger_account")
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["system_key"], condition=~models.Q(system_key=""),
+                name="uniq_ledger_system_key"),
+        ]
+
+    def __str__(self):
+        return f"{self.code} {self.name}"
+
+    @property
+    def debit_normal(self):
+        return self.type in self.DEBIT_NORMAL
+
+
+class JournalEntry(models.Model):
+    """One balanced entry. A draft can be changed; a posted entry never is —
+    it is corrected by a reversal, and both stay on the record."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        POSTED = "POSTED", "Posted"
+
+    class Kind(models.TextChoices):
+        MANUAL = "MANUAL", "Journal"
+        OPENING = "OPENING", "Opening balances"
+        REVERSAL = "REVERSAL", "Reversal"
+        AUTO = "AUTO", "Posted from operations"
+
+    ref = models.CharField(max_length=20, blank=True, db_index=True)  # JV-0001 at posting
+    date = models.DateField()
+    kind = models.CharField(max_length=10, choices=Kind.choices,
+                            default=Kind.MANUAL)
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.DRAFT)
+    memo = models.TextField(blank=True)
+    # What caused an automatic entry, so a number opens its document and the
+    # same event is never posted twice.
+    source_type = models.CharField(max_length=30, blank=True)
+    source_id = models.PositiveIntegerField(null=True, blank=True)
+    source_ref = models.CharField(max_length=40, blank=True)
+    reversal_of = models.OneToOneField(
+        "self", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="reversed_by")
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+        indexes = [models.Index(fields=["status", "date"]),
+                   models.Index(fields=["source_type", "source_id"])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["ref"], condition=~models.Q(ref=""),
+                name="uniq_journal_ref"),
+        ]
+
+    def __str__(self):
+        return self.ref or f"draft #{self.pk}"
+
+
+class JournalLine(models.Model):
+    """One side of an entry, in rufiyaa. Exactly one of debit / credit is
+    set. A line in another currency keeps its own amount and the rate."""
+
+    entry = models.ForeignKey(JournalEntry, on_delete=models.CASCADE,
+                              related_name="lines")
+    line_no = models.PositiveIntegerField()
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT,
+                                related_name="lines")
+    description = models.CharField(max_length=300, blank=True)
+    debit = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    credit = models.DecimalField(max_digits=16, decimal_places=2, default=0)
+    currency = models.CharField(max_length=3, default="MVR")
+    amount_fc = models.DecimalField(max_digits=16, decimal_places=2,
+                                    null=True, blank=True)
+    fx_rate = models.DecimalField(max_digits=14, decimal_places=6,
+                                  null=True, blank=True)
+    # Where it belongs, so project and site results come out of the same
+    # books as the company's.
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+    cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
+                                  null=True, blank=True, related_name="+")
+    party = models.CharField(max_length=160, blank=True)  # customer / supplier / person
+
+    class Meta:
+        ordering = ["entry_id", "line_no"]
+        indexes = [models.Index(fields=["account", "entry"])]
