@@ -35,9 +35,13 @@ export function ProfitLossPage({ go, settings }) {
   const [to, setTo] = useState(today());
   const [r, setR] = useState(null);
   const [error, setError] = useState(null);
+  const [site, setSite] = useState("");             // "" = the whole company
+  const [sites, setSites] = useState([]);
+  useEffect(() => { api("/sites").then((x) => setSites(Array.isArray(x) ? x : x.results || [])).catch(() => {}); }, []);
+  const q = `from=${from}&to=${to}${site ? `&site=${site}` : ""}`;
   useEffect(() => {
-    api(`/ledger/reports/pnl?from=${from}&to=${to}`).then(setR).catch((e) => setError(e.message));
-  }, [from, to]);
+    api(`/ledger/reports/pnl?${q}`).then(setR).catch((e) => setError(e.message));
+  }, [q]);
   const s = r?.sections;
   const empty = s && Object.values(s).every((x) => x.rows.length === 0);
   return (
@@ -45,17 +49,21 @@ export function ProfitLossPage({ go, settings }) {
       <div className="f-bar">
         <h1 className="t-h1" style={{ margin: 0 }}>Profit and loss</h1>
         <span className="spacer" />
-        <Btn variant="secondary" onClick={() => apiDownload(`/ledger/reports/pnl?from=${from}&to=${to}&export=xlsx`).catch((e) => setError(e.message))}>⬇ Excel</Btn>
+        <Btn variant="secondary" onClick={() => apiDownload(`/ledger/reports/pnl?${q}&export=xlsx`).catch((e) => setError(e.message))}>⬇ Excel</Btn>
       </div>
       <div className="f-bar">
         <input type="date" style={{ ...inputStyle, width: 150 }} value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From" />
         <span style={{ color: "var(--muted)" }}>to</span>
         <input type="date" style={{ ...inputStyle, width: 150 }} value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" />
         <button className="f-link" style={{ fontSize: 12.5 }} onClick={() => { setFrom(`${y}-01-01`); setTo(today()); }}>This year to date</button>
+        <select style={{ ...inputStyle, width: 190 }} value={site} onChange={(e) => setSite(e.target.value)} aria-label="Site">
+          <option value="">The whole company</option>
+          {sites.map((x) => <option key={x.id} value={x.id}>{x.code} only</option>)}
+        </select>
         {settings?.books_start_date && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>books open {fmtDate(settings.books_start_date)}</span>}
       </div>
       {error && <p className="f-bad">{error}</p>}
-      {!r ? <div style={card}>Loading…</div> : empty ? <div style={card}>No income or expense is posted in this period yet.</div> : (
+      {!r ? <div style={card}>Loading…</div> : empty ? <div style={card}>{site ? "Nothing in this period is marked to this site. A line belongs to a site when the site is chosen on it." : "No income or expense is posted in this period yet."}</div> : (
         <div style={{ ...card, padding: 0 }}>
           <table className="f-table">
             <thead><tr><th>{fmtDate(r.date_from)} to {fmtDate(r.date_to)}</th><th style={{ textAlign: "right" }}>MVR</th></tr></thead>

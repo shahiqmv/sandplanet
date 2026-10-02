@@ -265,3 +265,25 @@ class StatementTests(BooksBase):
         m = self.c.get("/api/v1/ledger/meta").data
         self.assertEqual(m["gst_rate"], books.gst_rate())
         self.assertIn("Supplier", m["payees"])
+
+
+class SiteResultTests(BooksBase):
+    def test_one_sites_profit_and_loss(self):
+        from .models import Site
+        sjr = Site.objects.create(code="SJR", name="SJR")
+        self.txn("EXPENSE", party="STELCO", lines=[
+            {"account": self.acc["6320"].id, "amount": "1000",
+             "site": sjr.id},
+            {"account": self.acc["6320"].id, "amount": "400"}])
+        self.txn("DEPOSIT", party="Client", lines=[
+            {"account": self.acc["4120"].id, "amount": "5000",
+             "site": sjr.id}])
+        url = "/api/v1/ledger/reports/pnl?from=2026-01-01&to=2026-12-31"
+        whole = self.c.get(url).data
+        self.assertEqual(whole["net_profit"], D("3600.00"))
+        one = self.c.get(f"{url}&site={sjr.id}").data
+        self.assertEqual((one["net_profit"], one["site"]["code"]),
+                         (D("4000.00"), "SJR"))
+        self.assertEqual(self.c.get(f"{url}&site=99999").status_code, 404)
+        self.assertIn("spreadsheet", self.c.get(
+            f"{url}&site={sjr.id}&export=xlsx")["Content-Type"])

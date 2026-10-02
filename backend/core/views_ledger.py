@@ -848,8 +848,16 @@ def report_pnl(request):
     from . import books
     if (bad := _read(request)):
         return bad
+    site = None
+    if request.GET.get("site"):
+        from .models import Site
+        site = Site.objects.filter(pk=request.GET["site"]).first()
+        if site is None:
+            return Response({"detail": "No such site."}, status=404)
     r = books.profit_and_loss(ledger._as_date(request.GET.get("from")),
-                              ledger._as_date(request.GET.get("to")))
+                              ledger._as_date(request.GET.get("to")),
+                              site.id if site else None)
+    r["site"] = {"id": site.id, "code": site.code} if site else None
     if request.GET.get("export") == "xlsx":
         s = r["sections"]
         rows = []
@@ -864,7 +872,7 @@ def report_pnl(request):
         for key in ("OTHER_INCOME", "OTHER_EXPENSE"):
             rows += [[s[key]["label"], None]] + _statement_rows(s[key]) \
                 + [[f"Total {s[key]['label'].lower()}", s[key]["total"]]]
-        return _xlsx("Profit and loss",
+        return _xlsx("Profit and loss" + (f" — {site.code}" if site else ""),
                      f"{r['date_from']:%d %b %Y} to {r['date_to']:%d %b %Y} "
                      "· MVR", ["", "MVR"], rows,
                      ["NET PROFIT", r["net_profit"]], [52, 18],

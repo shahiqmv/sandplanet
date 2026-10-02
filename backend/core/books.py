@@ -894,10 +894,13 @@ def register(account, date_from=None, date_to=None):
 
 # ---- the statements ------------------------------------------------------------
 
-def _balances(date_from, date_to, types):
-    """account id → debit less credit over the period (posted only)."""
+def _balances(date_from, date_to, types, site=None):
+    """account id → debit less credit over the period (posted only); for
+    one site where `site` is given."""
     qs = JournalLine.objects.filter(entry__status="POSTED",
                                     account__type__in=types)
+    if site:
+        qs = qs.filter(site_id=site)
     if date_from:
         qs = qs.filter(entry__date__gte=date_from)
     if date_to:
@@ -944,12 +947,14 @@ def _section(typ, bal, accounts):
             "rows": [r for r in rows if r], "total": total}
 
 
-def profit_and_loss(date_from=None, date_to=None):
+def profit_and_loss(date_from=None, date_to=None, site=None):
+    """The company's result for a period — or one site's, from the lines
+    that carry that site."""
     date_to = date_to or timezone.localdate()
     date_from = date_from or date(date_to.year, 1, 1)
     date_from = max(date_from, ledger.books_start())
     types = ("INCOME", "COGS", "EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE")
-    bal = _balances(date_from, date_to, types)
+    bal = _balances(date_from, date_to, types, site)
     accounts = list(LedgerAccount.objects.filter(type__in=types))
     sec = {t: _section(t, bal, accounts) for t in types}
     gross = sec["INCOME"]["total"] - sec["COGS"]["total"]
