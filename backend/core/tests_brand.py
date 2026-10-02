@@ -20,6 +20,8 @@ class BrandTests(BaseCase):
     def setUp(self):
         super().setUp()
         brand.invalidate()
+        # what a test sets here must not stay cached for the next one
+        self.addCleanup(brand.invalidate)
 
     def test_defaults_are_sand_planet_and_the_endpoint_is_public(self):
         self.client.logout()

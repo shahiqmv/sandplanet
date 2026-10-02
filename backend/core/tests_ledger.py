@@ -14,6 +14,11 @@ from .tests import make_user
 
 class LedgerBase(TestCase):
     def setUp(self):
+        # the brand (and with it the `books` feature) is cached in the
+        # process; a test elsewhere that switched it off must not leak in
+        from . import brand
+        brand.invalidate()
+        self.addCleanup(brand.invalidate)
         self.fin = make_user("lg_fin", User.Role.FINANCE)
         self.sig = make_user("lg_sig", User.Role.SIGNATORY)
         self.pm = make_user("lg_pm", User.Role.PM)
