@@ -210,7 +210,7 @@ journals, foreign-currency revaluation at period end, budgets.
 `backend/core/ledger.py` (journal rules), `books.py` (the transaction forms,
 the register, Profit & Loss and Balance Sheet), `reconcile.py` (bank
 reconciliation and reading the bank's file), `books_import.py` (Excel
-import), `views_ledger.py` (API,
+import), `gst_return.py` (MIRA 205 and its two statements), `views_ledger.py` (API,
 `/api/v1/ledger/*`, refused where the `books` feature is off); models
 `LedgerAccount`, `JournalEntry`, `JournalLine`, `LedgerTxn`, `LedgerTxnLine`;
 `frontend/f.html`, `frontend/src/finance/`.
@@ -268,7 +268,37 @@ import), `views_ledger.py` (API,
   is listed by row; it then goes in whole or not at all, at most 2,000
   transactions a file. The same file is not taken twice; a batch can be
   undone (every transaction voided) unless something has been built on it.
-- Next: the GST return figures and the input / output tax statements.
+- Stage 4, brought forward — **GST return** (`core/gst_return.py`), laid
+  out on MIRA's forms as published and read on 2026-10-02: **MIRA 205 v25.1**
+  (GST Return — General Goods and Services), the **Input Tax Statement
+  v25.1** and the **Output Tax Statement v25.1**.
+  - MIRA 205 boxes: 1 sales subject to GST at 8% (inclusive of GST); 2
+    zero-rated; 3 exempt; 4 out of scope; 5 total (1–4); 6 output tax; 7
+    input tax (statement attached); 8 GST on irrecoverable debts written off
+    and on credit notes spanning a rate change; 9 GST collected in excess;
+    10 liability (6 − 7 − 8 + 9); 11 amount paid; 12–13 plastic bag fee.
+    Rounded to the nearest rufiyaa. Boxes 1–7 and 10 come from the books; 8,
+    9 and 11–13 are not derived.
+  - Output Tax Statement columns: Customer TIN, Customer Name, Invoice No.,
+    Invoice Date, Value of Supplies Subject to GST at 8% or 17% (excluding
+    GST), Value of Zero-Rated Supplies, Value of Exempt Supplies, Value of
+    Out-of-Scope Supplies, Your Taxable Activity No.; a second sheet sums
+    them per taxable activity.
+  - Input Tax Statement columns: #, Supplier TIN, Supplier Name, Supplier
+    Invoice Number, Invoice Date, Invoice Total (excluding GST), GST Charged
+    at 6% / 8% / 12% / 16% / 17%, Your Taxable Activity Number, Revenue /
+    Capital.
+  - A sale is an invoice or deposit line with a GST treatment, on its
+    invoice date; a line with none is not a supply. Input tax is the GST on
+    an expense or bill with a tax invoice held — and such an expense must
+    now carry the supplier's TIN and the invoice number. Anything else on
+    the GST accounts in the period is listed apart.
+  - Not read / not built: the table on the back of MIRA 205 (the PDF's
+    second page would not read); GST paid to Customs on imports as input
+    tax; one taxable activity number for the whole company (parameter
+    `gst_activity_no`) — if construction and trading are separate taxable
+    activities the statements need it per sale; excess input tax brought
+    forward from an earlier period.
 - Not yet: supplier and customer credit notes; a payment on account
   (unapplied); writing off a small balance; withholding tax on a payment.
 

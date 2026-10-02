@@ -30,6 +30,7 @@ class BooksBase(LedgerBase):
 class ExpenseTests(BooksBase):
     def expense(self, **kw):
         base = {"party": "STELCO", "reference": "TRF-991", "memo": "March",
+                "party_tin": "1000001GST501", "tax_invoice_no": "INV-77",
                 "lines": [{"account": self.acc["6320"].id, "amount": "1000",
                            "gst_treatment": "STANDARD",
                            "description": "Office electricity"}]}
@@ -79,12 +80,23 @@ class ExpenseTests(BooksBase):
         self.assertIn("books start", r.data["detail"])
         self.assertEqual(LedgerTxn.objects.count(), 0)     # nothing half-saved
 
+    def test_a_gst_claim_needs_the_tin_and_the_invoice_number(self):
+        # MIRA's input tax statement lists both for every claim
+        for gap in ({"party_tin": ""}, {"tax_invoice_no": ""}):
+            r = self.expense(tax_invoice_held=True, **gap)
+            self.assertIn("To claim the GST", r.data["detail"])
+        # without the tax invoice there is no claim, so nothing is asked
+        r = self.expense(party_tin="", tax_invoice_no="")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(self.bal("6320"), D("1080.00"))
+
     def test_changing_a_transaction_keeps_the_history(self):
         r = self.expense(tax_invoice_held=True)
         tid, first = r.data["id"], r.data["journal_ref"]
         r = self.c.patch(f"/api/v1/ledger/txns/{tid}", {
             "date": "2026-03-10", "account": self.bank.id, "party": "STELCO",
-            "tax_invoice_held": True,
+            "tax_invoice_held": True, "party_tin": "1000001GST501",
+            "tax_invoice_no": "INV-77",
             "lines": [{"account": self.acc["6320"].id, "amount": "2000",
                        "gst_treatment": "STANDARD"}]}, format="json")
         self.assertEqual(r.status_code, 200, r.data)

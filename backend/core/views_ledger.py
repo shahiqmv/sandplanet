@@ -594,6 +594,36 @@ def report_aging(request):
     return Response(r)
 
 
+# ---- GST return (core/gst_return.py) ------------------------------------------
+
+@api_view(["GET"])
+def report_gst(request):
+    """A taxable period's return figures and the two statements behind
+    them; export=output | input gives MIRA's statement as Excel."""
+    from . import gst_return
+    if (bad := _read(request)):
+        return bad
+    d1 = ledger._as_date(request.GET.get("from"))
+    d2 = ledger._as_date(request.GET.get("to"))
+    if d1 is None or d2 is None or d2 < d1:
+        return Response({"detail": "Give the taxable period — from and to."},
+                        status=400)
+    data = gst_return.build(d1, d2)
+    which = request.GET.get("export")
+    if which in ("output", "input"):
+        wb = (gst_return.output_statement_xlsx(data) if which == "output"
+              else gst_return.input_statement_xlsx(data))
+        buf = BytesIO()
+        wb.save(buf)
+        resp = HttpResponse(buf.getvalue(), content_type=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"))
+        resp["Content-Disposition"] = (
+            f'attachment; filename="{which}-tax-statement-{d1}-to-{d2}.xlsx"')
+        return resp
+    return Response(data)
+
+
 # ---- import from Excel (core/books_import.py) --------------------------------
 
 @api_view(["GET"])

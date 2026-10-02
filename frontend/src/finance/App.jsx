@@ -19,6 +19,7 @@ import AccountsPage from "./AccountsPage.jsx";
 import BankingPage from "./BankingPage.jsx";
 import { AgingPage, DocsPage, PartiesPage } from "./CreditPage.jsx";
 import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
+import GstPage from "./GstPage.jsx";
 import ImportPage from "./ImportPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
 import ReconcilePage from "./ReconcilePage.jsx";
@@ -60,6 +61,7 @@ const SECTIONS = [
   ["reports", "Reports", [
     ["pnl", "Profit and loss", BOOK_ROLES],
     ["bs", "Balance sheet", BOOK_ROLES],
+    ["gst", "GST return", BOOK_ROLES],
     ["tb", "Trial balance", BOOK_ROLES],
     ["ledger", "Account ledger", BOOK_ROLES]]],
   ["setup", "Setup", [
@@ -313,6 +315,7 @@ export default function App() {
         {page === "ar-aging" && <AgingPage side="AR" go={go} />}
         {page === "pnl" && <ProfitLossPage go={go} settings={settings} />}
         {page === "bs" && <BalanceSheetPage go={go} />}
+        {page === "gst" && <GstPage go={go} />}
         {page === "journals" && <JournalsPage sub={sub} go={go} settings={settings} planetUrl={planetUrl} key={sub || "list"} />}
         {page === "accounts" && <AccountsPage go={go} />}
         {page === "import" && <ImportPage canEdit={canWrite} />}

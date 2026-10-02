@@ -539,6 +539,13 @@ def _clean(data, typ, txn=None):
         raise ValueError("Add at least one line.")
     if typ == "EXPENSE" and not head["party"]:
         raise ValueError("Say who was paid.")
+    if (typ == "EXPENSE" and head["tax_invoice_held"]
+            and any(ln["gst_amount"] for ln in lines)
+            and not (head["party_tin"] and head["tax_invoice_no"])):
+        # MIRA's input tax statement lists both for every claim
+        raise ValueError("To claim the GST, enter the supplier's TIN and the "
+                         "tax invoice number — or untick the tax invoice, "
+                         "and the GST goes into the cost.")
     head["amount"] = sum((ln["amount"] + ln["gst_amount"] for ln in lines),
                          ZERO)
     return head, lines

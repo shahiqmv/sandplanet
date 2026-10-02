@@ -731,6 +731,7 @@ urlpatterns = [
     path("ledger/parties/<int:pk>", ledger_api.party_detail,
          name="ledger-party"),
     path("ledger/reports/aging", ledger_api.report_aging, name="ledger-aging"),
+    path("ledger/reports/gst", ledger_api.report_gst, name="ledger-gst"),
     path("ledger/reports/pnl", ledger_api.report_pnl, name="ledger-pnl"),
     path("ledger/reports/balance-sheet", ledger_api.report_balance_sheet,
          name="ledger-balance-sheet"),

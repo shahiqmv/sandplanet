@@ -129,7 +129,7 @@ function MoneyForm({ type, id, presetAccount, go }) {
                    onChange={(e) => setH({ ...h, tax_invoice_held: e.target.checked })} />
             <span><b>We hold a valid tax invoice for this.</b>{" "}
               {h.tax_invoice_held
-                ? "The GST goes to input tax, to be claimed on the GST return."
+                ? "The GST goes to input tax, to be claimed on the GST return — the supplier's TIN and the tax invoice number are needed, as MIRA's input tax statement lists both."
                 : hasGst ? `Without one the GST of ${ccy} ${money(gst)} can't be claimed (MIRA) — it is added to the cost.`
                   : "Tick it when the supplier's tax invoice is in hand — input tax can only be claimed against one."}</span>
           </label>
