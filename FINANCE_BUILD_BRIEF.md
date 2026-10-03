@@ -375,6 +375,25 @@ due paid. The cost goes to Planet's cost ledger for the period (source
 → 6220). Earlier periods of a rental already under way are taken as paid
 outside Planet unless "raise dues from" says otherwise.
 
+## Phone and utility bills (built 2026-10-03, `core/bills.py`)
+
+Owner: "keep record of all individual accounts so that we could do batch
+payments upon due" and "phone bills have a person assigned and a monthly
+allowance the company bears; the difference is charged to the person, hence
+deducted from salaries." **Operations → Phone & utility bills**: a register
+of accounts (`BillAccount`, `UTL-001` — provider, number or meter, site,
+cost head, the person and the allowance for a phone); a sheet to enter a
+month's bills together (`BillCharge`, each with a payable); the unpaid ones
+by provider, a provider's batch onto one voucher. Above the allowance, the
+excess is recovered through payroll: `payroll.deductions_for` adds it to the
+advance for the bill's month, or the first later month whose run does not
+exist yet. The cost ledger takes the company's share only (heads Telephone &
+internet → 6330, Electricity & water → 6310); in the books the excess is
+debited to staff advances, which the payroll rule then clears. A **prepaid**
+number (`BillAccount.prepaid`, `fixed_amount`) has no bill: its monthly
+recharge is filled into the sheet, is due as the month starts, and is never
+recovered from anyone.
+
 ## To settle before automatic posting (stage 3)
 PLANET holds purchases, payments, payroll and claims from July 2026. If the
 staff key July-onwards bills and invoices by hand and the rules then replay

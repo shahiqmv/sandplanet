@@ -19,9 +19,9 @@ class CostHeadSeedTests(TestCase):
         for pool in ("General Stock", "Foreign Exchange", "Stock Adjustment"):
             self.assertTrue(CostHead.objects.filter(name=pool,
                                                     is_pool=True).exists())
-        # eight project heads, and Rent — what a rental posts under unless
-        # another head is chosen (core/rent.py)
-        self.assertEqual(CostHead.objects.filter(is_pool=False, trading=False, rental=False).count(), 9)
+        # eight project heads; Rent, and the two a phone or utility account
+        # posts under unless another is chosen (core/rent.py, core/bills.py)
+        self.assertEqual(CostHead.objects.filter(is_pool=False, trading=False, rental=False).count(), 11)
         self.assertTrue(CostHead.objects.filter(code="RENT",
                                                 is_system=True).exists())
 

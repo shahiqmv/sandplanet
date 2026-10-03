@@ -84,6 +84,10 @@ RULES = [
      "When a period's rent is raised on a rental: debit the rent's cost (by "
      "site) and input GST; credit the landlord (payable). When it is paid: "
      "debit the payable; credit the bank account on the voucher."),
+    ("utilities", "P_UTIL", "Phone and utility bills",
+     "When a month's bill is entered on a bill account: debit its cost (by "
+     "site) and input GST; credit the provider (payable). When it is paid: "
+     "debit the payable; credit the bank account on the voucher."),
     ("imports", "P_IPR", "Import payments and store issues",
      "When a telegraphic transfer is paid on an import order: debit goods "
      "in transit, with the exchange difference to exchange gain or loss; "
@@ -103,6 +107,7 @@ HEAD_DEFAULT = {
     "TRANSPORT": "#5160", "PLANT": "#5150", "SITE_OVERHEADS": "#5180",
     "OTHER": "#5180", "PERMITS": "#6240", "RECRUITMENT": "#6150",
     "INSURANCE_BONDS": "#6210", "TRD_FREIGHT": "#5120", "RENT": "#6220",
+    "TELECOM": "#6330", "UTILITIES": "#6310",
 }
 # Accounts a rule needs that the standard chart did not have: added, under
 # a free code, the first time they are wanted.
@@ -876,6 +881,55 @@ def _rent(ctx, hold):
             hold(what, str(h), key)
 
 
+def _utilities(ctx, hold):
+    from .models import BillCharge
+    ap = ctx.account("AP_TRADE")
+    costs = defaultdict(list)
+    for r in _cost_rows(["UTILITY"], ["INCURRED"], date(2000, 1, 1)):
+        costs[r.bill_charge_id].append(r)
+    for c in (BillCharge.objects.exclude(status="CANCELLED")
+              .select_related("account", "recover_from", "payable")
+              .order_by("bill_date", "id")):
+        a = c.account
+        what = f"{a.provider} bill, {a.account_no}, {c.period:%b %Y}"
+        key = f"UTI:{c.id}"
+        if c.bill_date >= ctx.start:
+            try:
+                e = Entry(key, c.bill_date,
+                          what + (f" · {a.label}" if a.label else ""), a.ref,
+                          c.id)
+                for r in costs.get(c.id, []):
+                    e.add(ctx.head(r.cost_head), ctx.mvr(r.amount, r.currency),
+                          site=r.site, cost_head=r.cost_head,
+                          party=a.provider)
+                if c.recover_amount:
+                    # what runs over the allowance is the person's: owed by
+                    # him (staff advances) until payroll takes it — no cost
+                    e.add(ctx.account("STAFF_ADVANCES"), c.recover_amount,
+                          party=c.recover_from.full_name
+                          if c.recover_from_id else "")
+                e.add(ap, -e.out_of_balance(), party=a.provider)
+                if e.lines():
+                    yield e
+            except Hold as h:
+                hold(what, str(h), key)
+        if c.status == "PAID" and c.paid_on and c.paid_on >= ctx.start:
+            what, key = "Payment of " + what, f"UTP:{c.id}"
+            try:
+                value = ctx.mvr(c.total, c.currency)
+                e = Entry(key, c.paid_on, what
+                          + (f" · {c.paid_ref}" if c.paid_ref else ""),
+                          a.ref, c.id)
+                e.add(ap, value, party=a.provider)
+                e.bank(_voucher_bank(ctx, what,
+                                     payable=getattr(c, "payable", None)),
+                       -value, c.currency, -q2(c.total), ctx,
+                       party=a.provider)
+                yield e
+            except Hold as h:
+                hold(what, str(h), key)
+
+
 def _imports(ctx, hold):
     git = ctx.account("GOODS_IN_TRANSIT")
     groups = OrderedDict()
@@ -935,7 +989,8 @@ COLLECT = {
     "trading_invoices": _trading_invoices, "receipts": _receipts,
     "purchases": _purchases, "payment_requests": _payment_requests,
     "petty_cash": _petty_cash, "payroll": _payroll,
-    "subcontract": _subcontract, "rent": _rent, "imports": _imports,
+    "subcontract": _subcontract, "rent": _rent, "utilities": _utilities,
+    "imports": _imports,
 }
 
 

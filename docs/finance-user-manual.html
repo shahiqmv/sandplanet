@@ -108,7 +108,7 @@
   <li><a href="#s8"><span class="n">8</span>Import from Excel</a></li>
   <li><a href="#s9"><span class="n">9</span>Journal entries</a></li>
   <li><a href="#s10"><span class="n">10</span>Posting from Planet</a></li>
-  <li><a href="#s11"><span class="n">11</span>Rentals: what the company rents, and its dues</a></li>
+  <li><a href="#s11"><span class="n">11</span>Rentals, and phone and utility bills</a></li>
   <li><a href="#s12"><span class="n">12</span>Reports</a></li>
   <li><a href="#s13"><span class="n">13</span>GST: treatments, the return and MIRA's statements</a></li>
   <li><a href="#s14"><span class="n">14</span>Month-end checklist</a></li>
@@ -136,7 +136,7 @@
   <tr><td><b>Banking</b></td><td>Accounts · Reconcile</td><td>Money paid out, received and moved between the company's accounts; each account's register; agreeing an account to its bank statement.</td></tr>
   <tr><td><b>Purchases</b></td><td>Bills · Suppliers · What we owe</td><td>Bills to be paid later, paying them, each supplier's account, and what is owed by age.</td></tr>
   <tr><td><b>Sales</b></td><td>Invoices · Customers · What we are owed</td><td>Invoices to be collected later, receiving payment, each customer's account, and what is owed to us by age.</td></tr>
-  <tr><td><b>Operations</b></td><td>Dashboard · Payment vouchers · Payables · International payables · Rentals · Receivables</td><td>The pages Finance already used in Planet: building and paying vouchers, supplier dues from purchase orders, import payments, client invoices and statements. They work exactly as before. <b>Rentals</b> is new (section 11).</td></tr>
+  <tr><td><b>Operations</b></td><td>Dashboard · Payment vouchers · Payables · International payables · Rentals · Phone &amp; utility bills · Receivables</td><td>The pages Finance already used in Planet: building and paying vouchers, supplier dues from purchase orders, import payments, client invoices and statements. They work exactly as before. <b>Rentals</b> and <b>Phone &amp; utility bills</b> are new (section 11).</td></tr>
   <tr><td><b>Books</b></td><td>Chart of accounts · Journal entries · Import from Excel</td><td>The accounts themselves, entries made by the accountant, and bringing in a spreadsheet of transactions.</td></tr>
   <tr><td><b>Reports</b></td><td>Profit and loss · Balance sheet · GST return · Trial balance · Account ledger</td><td>The statements, each with Excel.</td></tr>
   <tr><td><b>Setup</b></td><td>Posting from Planet · Cost heads · Books settings</td><td>Which of Planet's own events post to the books; closing a period.</td></tr>
@@ -488,7 +488,7 @@
 
 <h2>10.1 How it works</h2>
 <ul>
-  <li>There are eleven rules. <b>Each is off until it is switched on.</b></li>
+  <li>There are twelve rules. <b>Each is off until it is switched on.</b></li>
   <li><b class="ui">Preview</b> (one rule) or <b class="ui">Preview all</b> shows exactly what would be posted over Planet's history — the count, the total, sample entries with their debits and credits, and anything held back. A preview only reads; nothing is saved.</li>
   <li><b class="ui">Switch on</b> posts everything the rule covers from the “post from” date, and from then on the books are brought into step every twenty minutes. <b class="ui">Post now</b> does it at once.</li>
   <li>Each event has one entry. A new event is posted; one that changed in Planet has its entry reversed and posted afresh; one that was deleted or voided is reversed. Running it again changes nothing.</li>
@@ -508,6 +508,7 @@
   <tr><td>Payroll</td><td>A payroll run is locked.</td><td>Debit wages at gross, by site; credit wages payable. Advances recovered and fines come out of wages payable.</td></tr>
   <tr><td>Subcontract valuations</td><td>A valuation is authorised; then paid.</td><td>Debit subcontract cost and input GST; credit subcontractors payable. Paid: debit the payable; credit the bank.</td></tr>
   <tr><td>Rent</td><td>A period's rent is raised on a rental (section 11); then paid.</td><td>Debit the rent's cost (by site) and input GST; credit the landlord. Paid: debit the payable; credit the bank on the voucher.</td></tr>
+  <tr><td>Phone and utility bills</td><td>A month's bill is entered on a bill account (section 11); then paid.</td><td>Debit its cost (by site) and input GST; credit the provider. What a phone runs over its allowance is debited to staff advances, not cost. Paid: debit the payable; credit the bank on the voucher.</td></tr>
   <tr><td>Import payments and store issues</td><td>A telegraphic transfer is paid; imported goods reach a site.</td><td>Debit goods in transit, with the exchange difference; credit the bank. On issue: debit materials; credit stock.</td></tr>
 </table>
 <div class="box">
@@ -539,7 +540,7 @@
 </div>
 
 <!-- ================================================================== -->
-<h1 id="s11"><span class="n">11</span>Rentals</h1>
+<h1 id="s11"><span class="n">11</span>Rentals, and phone and utility bills</h1>
 <p class="lead"><b class="ui">Operations → Rentals</b> is the register of what the company rents and pays for period after period — offices, staff accommodation, warehouses, yards, vehicles and equipment on hire. Each period's rent is raised by itself and lands on Payables, ready for a payment voucher.</p>
 
 <h2>11.1 Adding a rental</h2>
@@ -565,6 +566,28 @@
   <tr><td>Take back a due raised wrongly</td><td><b class="ui">Cancel…</b> on the due, with the reason. If it is on a voucher, take it off the voucher first. A cancelled period is not raised again by itself; use <b class="ui">Raise again</b> once the rental is corrected.</td></tr>
   <tr><td>End a rental</td><td>Set its end date, or its status to <b>Ended</b>. No more dues are raised; dues already raised stay to be paid or cancelled.</td></tr>
 </table>
+
+<h2>11.4 Phone and utility accounts</h2>
+<p><b class="ui">Operations → Phone &amp; utility bills</b> keeps every account the company is billed on month after month — each mobile number, internet line, electricity and water meter — so a month's bills are entered on one sheet and a provider's whole batch is paid on one voucher.</p>
+<ol class="steps">
+  <li><b class="ui">+ Account</b>: the provider, the kind, the number or meter, the site that bears the cost. Phone and internet bills are taken to include GST; electricity and water are not. Change either on the account.</li>
+  <li>For a phone, pick the <b class="ui">person it is assigned to</b> and the <b class="ui">monthly allowance the company bears</b>.</li>
+  <li><b class="ui">+ Several at once</b> takes a pasted list, one account to a line: <code>number, employee number, allowance</code> — for example <code>7771234, EMP-0060, 500</code>.</li>
+  <li>A <b>prepaid</b> number has no bill. Set its <b class="ui">Billing</b> to Prepaid and give the <b class="ui">monthly recharge</b>. On the month's sheet, <b class="ui">Fill prepaid recharges</b> puts those amounts in for you. Nothing is ever recovered from a salary for a prepaid number.</li>
+</ol>
+
+<h2>11.5 Each month</h2>
+<ol class="steps">
+  <li><b class="ui">Enter a month's bills</b>: choose the month. Every account is listed with its allowance and last month's figure. Type each bill's total as printed; leave a row blank if its bill has not come. <b class="ui">Save</b> — all go in together, or none.</li>
+  <li><b class="ui">Bills to pay</b> lists the unpaid bills provider by provider, with the earliest due date. <b class="ui">Create voucher</b> puts a provider's bills on one payment voucher (untick any to leave out); <b class="ui">⬇ List</b> gives the numbers and amounts for the provider's portal or the bank. The voucher then goes the usual way: submitted, approved, paid, settled.</li>
+  <li>A bill entered wrongly is cancelled from the sheet with its reason, and entered again.</li>
+</ol>
+
+<h2>11.6 A phone over its allowance</h2>
+<div class="box">
+  <b class="t">The company bears the allowance; the rest is the person's</b>
+  <p>When a bill is more than the account's allowance, the provider is still paid in full, the company's cost is the allowance only, and the difference is recovered from the assigned person's salary — it is added to the advances payroll takes for the bill's month, or for the next month not yet drawn up. <b class="ui">Salary recoveries</b> lists each one and whether it has been deducted. Once it has been deducted on a locked payroll, the bill can no longer be cancelled.</p>
+</div>
 
 <!-- ================================================================== -->
 <h1 id="s12"><span class="n">12</span>Reports</h1>

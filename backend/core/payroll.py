@@ -1174,6 +1174,10 @@ def deductions_for(employee, year, month):
                 loan += installment
             else:
                 advance += installment
+    # What his phone ran over its allowance: the company paid the provider,
+    # so it is recovered like an advance (owner 2026-10-03, core/bills.py).
+    from .bills import recoveries_for
+    advance += recoveries_for(employee, year, month)
     return {"advance": advance, "loan": loan}
 
 

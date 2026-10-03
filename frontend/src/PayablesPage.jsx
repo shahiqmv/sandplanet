@@ -233,8 +233,8 @@ export default function PayablesPage({ me, onOpenDoc }) {
                     {r.po_ref && r.pr_ref && (
                       <div style={{ fontSize: 11, color: "var(--muted)",
                                     marginTop: 2 }}>from {r.pr_ref}</div>)}
-                    {/* a rent due says which period it is for */}
-                    {r.rent_contract && (
+                    {/* a rent due or a utility bill says what it is for */}
+                    {r.self_raised && (
                       <div style={{ fontSize: 11, color: "var(--muted)",
                                     marginTop: 2 }}>{r.purpose}</div>)}
                   </td>

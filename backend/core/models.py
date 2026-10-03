@@ -5730,6 +5730,7 @@ class CostPosting(models.Model):
         SUBCONTRACT = "SUBCONTRACT"  # subcontractor valuations (SVC)
         SALE = "SALE"                # trading revenue / output GST / credit notes
         RENT = "RENT"                # rent the company pays (core/rent.py)
+        UTILITY = "UTILITY"          # phone and utility bills (core/bills.py)
 
     class Book(models.TextChoices):
         PROJECT = "PROJECT"
@@ -5768,6 +5769,9 @@ class CostPosting(models.Model):
     rent_due = models.ForeignKey("RentDue", on_delete=models.PROTECT,
                                  null=True, blank=True,
                                  related_name="cost_postings")
+    bill_charge = models.ForeignKey("BillCharge", on_delete=models.PROTECT,
+                                    null=True, blank=True,
+                                    related_name="cost_postings")
     ipr_milestone = models.ForeignKey("ImportPaymentMilestone",
                                       on_delete=models.PROTECT, null=True,
                                       blank=True, related_name="+")
@@ -5916,6 +5920,10 @@ class Payable(models.Model):
     rent_due = models.OneToOneField("RentDue", on_delete=models.PROTECT,
                                     null=True, blank=True,
                                     related_name="payable")
+    # One month's bill on a phone or utility account (core/bills.py).
+    bill_charge = models.OneToOneField("BillCharge", on_delete=models.PROTECT,
+                                       null=True, blank=True,
+                                       related_name="payable")
     # A salary payable: one person, their own bank account. The run's PYR is
     # still the parent document — it is the Director's authorisation to pay
     # the run — but the money leaves per head, so Finance picks the people to
@@ -5944,7 +5952,14 @@ class Payable(models.Model):
             return self.document.ref
         if self.rent_due_id:
             return self.rent_due.contract.ref
+        if self.bill_charge_id:
+            return self.bill_charge.account.ref
         return f"PAYABLE-{self.id}"
+
+    @property
+    def self_raised(self):
+        """Raised by a register (rent, a utility bill), not by a document."""
+        return bool(self.rent_due_id or self.bill_charge_id)
 
 
 def rent_agreement_path(instance, filename):
@@ -6057,6 +6072,107 @@ class RentDue(models.Model):
     class Meta:
         ordering = ["contract_id", "period_start"]
         indexes = [models.Index(fields=["contract", "period_start"])]
+
+
+class BillAccount(models.Model):
+    """One account the company is billed on month after month — a mobile
+    number, an internet line, an electricity or water meter. The register
+    of them is what lets Finance enter a month's bills in one sheet and pay
+    a provider's whole batch on one voucher (owner 2026-10-03)."""
+
+    class Kind(models.TextChoices):
+        MOBILE = "MOBILE", "Mobile"
+        TELEPHONE = "TELEPHONE", "Telephone"
+        INTERNET = "INTERNET", "Internet"
+        ELECTRICITY = "ELECTRICITY", "Electricity"
+        WATER = "WATER", "Water"
+        TV = "TV", "Cable TV"
+        OTHER = "OTHER", "Other"
+
+    TELECOM = ("MOBILE", "TELEPHONE", "INTERNET", "TV")
+
+    ref = models.CharField(max_length=20, unique=True)        # UTL-001
+    provider = models.CharField(max_length=120)       # Dhiraagu, STELCO …
+    provider_tin = models.CharField(max_length=40, blank=True)
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    account_no = models.CharField(max_length=60)      # the number, the meter
+    label = models.CharField(max_length=200, blank=True)   # whose / where
+    employee = models.ForeignKey("Employee", on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="+")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="bill_accounts")
+    cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
+                                  related_name="+")
+    currency = models.CharField(max_length=3, default="MVR")
+    gst_applicable = models.BooleanField(default=False)
+    # what the company agreed to bear a month; a bill above it is flagged
+    monthly_limit = models.DecimalField(max_digits=12, decimal_places=2,
+                                        null=True, blank=True)
+    # A prepaid number has no bill: the company buys a recharge, the same
+    # each month. There is nothing to run over, so nothing is ever recovered
+    # from the person (owner 2026-10-03).
+    prepaid = models.BooleanField(default=False)
+    fixed_amount = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    due_day = models.PositiveSmallIntegerField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["provider", "account_no"]
+        constraints = [models.UniqueConstraint(
+            fields=["provider", "account_no"], name="bill_account_unique")]
+
+    def __str__(self):
+        return f"{self.provider} {self.account_no}"
+
+
+class BillCharge(models.Model):
+    """One month's bill on a BillAccount, as entered from the bill. It
+    carries a payable (Payable.bill_charge) and its cost postings."""
+
+    class Status(models.TextChoices):
+        RAISED = "RAISED", "To pay"
+        PAID = "PAID", "Paid"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    account = models.ForeignKey(BillAccount, on_delete=models.PROTECT,
+                                related_name="charges")
+    period = models.DateField()                 # first day of the bill month
+    bill_no = models.CharField(max_length=60, blank=True)
+    bill_date = models.DateField()
+    due_date = models.DateField()
+    currency = models.CharField(max_length=3, default="MVR")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)   # before GST
+    gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.RAISED)
+    paid_on = models.DateField(null=True, blank=True)
+    paid_ref = models.CharField(max_length=120, blank=True)
+    cancel_reason = models.CharField(max_length=300, blank=True)
+    # A phone has a person and an allowance the company bears; what the bill
+    # runs over it is the person's, recovered from their salary (owner
+    # 2026-10-03). In rufiyaa; the payroll month it comes off is fixed when
+    # the bill is entered.
+    recover_amount = models.DecimalField(max_digits=12, decimal_places=2,
+                                         default=0)
+    recover_from = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                     null=True, blank=True,
+                                     related_name="bill_recoveries")
+    deduct_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    deduct_month = models.PositiveSmallIntegerField(null=True, blank=True)
+    entered_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-period", "account_id"]
+        indexes = [models.Index(fields=["account", "period"]),
+                   models.Index(fields=["status", "due_date"])]
 
 
 class PaymentVoucherLine(models.Model):

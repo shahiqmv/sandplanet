@@ -778,9 +778,11 @@ export default function App() {
   async function openDoc(ref, returnTo = null) {
     setError(null);
     // A rental (rent the company pays) lives in the Finance app, not here.
-    if (/^RENT-/i.test(ref || "")) {
+    // (so does a phone or utility account)
+    const own = /^RENT-/i.test(ref || "") ? "rentals" : /^UTL-/i.test(ref || "") ? "utilities" : null;
+    if (own) {
       const fin = (getBrand()?.apps || []).find((a) => a.key === "finance");
-      if (fin) window.open(`${fin.url}#/rentals/${encodeURIComponent(ref)}`, "_blank", "noopener");
+      if (fin) window.open(`${fin.url}#/${own}/${encodeURIComponent(ref)}`, "_blank", "noopener");
       return;
     }
     try {

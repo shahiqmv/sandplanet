@@ -92,7 +92,7 @@ def _line_info(line):
         if pay is not None:
             purpose = (f"Salary {pay.run.year}-{pay.run.month:02d} · "
                        f"{pay.employee.emp_no}")
-        elif p.rent_due_id:
+        elif p.self_raised:
             purpose = f"{p.terms} · due {p.due_date or '—'}"
         else:
             purpose = (f"Credit payable · terms {p.terms or '—'} · due "
@@ -100,6 +100,7 @@ def _line_info(line):
         return {"line_id": line.id, "ref": p.ref_label,
                 "rent_contract": (p.rent_due.contract_id
                                   if p.rent_due_id else None),
+                "self_raised": p.self_raised,
                 "doc_type": "PAYABLE",
                 "site_code": p.site.code if p.site_id else "HO",
                 "amount": line.amount, "currency": line.currency,
@@ -163,6 +164,7 @@ def _voucher_info(pv):
         "source_milestone__order__supplier",
         "source_payable__document", "source_payable__site",
         "source_payable__rent_due__contract",
+        "source_payable__bill_charge__account",
         "source_payable__payroll_line__employee",
         "source_payable__payroll_line__run").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
@@ -245,14 +247,16 @@ def _payable_row(p, today):
         "kind": "PAYABLE", "payable_id": p.id,
         "ref": p.ref_label, "doc_type": "PAYABLE",
         "rent_contract": p.rent_due.contract_id if p.rent_due_id else None,
+        "self_raised": p.self_raised,
         "site_code": p.site.code if p.site_id else "HO",
         "doc_date": p.due_date, "due_date": p.due_date,
         "overdue": bool(p.due_date and p.due_date < today),
         "amount": p.amount, "currency": vouchers.payable_currency(p),
         "payee": p.vendor, "group": "SALARY" if line else "CREDIT",
         "cost_head": ("Salary" if line else "Rent" if p.rent_due_id
+                      else "Phone / utility bill" if p.bill_charge_id
                       else "Credit payable"),
-        "purpose": p.terms if p.rent_due_id else f"Terms {p.terms or '—'}"}
+        "purpose": p.terms if p.self_raised else f"Terms {p.terms or '—'}"}
     if line is None:
         return row
     emp = line.employee
@@ -520,6 +524,7 @@ def finance_dashboard(request):
         plines = list(pv.voucher_lines.select_related(
             "source_document", "source_payable__document",
             "source_payable__rent_due__contract",
+            "source_payable__bill_charge__account",
             "source_milestone__order__document").all())
         holds = []
         for ln in plines:

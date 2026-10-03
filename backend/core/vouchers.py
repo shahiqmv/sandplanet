@@ -77,6 +77,8 @@ def payable_currency(p):
         return p.payroll_line.run.currency
     if p.rent_due_id:
         return p.rent_due.currency
+    if p.bill_charge_id:
+        return p.bill_charge.currency
     return "MVR"
 
 
@@ -94,7 +96,8 @@ def awaiting_payables():
     them (due or early, an owner may pay ahead if a vendor withdraws credit)."""
     return Payable.objects.filter(status="OUTSTANDING").exclude(
         id__in=_on_live_payable()).select_related(
-        "document", "site", "rent_due__contract").order_by("due_date", "id")
+        "document", "site", "rent_due__contract",
+        "bill_charge__account").order_by("due_date", "id")
 
 
 def settle_payable(payable, actor, ref):
@@ -105,6 +108,10 @@ def settle_payable(payable, actor, ref):
     if payable.rent_due_id:
         from . import rent
         rent.settle_due(payable, actor, ref or "")
+        return None
+    if payable.bill_charge_id:
+        from . import bills
+        bills.settle_charge(payable, actor, ref or "")
         return None
     if payable.document.doc_type == "SVC":
         from . import subcontract

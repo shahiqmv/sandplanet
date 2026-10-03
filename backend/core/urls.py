@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
-    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_ledger as ledger_api, views_rent as rent_api, views_cameras as cameras_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_ledger as ledger_api, views_rent as rent_api, views_bills as bills_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
@@ -727,6 +727,15 @@ urlpatterns = [
     path("ledger/imports", ledger_api.imports, name="ledger-imports"),
     path("ledger/imports/<int:pk>/undo", ledger_api.import_undo,
          name="ledger-import-undo"),
+    path("bills/accounts", bills_api.accounts, name="bill-accounts"),
+    path("bills/accounts/<str:ident>", bills_api.account_detail,
+         name="bill-account"),
+    path("bills/people", bills_api.people, name="bill-people"),
+    path("bills/recoveries", bills_api.recoveries, name="bill-recoveries"),
+    path("bills/sheet", bills_api.sheet, name="bill-sheet"),
+    path("bills/to-pay", bills_api.to_pay, name="bills-to-pay"),
+    path("bills/charges/<int:pk>/cancel", bills_api.charge_cancel,
+         name="bill-charge-cancel"),
     path("rent/contracts", rent_api.contracts, name="rent-contracts"),
     path("rent/contracts/<str:ident>", rent_api.contract_detail,
          name="rent-contract"),
