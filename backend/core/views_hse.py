@@ -7,7 +7,8 @@ from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework import serializers
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from . import hse
@@ -17,6 +18,15 @@ from .models import (CorrectiveAction, Employee, IncidentPerson, PpeIssue,
                      SafetyInduction, SafetyInspection, Site, ToolboxAttendee,
                      ToolboxTalk, TrainingRecord, WorkPermit)
 from .permissions import scoped_site_ids
+
+
+def _photos(document):
+    """A record's photographs, for the screens."""
+    return [{"id": p.id, "url": p.file.url if p.file else None,
+             "caption": p.caption, "file_name": p.file_name,
+             "by": p.uploaded_by.full_name if p.uploaded_by_id else "",
+             "at": p.created_at}
+            for p in hse.photos_of(document).select_related("uploaded_by")]
 
 
 class IncidentPersonSerializer(serializers.ModelSerializer):
@@ -76,6 +86,7 @@ class IncidentSerializer(serializers.ModelSerializer):
     people = IncidentPersonSerializer(many=True, read_only=True)
     actions = serializers.SerializerMethodField()
     open_actions = serializers.SerializerMethodField()
+    photos = serializers.SerializerMethodField()
 
     class Meta:
         model = SafetyIncident
@@ -87,7 +98,10 @@ class IncidentSerializer(serializers.ModelSerializer):
                   "reported_by_name", "reported_at", "investigated_by_name",
                   "investigation_started_at", "root_cause",
                   "contributing_factors", "lessons", "closed_at",
-                  "people", "actions", "open_actions"]
+                  "people", "actions", "open_actions", "photos"]
+
+    def get_photos(self, obj):
+        return _photos(obj.document)
 
     def get_actions(self, obj):
         return ActionSerializer(obj.document.corrective_actions.all(),
@@ -342,12 +356,17 @@ class ToolboxTalkSerializer(serializers.ModelSerializer):
                                               read_only=True)
     attendees = ToolboxAttendeeSerializer(many=True, read_only=True)
     attendee_count = serializers.SerializerMethodField()
+    photos = serializers.SerializerMethodField()
 
     class Meta:
         model = ToolboxTalk
         fields = ["id", "ref", "site_code", "topic", "delivered_at",
                   "delivered_by_name", "presenter_name", "duration_min",
-                  "location", "key_points", "attendees", "attendee_count"]
+                  "location", "key_points", "attendees", "attendee_count",
+                  "photos"]
+
+    def get_photos(self, obj):
+        return _photos(obj.document)
 
     def get_attendee_count(self, obj):
         return obj.attendees.count()
@@ -412,16 +431,31 @@ def _site_or_error(request, site_id):
     return site, None
 
 
+def _form_data(request):
+    """JSON — or, with photos attached, multipart carrying the fields as one
+    JSON string beside the files."""
+    import json
+    if "payload" in request.data:
+        try:
+            return json.loads(request.data["payload"])
+        except (TypeError, ValueError):
+            return {}
+    return request.data
+
+
 @api_view(["GET", "POST"])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
 def toolbox_talks(request):
     if request.method == "POST":
         if request.user.role not in hse.RECORDER_ROLES:
             return Response({"detail": "Not allowed."}, status=403)
-        site, err = _site_or_error(request, request.data.get("site_id"))
+        data = _form_data(request)
+        site, err = _site_or_error(request, data.get("site_id"))
         if err:
             return err
         talk, problem = hse.create_toolbox_talk(
-            site=site, data=request.data, user=request.user)
+            site=site, data=data, user=request.user,
+            photos=request.FILES.getlist("photos"))
         if problem:
             return Response({"detail": problem}, status=400)
         return Response(ToolboxTalkSerializer(talk).data, status=201)
@@ -741,3 +775,138 @@ def inspection_actions(request, ref):
     if problem:
         return Response({"detail": problem}, status=400)
     return Response(ActionSerializer(action).data, status=201)
+
+
+# ---- photo evidence and the printed report ---------------------------------
+
+def _get_talk(request, ref):
+    qs = ToolboxTalk.objects.select_related(
+        "document", "document__site", "delivered_by").prefetch_related(
+        "attendees", "attendees__employee")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    talk = qs.filter(document__ref=ref).first()
+    if talk is None:
+        return None, Response({"detail": "Not found."}, status=404)
+    return talk, None
+
+
+def _photo_change(request, document, roles, pk=None):
+    if request.user.role not in roles:
+        return Response({"detail": "Not allowed."}, status=403)
+    if request.method == "DELETE":
+        problem = hse.remove_photo(document, pk, request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response({"photos": _photos(document)})
+    if document.doc_type == "INC" and document.status == "CLOSED":
+        return Response({"detail": "This incident is closed."}, status=400)
+    uploads = request.FILES.getlist("photos") or (
+        [request.FILES["file"]] if "file" in request.FILES else [])
+    if not uploads:
+        return Response({"detail": "Choose a photo."}, status=400)
+    for upload in uploads:
+        _, problem = hse.add_photo(document, upload,
+                                   request.data.get("caption", ""),
+                                   request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+    return Response({"photos": _photos(document)}, status=201)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def incident_photos(request, ref):
+    incident, err = _get_incident(request, ref)
+    if err:
+        return err
+    return _photo_change(request, incident.document,
+                         hse.REPORTER_ROLES | hse.INVESTIGATOR_ROLES)
+
+
+@api_view(["DELETE"])
+def incident_photo(request, ref, pk):
+    incident, err = _get_incident(request, ref)
+    if err:
+        return err
+    return _photo_change(request, incident.document,
+                         hse.INVESTIGATOR_ROLES, pk)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def toolbox_photos(request, ref):
+    talk, err = _get_talk(request, ref)
+    if err:
+        return err
+    return _photo_change(request, talk.document, hse.RECORDER_ROLES)
+
+
+@api_view(["DELETE"])
+def toolbox_photo(request, ref, pk):
+    talk, err = _get_talk(request, ref)
+    if err:
+        return err
+    return _photo_change(request, talk.document, hse.RECORDER_ROLES, pk)
+
+
+def _pdf_photos(document):
+    out = []
+    for p in hse.photos_of(document):
+        try:
+            src = f"file:///{p.file.path}"      # filesystem storage
+        except NotImplementedError:
+            src = p.file.url                    # S3 / Spaces: fetched by URL
+        out.append({"src": src, "caption": p.caption})
+    return out
+
+
+def _report(template, context, name):
+    from django.template.loader import render_to_string
+
+    from . import pdf as pdf_mod
+    from .views_payroll import _pdf_response
+    context.update(logo_src=pdf_mod.logo_src(), co=pdf_mod.company_info(),
+                   printed_at=timezone.localtime())
+    return _pdf_response(render_to_string(template, context), name)
+
+
+@api_view(["GET"])
+def incident_report(request, ref):
+    """The incident as a report on the company's letterhead: what happened,
+    who was involved, the investigation, the actions, the photographs."""
+    incident, err = _get_incident(request, ref)
+    if err:
+        return err
+    doc = incident.document
+    actions = list(doc.corrective_actions.select_related("owner",
+                                                         "verified_by"))
+    return _report("pdf/hse_incident.html", {
+        "i": incident, "doc": doc, "site": doc.site, "project": doc.project,
+        "people": list(incident.people.select_related("employee")),
+        "actions": actions,
+        "open_actions": sum(1 for a in actions
+                            if a.status not in ("VERIFIED", "CANCELLED")),
+        "photos": _pdf_photos(doc),
+        "status_label": doc.status.replace("_", " ").capitalize(),
+        "subline": f"{doc.ref} · {doc.site.code}",
+    }, f"{doc.ref}-incident-report.pdf")
+
+
+@api_view(["GET"])
+def toolbox_report(request, ref):
+    """The toolbox talk record: what was said, who stood there, the
+    photographs."""
+    talk, err = _get_talk(request, ref)
+    if err:
+        return err
+    doc = talk.document
+    return _report("pdf/hse_toolbox.html", {
+        "t": talk, "doc": doc, "site": doc.site,
+        "attendees": list(talk.attendees.select_related("employee")),
+        "presenter": talk.presenter_name or talk.delivered_by.full_name,
+        "photos": _pdf_photos(doc),
+        "subline": f"{doc.ref} · {doc.site.code}",
+    }, f"{doc.ref}-toolbox-talk.pdf")
+

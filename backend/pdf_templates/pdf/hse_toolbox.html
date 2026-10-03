@@ -1,0 +1,62 @@
+{% load brand %}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  .txt { white-space: pre-wrap; }
+  td.wide { height: 40px; vertical-align: top; }
+  table.att td { height: 17px; }
+  .photo { width: 46%; display: inline-block; margin: 1.5%; vertical-align: top;
+           page-break-inside: avoid; }
+  .photo img { width: 100%; border: 0.6px solid #A9B6C0; }
+  .photo .cap { border: 0.6px solid #A9B6C0; border-top: none; font-size: 8pt;
+                padding: 3px 5px; min-height: 12px; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="TOOLBOX TALK" %}
+{% include "pdf/_letterhead.html" with title="TOOLBOX TALK RECORD" subline=subline %}
+
+<h2>1. THE TALK</h2>
+<table>
+  <tr><td class="lbl" style="width:18%">Reference</td><td style="width:32%"><strong>{{ doc.ref }}</strong></td>
+      <td class="lbl" style="width:18%">Site</td><td>{{ site.code }} — {{ site.name }}</td></tr>
+  <tr><td class="lbl">Given on</td><td>{{ t.delivered_at|date:"D, d M Y — H:i" }}</td>
+      <td class="lbl">Duration</td><td>{% if t.duration_min %}{{ t.duration_min }} minutes{% else %}—{% endif %}</td></tr>
+  <tr><td class="lbl">Given by</td><td>{{ presenter }}</td>
+      <td class="lbl">Location</td><td>{{ t.location|default:"—" }}</td></tr>
+  <tr><td class="lbl">Topic</td><td colspan="3"><strong>{{ t.topic }}</strong></td></tr>
+  <tr><td class="lbl">Key points</td><td colspan="3" class="wide txt">{{ t.key_points|default:"—" }}</td></tr>
+</table>
+
+<h2>2. WHO ATTENDED — {{ attendees|length }}</h2>
+<table class="att">
+  <thead><tr><th style="width:6%">#</th><th style="width:14%">Emp. no.</th><th style="text-align:left">Name</th>
+      <th style="width:24%">Employer</th><th style="width:22%">Signature</th></tr></thead>
+  <tbody>
+  {% for a in attendees %}
+  <tr><td class="num">{{ forloop.counter }}</td><td>{% if a.employee %}{{ a.employee.emp_no }}{% endif %}</td>
+      <td>{{ a.display_name }}</td><td>{{ a.employer|default:"Sand Planet" }}</td><td></td></tr>
+  {% empty %}
+  <tr><td colspan="5" class="note">No attendance recorded.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<table class="sig">
+  <tr><td class="t">Given by</td><td class="t">Recorded by</td><td class="t">Site in charge</td></tr>
+  <tr><td style="height:34px">{{ presenter }}</td>
+      <td>{{ t.delivered_by.full_name }}<br><span class="note">{{ doc.created_at|date:"d M Y" }}</span></td><td></td></tr>
+</table>
+<p class="note">Printed {{ printed_at|date:"d M Y — H:i" }} from Planet. Attendance is taken from the day's register. {{ photos|length }} photograph{{ photos|length|pluralize }} on record{% if photos %}, overleaf{% endif %}.</p>
+
+{% if photos %}
+<div style="page-break-before: always"></div>
+{% include "pdf/_letterhead.html" with title="TOOLBOX TALK PHOTOGRAPHS" subline=subline %}
+{% for p in photos %}<div class="photo"><img src="{{ p.src }}"><div class="cap">{{ p.caption }}</div></div>{% endfor %}
+{% endif %}
+</body>
+</html>

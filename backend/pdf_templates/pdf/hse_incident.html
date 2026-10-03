@@ -1,0 +1,103 @@
+{% load brand %}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  .txt { white-space: pre-wrap; }
+  td.wide { height: 34px; vertical-align: top; }
+  .sev { font-weight: 800; }
+  .sev.HIGH, .sev.CRITICAL { color: #B3261E; }
+  .photo { width: 46%; display: inline-block; margin: 1.5%; vertical-align: top;
+           page-break-inside: avoid; }
+  .photo img { width: 100%; border: 0.6px solid #A9B6C0; }
+  .photo .cap { border: 0.6px solid #A9B6C0; border-top: none; font-size: 8pt;
+                padding: 3px 5px; min-height: 12px; }
+  tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="INCIDENT REPORT" %}
+{% include "pdf/_letterhead.html" with title="INCIDENT REPORT" subline=subline %}
+
+<h2>1. THE INCIDENT</h2>
+<table>
+  <tr><td class="lbl" style="width:18%">Reference</td><td style="width:32%"><strong>{{ doc.ref }}</strong></td>
+      <td class="lbl" style="width:18%">Status</td><td>{{ status_label }}</td></tr>
+  <tr><td class="lbl">Site</td><td>{{ site.code }} — {{ site.name }}</td>
+      <td class="lbl">Project</td><td>{% if project %}{{ project.code }} — {{ project.title }}{% else %}—{% endif %}</td></tr>
+  <tr><td class="lbl">Kind</td><td>{{ i.get_kind_display }}</td>
+      <td class="lbl">Severity</td><td><span class="sev {{ i.severity }}">{{ i.get_severity_display }}</span></td></tr>
+  <tr><td class="lbl">Occurred</td><td>{{ i.occurred_at|date:"D, d M Y — H:i" }}</td>
+      <td class="lbl">Location</td><td>{{ i.location|default:"—" }}</td></tr>
+  <tr><td class="lbl">Reported by</td><td>{{ i.reported_by.full_name }}</td>
+      <td class="lbl">Reported</td><td>{{ i.reported_at|date:"d M Y — H:i" }}</td></tr>
+  <tr><td class="lbl">Work stopped</td><td>{% if i.work_stopped %}Yes{% else %}No{% endif %}</td>
+      <td class="lbl">Reportable to the authorities</td>
+      <td>{% if i.is_reportable %}Yes{% if i.reported_to_authority_on %} — reported {{ i.reported_to_authority_on|date:"d M Y" }}{% endif %}{% if i.authority_reference %}, ref {{ i.authority_reference }}{% endif %}{% else %}No{% endif %}</td></tr>
+</table>
+
+<h2>2. WHAT HAPPENED</h2>
+<table>
+  <tr><td class="lbl" style="width:18%">Description</td><td class="wide txt">{{ i.description }}</td></tr>
+  <tr><td class="lbl">Immediate action taken</td><td class="wide txt">{{ i.immediate_action|default:"—" }}</td></tr>
+</table>
+
+<h2>3. PEOPLE INVOLVED</h2>
+<table>
+  <tr><th style="width:5%">#</th><th style="text-align:left">Name</th><th style="width:16%">Employer</th>
+      <th style="width:11%">Involvement</th><th style="width:24%">Injury / part of body</th>
+      <th style="width:16%">Treatment</th><th style="width:8%">Days lost</th></tr>
+  {% for p in people %}
+  <tr><td class="num">{{ forloop.counter }}</td>
+      <td>{{ p.display_name }}{% if p.employee %} <span class="note">{{ p.employee.emp_no }}</span>{% endif %}</td>
+      <td>{{ p.employer|default:"Sand Planet" }}</td><td>{{ p.get_involvement_display }}</td>
+      <td>{{ p.injury|default:"—" }}{% if p.body_part %} · {{ p.body_part }}{% endif %}</td>
+      <td>{{ p.treatment|default:"—" }}</td><td class="num">{{ p.days_lost|default:"" }}</td></tr>
+  {% empty %}
+  <tr><td colspan="7" class="note">Nobody recorded as involved.</td></tr>
+  {% endfor %}
+</table>
+
+<h2>4. INVESTIGATION</h2>
+<table>
+  <tr><td class="lbl" style="width:18%">Investigated by</td>
+      <td style="width:32%">{% if i.investigated_by %}{{ i.investigated_by.full_name }}{% else %}Not yet started{% endif %}</td>
+      <td class="lbl" style="width:18%">Started</td>
+      <td>{% if i.investigation_started_at %}{{ i.investigation_started_at|date:"d M Y — H:i" }}{% else %}—{% endif %}</td></tr>
+  <tr><td class="lbl">Root cause</td><td colspan="3" class="wide txt">{{ i.root_cause|default:"—" }}</td></tr>
+  <tr><td class="lbl">Contributing factors</td><td colspan="3" class="wide txt">{{ i.contributing_factors|default:"—" }}</td></tr>
+  <tr><td class="lbl">Lessons</td><td colspan="3" class="wide txt">{{ i.lessons|default:"—" }}</td></tr>
+</table>
+
+<h2>5. CORRECTIVE AND PREVENTIVE ACTIONS</h2>
+<table>
+  <tr><th style="width:5%">#</th><th style="text-align:left">Action</th><th style="width:17%">Owner</th>
+      <th style="width:12%">Due</th><th style="width:18%">Status</th><th style="width:17%">Verified by</th></tr>
+  {% for a in actions %}
+  <tr><td class="num">{{ forloop.counter }}</td>
+      <td>{{ a.description }}{% if a.is_preventive %} <span class="note">preventive</span>{% endif %}</td>
+      <td>{{ a.owner.full_name }}</td><td>{{ a.due_date|date:"d M Y" }}</td>
+      <td>{{ a.get_status_display }}</td>
+      <td>{% if a.verified_by %}{{ a.verified_by.full_name }}, {{ a.verified_at|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
+  {% empty %}
+  <tr><td colspan="6" class="note">No actions raised.</td></tr>
+  {% endfor %}
+</table>
+{% if open_actions %}<p class="note">{{ open_actions }} action{{ open_actions|pluralize }} still open — the incident cannot be closed until they are verified.</p>{% endif %}
+
+<table class="sig">
+  <tr><td class="t">Reported by</td><td class="t">Investigated by</td><td class="t">Closed by</td></tr>
+  <tr><td style="height:34px">{{ i.reported_by.full_name }}<br><span class="note">{{ i.reported_at|date:"d M Y" }}</span></td>
+      <td>{% if i.investigated_by %}{{ i.investigated_by.full_name }}<br><span class="note">{{ i.investigation_started_at|date:"d M Y" }}</span>{% endif %}</td>
+      <td>{% if i.closed_by %}{{ i.closed_by.full_name }}<br><span class="note">{{ i.closed_at|date:"d M Y" }}</span>{% else %}<span class="note">Not closed</span>{% endif %}</td></tr>
+</table>
+<p class="note">Printed {{ printed_at|date:"d M Y — H:i" }} from Planet. {{ photos|length }} photograph{{ photos|length|pluralize }} on record{% if photos %}, overleaf{% endif %}.</p>
+
+{% if photos %}
+<div style="page-break-before: always"></div>
+{% include "pdf/_letterhead.html" with title="INCIDENT PHOTOGRAPHS" subline=subline %}
+{% for p in photos %}<div class="photo"><img src="{{ p.src }}"><div class="cap">{{ p.caption }}</div></div>{% endfor %}
+{% endif %}
+</body>
+</html>

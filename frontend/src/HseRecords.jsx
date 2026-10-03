@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { BTN, buttonStyle, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import HsePhotos, { PhotoPicker, ReportButton } from "./HsePhotos.jsx";
 
 // The records an HSE officer already keeps on the bigger sites: toolbox
 // talks, inductions, training and competency, PPE. Registers, not workflows —
@@ -60,11 +61,13 @@ export function ToolboxTab({ me, sites, siteFilter }) {
           <th style={{ ...th, width: 60 }}>Site</th>
           <th style={th}>Topic</th>
           <th style={{ ...th, width: 90 }}>Attended</th>
+          <th style={{ ...th, width: 70 }}>Photos</th>
           <th style={{ ...th, width: 150 }}>Given by</th>
+          <th style={{ ...th, width: 120 }} />
         </tr></thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={6} style={{ ...td, color: "#8a97a1" }}>
+            <tr><td colSpan={8} style={{ ...td, color: "#8a97a1" }}>
               No talks recorded yet.</td></tr>
           )}
           {rows.map((r) => (
@@ -84,9 +87,19 @@ export function ToolboxTab({ me, sites, siteFilter }) {
                     {r.attendees.map((a) => a.display_name).join(", ")}
                   </div>
                 )}
+                {open === r.id && (
+                  <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
+                    {r.key_points && <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap", marginTop: 6 }}>{r.key_points}</div>}
+                    <HsePhotos base={`/hse/toolbox-talks/${r.ref}`} photos={r.photos || []} canAdd canRemove
+                               onChanged={(photos) => setRows((all) => all.map((x) => (x.id === r.id ? { ...x, photos } : x)))}
+                               emptyNote="This talk was recorded before photos were asked for — add one." />
+                  </div>
+                )}
               </td>
               <td style={td}>{r.attendee_count}</td>
+              <td style={{ ...td, color: (r.photos || []).length ? undefined : "#b3261e" }}>{(r.photos || []).length || "none"}</td>
               <td style={td}>{r.presenter_name || r.delivered_by_name}</td>
+              <td style={td}><ReportButton base={`/hse/toolbox-talks/${r.ref}`} label="Record" /></td>
             </tr>
           ))}
         </tbody>
@@ -105,6 +118,7 @@ function TalkForm({ sites, siteFilter, onClose, onSaved }) {
   });
   const [present, setPresent] = useState([]);
   const [picked, setPicked] = useState(new Set());
+  const [photos, setPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -128,14 +142,16 @@ function TalkForm({ sites, siteFilter, onClose, onSaved }) {
   async function save() {
     if (!f.site_id) return setError("Choose the site.");
     if (!f.topic.trim()) return setError("What was the talk about?");
+    if (!photos.length) return setError("Add at least one photo of the talk.");
     setBusy(true); setError(null);
     try {
-      await api("/hse/toolbox-talks", {
-        method: "POST",
-        body: { ...f,
-                delivered_at: new Date(f.delivered_at).toISOString(),
-                attendees: [...picked].map((id) => ({ employee_id: id })) },
-      });
+      // the fields travel as one JSON string beside the photos
+      const fd = new FormData();
+      fd.append("payload", JSON.stringify({ ...f,
+        delivered_at: new Date(f.delivered_at).toISOString(),
+        attendees: [...picked].map((id) => ({ employee_id: id })) }));
+      photos.forEach((p) => fd.append("photos", p));
+      await apiUpload("/hse/toolbox-talks", fd, "POST");
       onSaved();
     } catch (e) {
       setError(e.message);
@@ -193,6 +209,8 @@ function TalkForm({ sites, siteFilter, onClose, onSaved }) {
                   onChange={(e) => set("key_points", e.target.value)}
                   style={{ ...inputStyle, resize: "vertical" }} />
       </label>
+      <PhotoPicker files={photos} setFiles={setPhotos}
+                   label="Photos of the talk — at least one, the men gathered for it" />
 
       <div style={{ marginTop: 12 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10,

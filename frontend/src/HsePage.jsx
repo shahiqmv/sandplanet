@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { BTN, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 import { ToolboxTab, TrainingTab, WorkerRecordsTab } from "./HseRecords.jsx";
 import { AssessmentsTab, InspectionsTab, PermitsTab } from "./HseWork.jsx";
+import HsePhotos, { PhotoPicker, ReportButton, uploadPhotos } from "./HsePhotos.jsx";
 
 // Safety (HSE). The app's whole safety functionality used to be one checkbox
 // on the daily report that notified nobody, so "how many incidents last
@@ -308,6 +309,7 @@ function ReportForm({ me, sites, site, onClose, onSaved }) {
     occurred_at: local, location: "", description: "",
     immediate_action: "", work_stopped: false,
   });
+  const [photos, setPhotos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -317,10 +319,19 @@ function ReportForm({ me, sites, site, onClose, onSaved }) {
     if (!f.description.trim()) return setError("Describe what happened.");
     setBusy(true); setError(null);
     try {
-      const inc = await api("/hse/incidents", {
+      let inc = await api("/hse/incidents", {
         method: "POST",
         body: { ...f, occurred_at: new Date(f.occurred_at).toISOString() },
       });
+      // the report is in; its photos follow it
+      if (photos.length) {
+        try {
+          const r = await uploadPhotos(`/hse/incidents/${inc.ref}`, photos);
+          inc = { ...inc, photos: r.photos };
+        } catch (e) {
+          window.alert(`${inc.ref} is reported, but the photos did not upload: ${e.message} Add them from the incident.`);
+        }
+      }
       onSaved(inc);
     } catch (e) {
       setError(e.message);
@@ -385,6 +396,8 @@ function ReportForm({ me, sites, site, onClose, onSaved }) {
                   onChange={(e) => set("immediate_action", e.target.value)}
                   style={{ ...inputStyle, resize: "vertical" }} />
       </label>
+      <PhotoPicker files={photos} setFiles={setPhotos}
+                   label="Photos — the scene, the damage, the injury (can be added later, needed before closing)" />
       <label style={{ fontSize: 13, display: "flex", gap: 8,
                       alignItems: "center", marginTop: 12 }}>
         <input type="checkbox" checked={f.work_stopped}
@@ -459,6 +472,8 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
           Work stopped</Pill>}
         {incident.is_reportable && <Pill tone={SEVERITY_TONE.HIGH}>
           Reportable</Pill>}
+        <span style={{ flex: 1 }} />
+        <ReportButton base={`/hse/incidents/${incident.ref}`} label="Incident report (PDF)" />
       </div>
 
       <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr",
@@ -483,6 +498,11 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
       </dl>
 
       <PeopleBlock incident={incident} onChanged={onChanged} />
+
+      <HsePhotos base={`/hse/incidents/${incident.ref}`} photos={incident.photos || []}
+                 canAdd={!closed} canRemove={canInvestigate && !closed}
+                 onChanged={(photos) => onChanged({ ...incident, photos })}
+                 emptyNote="No photo yet — add the scene, the damage or what was put right. An incident is not closed without one." />
 
       {canInvestigate && !closed && (
         <>

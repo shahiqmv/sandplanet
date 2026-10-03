@@ -14,6 +14,19 @@ from .models import (CorrectiveAction, Document, DocumentRevision, Notification,
 from .tests import make_user
 
 
+def a_photo(name="scene.jpg"):
+    """A photograph to attach — both an incident and a toolbox talk carry
+    photo evidence (owner 2026-10-03)."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    return SimpleUploadedFile(name, b"\xff\xd8\xff\xe0" + b"0" * 64,
+                              content_type="image/jpeg")
+
+
+def add_incident_photo(client, ref, **extra):
+    return client.post(f"/api/v1/hse/incidents/{ref}/photos",
+                       {"photos": a_photo(), **extra}, format="multipart")
+
+
 class IncidentTests(TestCase):
     def setUp(self):
         self.site = Site.objects.create(code="HSE", name="Safety site",
@@ -33,8 +46,12 @@ class IncidentTests(TestCase):
                 "occurred_at": timezone.now().isoformat(),
                 "description": "Scaffold board slipped, nobody underneath.",
                 "location": "Villa 3 north face"}
+        photo = extra.pop("photo", True)
         body.update(extra)
-        return self.client.post("/api/v1/hse/incidents", body, format="json")
+        r = self.client.post("/api/v1/hse/incidents", body, format="json")
+        if photo and r.status_code == 201:
+            add_incident_photo(self.client, r.data["ref"])
+        return r
 
     def test_reporting_creates_a_numbered_record(self):
         r = self._report()
@@ -65,6 +82,49 @@ class IncidentTests(TestCase):
         r = self.client.post(f"/api/v1/hse/incidents/{ref}/close")
         self.assertEqual(r.status_code, 400)
         self.assertIn("root cause", r.data["detail"])
+
+    def test_an_incident_is_not_closed_without_a_photo(self):
+        ref = self._report(photo=False).data["ref"]
+        r = self.client.post(f"/api/v1/hse/incidents/{ref}/close")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("at least one photo", r.data["detail"])
+        # reporting itself never waited for one
+        self.assertEqual(self.client.get(
+            f"/api/v1/hse/incidents/{ref}").data["photos"], [])
+        r = add_incident_photo(self.client, ref, caption="Board on the deck")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual((r.data["photos"][0]["caption"],
+                          r.data["photos"][0]["by"]),
+                         ("Board on the deck", self.sa.full_name))
+        self.assertEqual(
+            self.client.post(f"/api/v1/hse/incidents/{ref}/close")
+            .status_code, 200)
+        # closed, its evidence is fixed
+        self.assertEqual(add_incident_photo(self.client, ref).status_code,
+                         400)
+        pk = self.client.get(
+            f"/api/v1/hse/incidents/{ref}").data["photos"][0]["id"]
+        r = self.client.delete(f"/api/v1/hse/incidents/{ref}/photos/{pk}")
+        self.assertIn("closed", r.data["detail"])
+
+    def test_the_incident_prints_as_a_report(self):
+        ref = self._report(kind="FIRST_AID", people=[
+            {"name": "Ali Hassan", "employer": "Reef Scaffolding",
+             "involvement": "INJURED", "injury": "Grazed forearm"}]).data["ref"]
+        r = self.client.get(f"/api/v1/hse/incidents/{ref}/report.pdf")
+        self.assertIn(r.status_code, (200, 503))      # 503: no PDF engine
+        if r.status_code == 200:
+            self.assertEqual(r["Content-Type"], "application/pdf")
+            self.assertTrue(r.content.startswith(b"%PDF"))
+        # another site cannot pull it, nor add to it
+        other = Site.objects.create(code="EL9", name="Elsewhere",
+                                    status=Site.Status.ACTIVE)
+        self.client.force_authenticate(
+            make_user("sa_el9", User.Role.SITE_ADMIN, site=other))
+        self.assertEqual(self.client.get(
+            f"/api/v1/hse/incidents/{ref}/report.pdf").status_code, 404)
+        self.assertEqual(add_incident_photo(self.client, ref).status_code,
+                         404)
 
     def test_it_closes_once_the_investigation_is_recorded(self):
         ref = self._report(kind="LOST_TIME").data["ref"]
@@ -122,6 +182,7 @@ class CorrectiveActionTests(TestCase):
             "occurred_at": timezone.now().isoformat(),
             "description": "Cut hand on rebar."}, format="json")
         self.ref = r.data["ref"]
+        add_incident_photo(self.client, self.ref)
         self.client.post(f"/api/v1/hse/incidents/{self.ref}/investigate")
 
     def _raise(self, **extra):
@@ -280,9 +341,13 @@ class PeopleRecordTests(TestCase):
                 "delivered_at": timezone.now().isoformat(),
                 "duration_min": 15,
                 "attendees": [{"employee_id": w.id} for w in self.workers]}
+        photos = extra.pop("photos", None)
         body.update(extra)
-        return self.client.post("/api/v1/hse/toolbox-talks", body,
-                                format="json")
+        import json
+        return self.client.post("/api/v1/hse/toolbox-talks", {
+            "payload": json.dumps(body),
+            "photos": [a_photo()] if photos is None else photos},
+            format="multipart")
 
     def test_a_talk_records_who_was_there(self):
         r = self._talk()
@@ -292,6 +357,46 @@ class PeopleRecordTests(TestCase):
 
     def test_a_talk_needs_a_topic(self):
         self.assertEqual(self._talk(topic="").status_code, 400)
+
+    def test_a_talk_is_not_recorded_without_a_photo(self):
+        from .models import ToolboxTalk
+        r = self._talk(photos=[])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("at least one photo", r.data["detail"])
+        self.assertEqual(ToolboxTalk.objects.count(), 0)
+        # something that is not a photo is refused, and nothing is half-saved
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        r = self._talk(photos=[SimpleUploadedFile(
+            "notes.pdf", b"%PDF", content_type="application/pdf")])
+        self.assertIn("not a photo", r.data["detail"])
+        self.assertEqual(ToolboxTalk.objects.count(), 0)
+
+    def test_a_talk_keeps_its_photos_and_prints_its_record(self):
+        r = self._talk(photos=[a_photo("one.jpg"), a_photo("two.jpg")])
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        self.assertEqual([p["file_name"] for p in r.data["photos"]],
+                         ["one.jpg", "two.jpg"])
+        # more can be added afterwards, with a caption
+        r = self.client.post(f"/api/v1/hse/toolbox-talks/{ref}/photos",
+                             {"photos": a_photo("three.jpg"),
+                              "caption": "Harness check"}, format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["photos"][-1]["caption"], "Harness check")
+        # one can come off, but never the last
+        ids = [p["id"] for p in r.data["photos"]]
+        for pk in ids[:2]:
+            self.assertEqual(self.client.delete(
+                f"/api/v1/hse/toolbox-talks/{ref}/photos/{pk}").status_code,
+                200)
+        r = self.client.delete(
+            f"/api/v1/hse/toolbox-talks/{ref}/photos/{ids[2]}")
+        self.assertIn("at least one photo", r.data["detail"])
+        r = self.client.get(f"/api/v1/hse/toolbox-talks/{ref}/report.pdf")
+        self.assertIn(r.status_code, (200, 503))      # 503: no PDF engine
+        if r.status_code == 200:
+            self.assertEqual(r["Content-Type"], "application/pdf")
+            self.assertTrue(r.content.startswith(b"%PDF"))
 
     def test_the_same_worker_is_not_counted_twice(self):
         w = self.workers[0]

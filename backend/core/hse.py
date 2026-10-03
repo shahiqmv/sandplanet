@@ -160,12 +160,70 @@ def start_investigation(incident, user):
     return None
 
 
+# ---- photo evidence ---------------------------------------------------------
+# Both an incident and a toolbox talk carry photographs (owner 2026-10-03):
+# of the scene, the damage, the injury; of the men gathered for the talk. A
+# talk is not recorded without one, and an incident is not closed without
+# one — reporting an incident stays instant, the photo can follow.
+
+PHOTO_TYPES = ("image/jpeg", "image/png", "image/webp", "image/heic",
+               "image/heif")
+MAX_PHOTO_BYTES = 15 * 1024 * 1024
+
+
+def photos_of(document):
+    return document.attachments.filter(kind="PHOTO").order_by("id")
+
+
+def add_photo(document, upload, caption, user):
+    """Attach one photograph. Returns (attachment, error)."""
+    from .models import Attachment
+    if upload is None:
+        return None, "Choose a photo."
+    kind = (getattr(upload, "content_type", "") or "").lower()
+    name = (upload.name or "").lower()
+    if kind not in PHOTO_TYPES and not name.endswith(
+            (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif")):
+        return None, "That is not a photo — attach a JPG or PNG image."
+    if upload.size > MAX_PHOTO_BYTES:
+        return None, "That photo is over 15 MB — send a smaller one."
+    att = Attachment.objects.create(
+        document=document, revision=document.current_revision, kind="PHOTO",
+        file=upload, file_name=upload.name, content_type=kind,
+        size_bytes=upload.size, caption=(caption or "").strip()[:300],
+        uploaded_by=user)
+    audit("document", document.id, "HSE_PHOTO_ADDED", actor=user,
+          detail={"ref": document.ref, "file": upload.name[:120]})
+    return att, None
+
+
+def remove_photo(document, pk, user):
+    att = photos_of(document).filter(pk=pk).first()
+    if att is None:
+        return "That photo is not on this record."
+    if document.doc_type == "INC" and document.status == "CLOSED":
+        return "This incident is closed — its evidence is kept as it is."
+    if document.doc_type == "TBT" and photos_of(document).count() == 1:
+        return ("A toolbox talk keeps at least one photo — add another "
+                "before removing this one.")
+    stored, name = att.file, att.file_name
+    att.delete()
+    if stored:
+        stored.delete(save=False)
+    audit("document", document.id, "HSE_PHOTO_REMOVED", actor=user,
+          detail={"ref": document.ref, "file": (name or "")[:120]})
+    return None
+
+
 @transaction.atomic
 def close_incident(incident, user):
-    """The two guards that make this a safety system rather than a form."""
+    """The guards that make this a safety system rather than a form."""
     doc = incident.document
     if doc.status == "CLOSED":
         return "Already closed."
+    if not photos_of(doc).exists():
+        return ("Add at least one photo to the incident before closing it — "
+                "the scene, the damage or what was put right.")
     if incident.kind in SafetyIncident.MUST_INVESTIGATE \
             and not (incident.root_cause or "").strip():
         return ("This kind of incident cannot be closed without an "
@@ -323,12 +381,16 @@ def workers_present(site, day):
 
 
 @transaction.atomic
-def create_toolbox_talk(*, site, data, user, project=None):
+def create_toolbox_talk(*, site, data, user, project=None, photos=None):
     from .models import ToolboxAttendee, ToolboxTalk
 
     topic = (data.get("topic") or "").strip()
     if not topic:
         return None, "What was the talk about?"
+    photos = list(photos or [])
+    if not photos:
+        return None, ("Add at least one photo of the talk — the men "
+                      "gathered for it.")
     delivered_at = data.get("delivered_at")
     if isinstance(delivered_at, str):
         delivered_at = parse_datetime(delivered_at)
@@ -367,10 +429,17 @@ def create_toolbox_talk(*, site, data, user, project=None):
             name=(row.get("name") or "").strip(),
             employer=(row.get("employer") or "").strip())
 
+    for upload in photos:
+        _, problem = add_photo(doc, upload, "", user)
+        if problem:
+            transaction.set_rollback(True)
+            return None, problem
+
     audit("document", doc.id, "TOOLBOX_TALK_RECORDED", actor=user,
           to_state="RECORDED",
           detail={"ref": ref, "topic": topic[:80],
-                  "attendees": talk.attendees.count()})
+                  "attendees": talk.attendees.count(),
+                  "photos": len(photos)})
     return talk, None
 
 
