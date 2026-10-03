@@ -557,6 +557,92 @@ def _signoffs(run):
     ]
 
 
+def _cash_table(den):
+    """The denomination summary laid out for print: one row per note or coin,
+    pieces and value at site and (only where a run splits pay) from office."""
+    if not den:
+        return None
+    site, office = den["site"], den["office"]
+    rows = []
+    for a, b in zip(site["rows"], office["rows"]):
+        rows.append({
+            "value": f"{a['value']:,}",
+            "kind": "note" if a["value"] >= 5 else "coin",
+            "site_count": a["count"], "site_amount": _money(a["amount"]),
+            "office_count": b["count"], "office_amount": _money(b["amount"]),
+            "count": a["count"] + b["count"],
+            "amount": _money(a["amount"] + b["amount"]),
+        })
+    return {
+        "rows": rows, "has_office": office["packets"] > 0,
+        "site_packets": site["packets"], "office_packets": office["packets"],
+        "packets": site["packets"] + office["packets"],
+        "site_change": _money(site["change"]),
+        "office_change": _money(office["change"]),
+        "change": _money(site["change"] + office["change"]),
+        "has_change": bool(site["change"] or office["change"]),
+        "site_total": _money(site["total"]),
+        "office_total": _money(office["total"]),
+        "total": _money(site["total"] + office["total"]),
+    }
+
+
+@api_view(["GET"])
+def payroll_cash_pdf(request):
+    """The month's cash requirement — every rufiyaa run, site by site, with
+    the notes each one needs. What Finance takes to the bank."""
+    if not _read(request):
+        return Response({"detail": "Not permitted."}, status=403)
+    try:
+        year = int(request.query_params.get("year"))
+        month = int(request.query_params.get("month"))
+        if not 1 <= month <= 12:
+            raise ValueError
+    except (TypeError, ValueError):
+        return Response({"detail": "year and month are required."},
+                        status=400)
+    from django.template.loader import render_to_string
+
+    from .pdf import company_info, logo_src
+
+    runs = (PayrollRun.objects.filter(year=year, month=month, currency="MVR")
+            .select_related("site").prefetch_related("lines")
+            .order_by("site__code"))
+    values = payroll.CASH_DENOMINATIONS
+    grand = dict.fromkeys(values, 0)
+    rows, packets = [], 0
+    change = total = Decimal("0")
+    for run in runs:
+        den = payroll.denominations(run, list(run.lines.all()))
+        counts = {d: den["site"]["counts"][d] + den["office"]["counts"][d]
+                  for d in values}
+        r_packets = den["site"]["packets"] + den["office"]["packets"]
+        if not r_packets:
+            continue
+        r_change = den["site"]["change"] + den["office"]["change"]
+        r_total = den["site"]["total"] + den["office"]["total"]
+        for d in values:
+            grand[d] += counts[d]
+        packets += r_packets
+        change += r_change
+        total += r_total
+        rows.append({"site": run.site.code if run.site_id else "—",
+                     "ref": run.ref, "status": run.status,
+                     "packets": r_packets,
+                     "counts": [counts[d] for d in values],
+                     "change": _money(r_change), "total": _money(r_total)})
+    html = render_to_string("pdf/payroll_cash.html", {
+        "period": f"{_month_name(month)} {year}",
+        "values": [f"{d:,}" for d in values], "rows": rows,
+        "grand": [grand[d] for d in values],
+        "grand_amounts": [_money(d * grand[d]) for d in values],
+        "packets": packets, "change": _money(change), "total": _money(total),
+        "has_change": bool(change),
+        "logo_src": logo_src(), "co": company_info(),
+    })
+    return _pdf_response(html, f"payroll-cash-{year}-{month:02d}.pdf")
+
+
 @api_view(["GET"])
 def payroll_report_pdf(request, pk):
     """The salary sheet for a run — grouped site-wise (a USD run spans sites)
@@ -605,6 +691,7 @@ def payroll_report_pdf(request, pk):
                            "totals": totals(rows)})
     html = render_to_string("pdf/payroll_report.html", {
         "run": run, "currency": run.currency, "signoffs": _signoffs(run),
+        "cash": _cash_table(payroll.denominations(run)),
         "period": f"{_month_name(run.month)} {run.year}",
         "groups": group_list, "grand": totals(lines),
         "multi_site": run.site_id is None,

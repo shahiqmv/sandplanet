@@ -1001,6 +1001,8 @@ urlpatterns = [
          name="settlement-create"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),
+    path("payroll/cash.pdf", payroll_api.payroll_cash_pdf,
+         name="payroll-cash-pdf"),
     path("payroll/readiness", payroll_api.payroll_readiness,
          name="payroll-readiness"),
     path("payroll/attendance-summary", payroll_api.payroll_attendance_summary,

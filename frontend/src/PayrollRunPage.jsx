@@ -85,6 +85,17 @@ export default function PayrollRunPage({ me, sites, initialRunId,
             ))}
           </select>
         </label>
+        {/* Salaries are paid in cash: the notes each site needs, on one
+            sheet for the bank (owner 2026-10-03). */}
+        {["HO_HR", "FINANCE", "ADMIN", "PA", "SIGNATORY"].includes(me.role)
+          && runs.some((r) => r.currency === "MVR") && (
+          <a href={`/api/v1/payroll/cash.pdf?year=${year}&month=${month}`}
+             target="_blank" rel="noreferrer"
+             title="Notes and coins needed to pay each site's salaries in cash"
+             style={{ ...ghostButton, textDecoration: "none",
+                      marginLeft: "auto", fontSize: 12.5 }}>
+            💵 Cash requirement (PDF)</a>
+        )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}

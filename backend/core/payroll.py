@@ -1504,3 +1504,67 @@ def reopen_run(run, actor):
                   "cancelled_pyr": doc.ref if doc else None,
                   "payables_withdrawn": withdrawn})
     return run, None
+
+
+# --- Cash denominations ---------------------------------------------------
+# Nearly every rufiyaa salary is handed over in cash (owner 2026-10-03), so
+# Finance has to draw the right NOTES from the bank, not just the right sum.
+# The count is made per pay packet, not on the site total: 61 workers owed
+# 4,350 each need 61 fifties, where the total alone would ask for none.
+CASH_DENOMINATIONS = (1000, 500, 100, 50, 20, 10, 5, 2, 1)
+
+
+def _packets(line, net):
+    """What one worker is handed, and where: (at site, from office).
+
+    With no split entered the whole net is paid at site. Where the run splits
+    a worker's pay, each part is its own packet, handed over in its own place.
+    """
+    to_site = Decimal(line.amount_to_site or 0)
+    to_office = Decimal(line.amount_to_office or 0)
+    if to_site or to_office:
+        return to_site, to_office
+    return net, Decimal("0")
+
+
+def _count_notes(amount, counts):
+    """Break one packet into the fewest notes; returns the laari left over."""
+    whole = int(amount)
+    for d in CASH_DENOMINATIONS:
+        n, whole = divmod(whole, d)
+        counts[d] += n
+    return amount - int(amount)
+
+
+def denominations(run, lines=None):
+    """The notes and coins needed to pay a rufiyaa run in cash.
+
+    None for a USD run: those salaries are transferred to each person's own
+    account. Excluded lines and lines with nothing to pay need no packet.
+    """
+    if run.currency != "MVR":
+        return None
+    if lines is None:
+        lines = run.lines.all()
+    fri = friday_ot_hours()
+    out = {}
+    for key in ("site", "office"):
+        out[key] = {"counts": dict.fromkeys(CASH_DENOMINATIONS, 0),
+                    "packets": 0, "change": Decimal("0"),
+                    "total": Decimal("0")}
+    for line in lines:
+        if line.excluded:
+            continue
+        net = compute_line(line, fri)["net"]
+        for key, amount in zip(("site", "office"), _packets(line, net)):
+            if amount <= 0:
+                continue
+            part = out[key]
+            part["packets"] += 1
+            part["total"] += amount
+            part["change"] += _count_notes(amount, part["counts"])
+    for part in out.values():
+        part["rows"] = [{"value": d, "count": part["counts"][d],
+                         "amount": Decimal(d * part["counts"][d])}
+                        for d in CASH_DENOMINATIONS]
+    return out

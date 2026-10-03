@@ -99,6 +99,56 @@
   </tr>
 </table>
 
+{% if cash and cash.packets %}
+<!-- Salaries are paid in cash: the notes to draw, counted packet by packet so
+     every worker can be handed his exact pay (owner 2026-10-03). -->
+<div style="page-break-inside: avoid">
+<div class="sect">Cash denominations — {{ cash.packets }} pay packet{{ cash.packets|pluralize }} ({{ currency }})</div>
+<table style="width:{% if cash.has_office %}70{% else %}40{% endif %}%">
+  <thead><tr>
+    <th>Note / coin</th>
+    {% if cash.has_office %}
+    <th class="num">At site — pcs</th><th class="num">Amount</th>
+    <th class="num">Office — pcs</th><th class="num">Amount</th>
+    {% endif %}
+    <th class="num">Pieces</th><th class="num">Amount</th>
+  </tr></thead>
+  {% for r in cash.rows %}
+  <tr>
+    <td>{{ r.value }} <span style="color:#8a949c">{{ r.kind }}</span></td>
+    {% if cash.has_office %}
+    <td class="num">{% if r.site_count %}{{ r.site_count }}{% endif %}</td>
+    <td class="num">{% if r.site_count %}{{ r.site_amount }}{% endif %}</td>
+    <td class="num">{% if r.office_count %}{{ r.office_count }}{% endif %}</td>
+    <td class="num">{% if r.office_count %}{{ r.office_amount }}{% endif %}</td>
+    {% endif %}
+    <td class="num">{% if r.count %}{{ r.count }}{% endif %}</td>
+    <td class="num">{% if r.count %}{{ r.amount }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  {% if cash.has_change %}
+  <tr>
+    <td>Laari (small change)</td>
+    {% if cash.has_office %}
+    <td></td><td class="num">{{ cash.site_change }}</td>
+    <td></td><td class="num">{{ cash.office_change }}</td>
+    {% endif %}
+    <td></td><td class="num">{{ cash.change }}</td>
+  </tr>
+  {% endif %}
+  <tr class="grand">
+    <td>CASH TO DRAW</td>
+    {% if cash.has_office %}
+    <td class="num">{{ cash.site_packets }} pkt</td><td class="num">{{ cash.site_total }}</td>
+    <td class="num">{{ cash.office_packets }} pkt</td><td class="num">{{ cash.office_total }}</td>
+    {% endif %}
+    <td></td><td class="num">{{ cash.total }}</td>
+  </tr>
+</table>
+<div style="font-size:6.5pt;color:#3a4750;margin-top:2px">Counted per worker, so each packet can be made up exactly — not the fewest notes for the total.</div>
+</div>
+{% endif %}
+
 <!-- The three steps the run actually passes through. Each carries the name
      and moment the system recorded, so the sheet is self-evidencing; a step
      not yet taken prints a rule to sign by hand (owner 2026-08-19). -->

@@ -3091,3 +3091,97 @@ class SettlementIsNotTheMonthlyRunTests(TestCase):
         self.assertNotEqual(r.status_code, 400, r.data)
         self.assertTrue(PayrollRun.objects.filter(
             site=self.site, year=2026, month=8, kind="MONTHLY").exists())
+
+
+class CashDenominationTests(PayrollRunTests):
+    """Salaries are paid in cash, so the report says which notes to draw —
+    counted per pay packet, not on the total (owner 2026-10-03)."""
+
+    def _run(self):
+        data = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 5,
+            "working_days": 31}, format="json").data
+        from .models import PayrollRun
+        return PayrollRun.objects.get(pk=data["id"])
+
+    def _second_worker(self):
+        from datetime import date
+
+        from .models import EmployeeSiteAllocation
+        emp = Employee.objects.create(
+            emp_no="EMP-0002", full_name="Rahim", job_category=self.mason,
+            basic_pay=Decimal("6200"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        self._mark_month(2026, 5, emp=emp)
+        return emp
+
+    def test_notes_are_counted_per_packet_not_on_the_total(self):
+        from . import payroll
+        self._second_worker()
+        run = self._run()
+        # 6,200 each: the total 12,400 would be twelve 1000s and four 100s,
+        # which cannot be split into two packets of 6,200.
+        counts = payroll.denominations(run)["site"]["counts"]
+        self.assertEqual(counts[1000], 12)
+        self.assertEqual(counts[100], 4)
+        run.lines.update(allowance=Decimal("350.50"))
+        den = payroll.denominations(run)["site"]
+        self.assertEqual(den["counts"][500], 2)
+        self.assertEqual(den["counts"][50], 2)
+        self.assertEqual(den["packets"], 2)
+        self.assertEqual(den["change"], Decimal("1.00"))
+        self.assertEqual(den["total"], Decimal("13101.00"))
+        value = sum(d * n for d, n in den["counts"].items())
+        self.assertEqual(value + den["change"], den["total"])
+
+    def test_a_split_is_two_packets_and_an_excluded_line_none(self):
+        from . import payroll
+        other = self._second_worker()
+        run = self._run()
+        line = run.lines.get(employee=self.emp)
+        line.amount_to_site = Decimal("4000")
+        line.amount_to_office = Decimal("2200")
+        line.save()
+        gone = run.lines.get(employee=other)
+        gone.excluded = True
+        gone.save()
+        den = payroll.denominations(run)
+        self.assertEqual(den["site"]["counts"][1000], 4)
+        self.assertEqual(den["site"]["packets"], 1)
+        self.assertEqual(den["office"]["counts"][1000], 2)
+        self.assertEqual(den["office"]["counts"][100], 2)
+        self.assertEqual(den["office"]["total"], Decimal("2200"))
+
+    def test_a_usd_run_has_no_cash_summary(self):
+        from . import payroll
+        from .models import PayrollRun
+        run = PayrollRun(currency="USD", year=2026, month=5)
+        self.assertIsNone(payroll.denominations(run))
+
+    def test_the_report_and_the_month_sheet_carry_the_notes(self):
+        import fitz
+        run = self._run()
+        r = self.client.get(f"/api/v1/payroll/runs/{run.id}/report.pdf")
+        self.assertEqual(r.status_code, 200)
+        doc = fitz.open("pdf", r.content)
+        text = "".join(p.get_text() for p in doc)
+        doc.close()
+        self.assertIn("Cash denominations", text)
+        self.assertIn("CASH TO DRAW", text)
+        r = self.client.get("/api/v1/payroll/cash.pdf?year=2026&month=5")
+        self.assertEqual(r.status_code, 200)
+        doc = fitz.open("pdf", r.content)
+        text = "".join(p.get_text() for p in doc)
+        doc.close()
+        self.assertIn("SALARY CASH REQUIREMENT", text)
+        self.assertIn("VKR", text)
+        self.assertIn("6,200.00", text)
+
+    def test_the_month_sheet_is_not_for_site_roles(self):
+        self.client.force_authenticate(self.pm)
+        r = self.client.get("/api/v1/payroll/cash.pdf?year=2026&month=5")
+        self.assertEqual(r.status_code, 403)
+        self.client.force_authenticate(self.hr)
+        r = self.client.get("/api/v1/payroll/cash.pdf?year=2026")
+        self.assertEqual(r.status_code, 400)

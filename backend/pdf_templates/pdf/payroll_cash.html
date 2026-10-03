@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  @page { size: A4 landscape; }
+  table { font-size: 8.5pt; }
+  th, td { padding: 3px 5px; }
+  .num { text-align: right; }
+  .grand td { font-weight: 700; background: #dbe4ea;
+              border-top: 1.2px solid #1f3a52; }
+  .amt td { font-size: 7.5pt; color: #3a4750; }
+  .note { font-size: 7.5pt; color: #3a4750; margin-top: 6px; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="PAYROLL" %}
+{% include "pdf/_letterhead.html" with title="SALARY CASH REQUIREMENT" subline=period %}
+
+{% if rows %}
+<table>
+  <thead><tr>
+    <th>Site</th><th>Payroll ref</th><th>Status</th><th class="num">Packets</th>
+    {% for v in values %}<th class="num">{{ v }}</th>{% endfor %}
+    {% if has_change %}<th class="num">Laari</th>{% endif %}
+    <th class="num">Cash (MVR)</th>
+  </tr></thead>
+  {% for r in rows %}
+  <tr>
+    <td><b>{{ r.site }}</b></td><td>{{ r.ref }}</td><td>{{ r.status }}</td>
+    <td class="num">{{ r.packets }}</td>
+    {% for c in r.counts %}<td class="num">{% if c %}{{ c }}{% endif %}</td>{% endfor %}
+    {% if has_change %}<td class="num">{{ r.change }}</td>{% endif %}
+    <td class="num">{{ r.total }}</td>
+  </tr>
+  {% endfor %}
+  <tr class="grand">
+    <td colspan="3">PIECES — ALL SITES</td>
+    <td class="num">{{ packets }}</td>
+    {% for c in grand %}<td class="num">{{ c }}</td>{% endfor %}
+    {% if has_change %}<td class="num">{{ change }}</td>{% endif %}
+    <td class="num">{{ total }}</td>
+  </tr>
+  <tr class="amt">
+    <td colspan="4">Value by note / coin</td>
+    {% for a in grand_amounts %}<td class="num">{{ a }}</td>{% endfor %}
+    {% if has_change %}<td class="num">{{ change }}</td>{% endif %}
+    <td class="num">{{ total }}</td>
+  </tr>
+</table>
+<div class="note">Rufiyaa runs drawn up for {{ period }}; a site with no run yet is not on this sheet. Notes are counted per worker's pay packet so each can be made up exactly. USD salaries are transferred and need no cash.</div>
+{% else %}
+<p>No rufiyaa payroll run has been drawn up for {{ period }} yet.</p>
+{% endif %}
+</body>
+</html>
