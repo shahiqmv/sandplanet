@@ -881,6 +881,125 @@ def set_stage_data(case, data, actor):
     return None
 
 
+# --- switching the route ----------------------------------------------------
+# A case is raised on one route and the decision changes — an urgent business
+# visa turns out not to be needed and the worker comes on a work permit after
+# all (owner 2026-10-03, OBR-MLE-003). Until the application is lodged on the
+# government portal nothing outside Planet has been committed to the route, so
+# it can still be changed; after that the case is cancelled and raised again.
+ROUTE_SWITCH_ROLES = PROCESS_ROLES + APPROVE_ROLES
+_APPLICATION_OF = {"WP": "WP_APPLICATION", "BV": "BV_APPLICATION"}
+
+
+def route_switch_block(case):
+    """Why this case can NOT change route now, or None if it can."""
+    doc = case.document
+    if doc.status in OPEN:
+        return ("The case has not been approved yet — change the route on "
+                "the request itself.")
+    if doc.status not in ("APPROVED", "IN_PROGRESS"):
+        return "This case is closed."
+    if _is_subcontract(case):
+        return ("A subcontractor's worker comes on a business visa only — "
+                "there is no work-permit route to switch to.")
+    if case.employee_id or case.arrived_date:
+        return "The worker has already arrived on this route."
+    if doc.status == "APPROVED" or not case.stage:
+        return None
+    seq = sequence(case)
+    app = _APPLICATION_OF[case.route]
+    if case.stage not in seq or seq.index(case.stage) > seq.index(app):
+        return ("The application has already been made on this route — the "
+                "route can only be changed before it is submitted.")
+    if case.stage == app:
+        cur = portal_for(case, app)
+        if cur["ref"] or cur["status"]:
+            return ("The application has already been lodged on the portal — "
+                    "the route can only be changed before it is submitted.")
+    return None
+
+
+def _fees_with_finance(case):
+    """(blockers, to_cancel) among the case's unpaid fee PYRs: one already on
+    a Payment Voucher is Finance's to release; the rest can be withdrawn."""
+    from .models import PaymentVoucherLine
+    blockers, to_cancel = [], []
+    for fee in case.fees.select_related("document"):
+        pyr = fee.document
+        if pyr.status in ("PAID", "CLOSED", "CANCELLED", "REJECTED"):
+            continue
+        on_voucher = PaymentVoucherLine.objects.filter(
+            source_document=pyr, status="INCLUDED").exists()
+        if pyr.status == "AUTHORISED" or on_voucher:
+            blockers.append(f"{pyr.ref} ({fee.stage})")
+        else:
+            to_cancel.append(pyr)
+    return blockers, to_cancel
+
+
+@transaction.atomic
+def switch_route(case, new_route, reason, actor):
+    """Move an approved case to the other route and restart it there.
+
+    The Director's approval stands — it approved the person, and whoever may
+    switch is HR or the Director. Unpaid fee requests raised for the old route
+    are withdrawn; paid ones stand as the record of money spent. Letters
+    already issued stay on the case.
+    """
+    if actor.role not in ROUTE_SWITCH_ROLES:
+        return "Only HR or the Director can change the route of a case."
+    new_route = (new_route or "").strip().upper()
+    if new_route not in ("WP", "BV"):
+        return "Choose the work permit or the business visa route."
+    if new_route == case.route:
+        return "The case is already on that route."
+    reason = (reason or "").strip()
+    if not reason:
+        return "A reason is required to change the route."
+    block = route_switch_block(case)
+    if block:
+        return block
+    blockers, to_cancel = _fees_with_finance(case)
+    if blockers:
+        return ("These fee payment requests are already with Finance on a "
+                "Payment Voucher: " + ", ".join(blockers) + ". Ask Finance to "
+                "query them off the voucher, then change the route.")
+    from .payments import _set_status as pyr_set
+
+    doc = case.document
+    old_route, old_stage = case.route, case.stage
+    why = (f"Onboarding case {doc.ref} moved from {old_route} to {new_route} "
+           f"— {reason}")
+    for pyr in to_cancel:
+        if pyr.status != "DRAFT":
+            pyr_set(pyr, "DRAFT", "WITHDRAW", actor, why)
+        pyr_set(pyr, "CANCELLED", "CANCEL", actor, why)
+    case.route = new_route
+    if new_route == "BV":
+        case.bv_purpose = "RECRUITMENT"
+        if not (case.bv_justification or "").strip():
+            case.bv_justification = reason
+    else:
+        case.bv_purpose = ""
+    case.portal_status = ""
+    case.portal_ref = ""
+    case.waived_stages = []
+    if doc.status == "IN_PROGRESS":
+        case.stage = sequence(case)[0]
+        case.stage_since = timezone.localdate()
+    case.save(update_fields=["route", "bv_purpose", "bv_justification",
+                             "portal_status", "portal_ref", "waived_stages",
+                             "stage", "stage_since", "updated_at"])
+    _record(doc, "ROUTE_SWITCH", actor,
+            comment=f"{old_route} → {new_route}: {reason}")
+    audit("document", doc.id, "OBR_ROUTE_SWITCHED", actor=actor,
+          detail={"ref": doc.ref, "from": old_route, "to": new_route,
+                  "from_stage": old_stage, "to_stage": case.stage,
+                  "fees_withdrawn": [p.ref for p in to_cancel],
+                  "reason": reason[:200]})
+    return None
+
+
 def _stage_notify(case, stage):
     from . import notify
     doc = case.document
@@ -2368,6 +2487,7 @@ def case_dict(case):
         "employee_id": case.employee_id,
         "employee_no": case.employee.emp_no if case.employee_id else None,
         "can_send_back": can_send_back(case),
+        "can_switch_route": route_switch_block(case) is None,
         "photo_att_id": (lambda p: p.id if p else None)(_photo_att(case)),
         "documents": documents_list(case),
         "checklist": checklist(case),

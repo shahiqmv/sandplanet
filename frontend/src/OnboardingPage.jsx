@@ -686,6 +686,19 @@ export function CaseDetail({ id, me, onBack }) {
     await api(`/onboarding/${id}/action`,
       { method: "POST", body: { action, note } });
   });
+  // The decision changes — business visa to work permit or back. Allowed
+  // until the application is lodged on the portal (owner 2026-10-03).
+  const switchRoute = () => act(async () => {
+    const to = c.route === "BV" ? "WP" : "BV";
+    const reason = window.prompt(
+      `Move this case to the ${ROUTE_LABEL[to]} route? It restarts at the `
+      + "first step of that route; unpaid fee requests raised for the "
+      + `${ROUTE_LABEL[c.route]} route are withdrawn.\n\nReason (required):`);
+    if (reason === null) return;
+    if (!reason.trim()) throw new Error("A reason is required.");
+    await api(`/onboarding/${id}/route`,
+      { method: "POST", body: { route: to, reason } });
+  });
   async function saveEdit() {
     // The form was seeded from a payload with the salary redacted out, so
     // posting those keys back would BLANK the real figure. Send neither.
@@ -819,6 +832,12 @@ export function CaseDetail({ id, me, onBack }) {
                onClick={() => decide("return")}
                title="Return this case to the raiser to correct details">
             ↩ Send back to edit</Btn>
+        )}
+        {c.can_switch_route
+          && ["HO_HR", "ADMIN", "PA", "DIRECTOR"].includes(me.role) && (
+          <button style={linkBtn} disabled={busy} onClick={switchRoute}
+            title="Change the route before the application is lodged on the portal">
+            ⇄ Switch to {ROUTE_LABEL[c.route === "BV" ? "WP" : "BV"]}</button>
         )}
         {/* A case can die at any point before completion — terms not agreed,
             or the company decides not to continue (owner 2026-08-25). Unpaid

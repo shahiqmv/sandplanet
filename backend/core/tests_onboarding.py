@@ -2421,3 +2421,92 @@ class CancelACaseTests(OnboardingSpineTests):
         doc.save(update_fields=["status"])
         r = self._cancel(pk)
         self.assertEqual(r.status_code, 400)
+
+
+class SwitchRouteTests(OnboardingSpineTests):
+    """The decision changes — a business visa becomes a work permit after all
+    (owner 2026-10-03, OBR-MLE-003). Allowed until the application is lodged
+    on the portal; the case restarts at the first step of the new route."""
+
+    def _bv_at_insurance(self):
+        pk = self._approved(route="BV", bv_justification="Urgent start.")
+        self._begin(pk)                              # BV_SPONSOR
+        case = OnboardingCase.objects.get(pk=pk)
+        case.stage = "BV_INSURANCE"
+        case.save(update_fields=["stage"])
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "900", "payee": "Insurer"},
+                             format="json")
+        assert r.status_code == 201, r.data
+        return pk
+
+    def _switch(self, pk, route="WP", reason="Going with a work permit.",
+                actor=None):
+        self.client.force_authenticate(actor or self.hr)
+        return self.client.post(f"/api/v1/onboarding/{pk}/route",
+                                {"route": route, "reason": reason},
+                                format="json")
+
+    def test_bv_to_wp_restarts_on_the_work_permit_route(self):
+        pk = self._bv_at_insurance()
+        case = OnboardingCase.objects.get(pk=pk)
+        pyr = case.fees.get(stage="BV_INSURANCE").document
+        r = self._switch(pk)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["route"], "WP")
+        self.assertEqual(r.data["status"], "IN_PROGRESS")
+        case.refresh_from_db()
+        self.assertEqual(case.stage, "WP_APPOINTMENT")
+        self.assertEqual(case.bv_purpose, "")
+        pyr.refresh_from_db()
+        self.assertEqual(pyr.status, "CANCELLED")    # unpaid fee withdrawn
+        self.assertTrue(case.document.approvals.filter(
+            action="ROUTE_SWITCH").exists())
+
+    def test_a_paid_fee_stands(self):
+        pk = self._bv_at_insurance()
+        pyr = OnboardingCase.objects.get(pk=pk).fees.get().document
+        pyr.status = "PAID"
+        pyr.save(update_fields=["status"])
+        self.assertEqual(self._switch(pk).status_code, 200)
+        pyr.refresh_from_db()
+        self.assertEqual(pyr.status, "PAID")
+
+    def test_it_needs_a_reason_and_hr_or_the_director(self):
+        pk = self._bv_at_insurance()
+        r = self._switch(pk, reason=" ")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("reason", r.data["detail"].lower())
+        r = self._switch(pk, actor=self.pm)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._switch(pk, actor=self.director).status_code,
+                         200)
+
+    def test_not_once_the_application_is_lodged(self):
+        pk = self._bv_at_insurance()
+        case = OnboardingCase.objects.get(pk=pk)
+        case.stage = "BV_APPLICATION"
+        case.save(update_fields=["stage"])
+        self.assertTrue(self.client.get(
+            f"/api/v1/onboarding/{pk}").data["can_switch_route"])
+        from . import onboarding as ob
+        ob.set_portal(case, "BV_APPLICATION", ref="BV/2026/1")
+        case.save()
+        r = self._switch(pk)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("lodged", r.data["detail"])
+        case.stage = "BV_APPROVED"
+        case.save(update_fields=["stage"])
+        self.assertEqual(self._switch(pk).status_code, 400)
+
+    def test_wp_to_bv_before_it_begins(self):
+        pk = self._approved()                        # WP, approved, not begun
+        r = self._switch(pk, route="BV", reason="Needed on site this month.")
+        self.assertEqual(r.status_code, 200, r.data)
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertEqual((case.route, case.bv_purpose),
+                         ("BV", "RECRUITMENT"))
+        self.assertEqual(case.bv_justification, "Needed on site this month.")
+        self.assertEqual(case.document.status, "APPROVED")
+        self.assertEqual(self._switch(pk, route="BV").status_code, 400)

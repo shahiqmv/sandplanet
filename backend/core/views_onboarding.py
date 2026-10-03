@@ -153,6 +153,22 @@ def onboarding_hold(request, pk):
     return Response(_case(request, case))
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_route(request, pk):
+    """Move an approved case to the other route — work permit or business
+    visa — before its application is lodged (owner 2026-10-03)."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    msg = ob.switch_route(case, request.data.get("route"),
+                          request.data.get("reason", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(_case(request, case))
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def onboarding_bv_register(request):
