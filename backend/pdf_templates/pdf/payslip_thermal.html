@@ -105,6 +105,10 @@
                    <span class="v">{{ i.f_deductions }}</span></div>
 {% endif %}
 
+{% if i.rounding %}
+<div class="r"><span class="l">Rounding</span>
+               <span class="v">{{ i.f_rounding }}</span></div>
+{% endif %}
 <div class="sep solid"></div>
 <div class="r net"><span class="l">NET PAY {{ currency }}</span>
                    <span class="v">{{ i.f_net }}</span></div>

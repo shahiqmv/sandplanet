@@ -3463,6 +3463,10 @@ class PayrollRun(models.Model):
     year = models.IntegerField()
     month = models.IntegerField()
     working_days = models.IntegerField()  # divisor for pro-rating
+    # Cash is handed over in notes: each net pay on the run is rounded UP to
+    # a multiple of this (owner 2026-10-03). 0 = paid to the laari, which is
+    # every run drawn up before the rule and every USD run.
+    round_to = models.PositiveSmallIntegerField(default=0)
     # Settlement only: the day the batch stopped working. It CAPS every
     # line's paid window, which is the one place a stated date outranks the
     # register — the register is what over-counts when demobilisation is

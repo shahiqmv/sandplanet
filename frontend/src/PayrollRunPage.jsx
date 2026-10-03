@@ -702,7 +702,10 @@ function RunDetail({ runId, onBack, me, backLabel }) {
                 title="Approved worker fines for this month — recorded by the
                        site, approved by the PM. Not typed here.">Fines</th>
             <th style={{ ...th, textAlign: "right" }}>Loan</th>
-            <th style={{ ...th, textAlign: "right" }}>Net</th>
+            <th style={{ ...th, textAlign: "right" }}
+                title={run.round_to
+                  ? `Rounded up to the nearest ${run.round_to} for payment in cash`
+                  : undefined}>Net{run.round_to ? " ↑" + run.round_to : ""}</th>
             <th style={{ ...th, textAlign: "right" }}>To site</th>
             <th style={{ ...th, textAlign: "right" }}>To office</th>
           </tr></thead>
@@ -781,7 +784,10 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
           : <span style={{ color: "var(--muted)" }}>—</span>}
       </td>
       {cell("loan", 70)}
-      {ro(line.net)}
+      <td style={{ ...td, textAlign: "right", fontWeight: 600 }}
+          title={Number(line.rounding) > 0
+            ? `Rounded up by ${money(line.rounding)} for payment in cash`
+            : undefined}>{money(line.net)}</td>
       {cell("amount_to_site", 75)}{cell("amount_to_office", 75)}
       <td style={{ ...td, whiteSpace: "nowrap" }}>
         <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}

@@ -5,7 +5,7 @@ source of truth for pay maths. Money is quantised to 2dp at the edges.
 """
 import calendar
 from datetime import date, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from django.db.models import Max, Min
 
@@ -60,6 +60,31 @@ def q(v):
     return Decimal(v).quantize(TWO, rounding=ROUND_HALF_UP)
 
 
+NET_ROUNDING_DEFAULT = 5
+
+
+def net_rounding():
+    """What a cash salary is rounded up to, in rufiyaa (owner 2026-10-03):
+    nearly every site salary is paid in notes, and 4,532.26 cannot be counted
+    out. Editable via the `payroll_round_to` company parameter; 0 turns it
+    off."""
+    try:
+        v = (CompanyParameter.objects.get(
+            key="payroll_round_to").value or "").strip()
+        return max(int(v), 0) if v else NET_ROUNDING_DEFAULT
+    except (CompanyParameter.DoesNotExist, TypeError, ValueError):
+        return NET_ROUNDING_DEFAULT
+
+
+def run_rounding(run):
+    """The rounding a run takes when it is drawn up or refreshed: rufiyaa
+    monthly runs only. USD is transferred to the cent, and a settlement pays
+    exactly what its sheet says."""
+    if run.currency != "MVR" or getattr(run, "kind", "") == "SETTLEMENT":
+        return 0
+    return net_rounding()
+
+
 def compute_line(line, fri_hours=None):
     """Derive the money for one PayrollLine from its stored inputs.
 
@@ -74,7 +99,7 @@ def compute_line(line, fri_hours=None):
         z = Decimal("0.00")
         return {"daily_rate": z, "earned_basic": z, "friday_pay": z,
                 "ot_pay": z, "allowance": z, "gross": z, "deductions": z,
-                "net": z}
+                "rounding": z, "net": z}
     wd = line.run.working_days or 1
     fri_h = friday_ot_hours() if fri_hours is None else Decimal(fri_hours)
     daily = Decimal(line.basic_pay) / Decimal(wd)
@@ -86,10 +111,21 @@ def compute_line(line, fri_hours=None):
     deductions = q(Decimal(line.penalty) + Decimal(line.advance)
                    + Decimal(line.loan))
     net = q(gross - deductions)
+    # Rounded UP to the run's multiple so the pay can be counted out in notes;
+    # the few rufiyaa added are the company's, shown apart so the sheet still
+    # adds up: gross − deductions + rounding = net.
+    rounding = Decimal("0.00")
+    step = line.run.round_to or 0
+    if step and net > 0:
+        # Decimal's // truncates toward zero, so it cannot do the ceiling.
+        rounded = q((net / step).to_integral_value(rounding=ROUND_CEILING)
+                    * step)
+        rounding, net = rounded - net, rounded
     return {
         "daily_rate": q(daily), "earned_basic": earned_basic,
         "friday_pay": friday_pay, "ot_pay": ot_pay, "allowance": allowance,
-        "gross": gross, "deductions": deductions, "net": net,
+        "gross": gross, "deductions": deductions, "rounding": rounding,
+        "net": net,
     }
 
 
@@ -599,6 +635,8 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         run = PayrollRun.objects.create(
             site=site, currency=currency, year=year, month=month,
             working_days=working_days, created_by=actor)
+        run.round_to = run_rounding(run)
+        run.save(update_fields=["round_to"])
         issue_run_ref(run)
         workers = list(eligible_workers(site, currency, year, month)
                        .select_related("job_category").order_by("emp_no"))
@@ -924,6 +962,10 @@ def refresh_run(run, actor):
 
     changed, added, stale, removed = [], [], [], []
     with transaction.atomic():
+        # Pay policy is re-read on a refresh, and the rounding is policy.
+        if run.round_to != run_rounding(run):
+            run.round_to = run_rounding(run)
+            run.save(update_fields=["round_to"])
         for line in run.lines.select_related("employee").all():
             emp = line.employee
             if emp.id not in eligible:
@@ -1097,7 +1139,9 @@ def lock_run(run, actor):
     from .fleet_costs import operator_allocation
     vehicle_shares = []
     for line in run.lines.all():
-        gross = compute_line(line)["gross"]
+        money = compute_line(line)
+        # What the rounding adds is paid out, so it is labour cost too.
+        gross = money["gross"] + money["rounding"]
         for vehicle, share in operator_allocation(line, gross):
             vehicle_shares.append((line, vehicle, share))
             gross -= share

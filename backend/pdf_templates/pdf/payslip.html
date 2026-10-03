@@ -55,6 +55,7 @@
     <div class="row tot"><span>Total deductions</span><span>{{ i.f_deductions }}</span></div>
   </div>
 
+  {% if i.rounding %}<div class="row" style="padding:2px 6px"><span class="lbl">Rounding (to nearest {{ run.round_to }})</span><span>{{ i.f_rounding }}</span></div>{% endif %}
   <div class="net"><div class="row" style="padding:0">
     <span>NET PAY ({{ currency }})</span><span>{{ i.f_net }}</span></div></div>
 

@@ -27,6 +27,7 @@
       <td class="k">Working days</td><td>{{ run.working_days }}</td>
       <td class="k">Status</td><td>{{ run.status }}</td></tr>
 </table>
+{% if run.round_to %}<div style="font-size:6.5pt;color:#3a4750;margin:2px 0 4px">Net pay is rounded up to the nearest {{ currency }} {{ run.round_to }} for payment in cash; the amount added is in the Round column.</div>{% endif %}
 
 {% for g in groups %}
 {% if multi_site %}<div class="sect">{{ g.site_code }}</div>{% endif %}
@@ -37,7 +38,7 @@
     <th class="num">OT h</th><th class="num">Earned</th>
     <th class="num">Allow.<br><span style="font-weight:400">+ Friday</span></th><th class="num">OT pay</th>
     <th class="num">Gross</th><th class="num">Adv</th><th class="num">Fines</th>
-    <th class="num">Loan</th><th class="num">Net</th>
+    <th class="num">Loan</th>{% if run.round_to %}<th class="num">Round</th>{% endif %}<th class="num">Net</th>
     <th class="num">To site</th><th class="num">Office</th>
   </tr></thead>
   {% for r in g.rows %}
@@ -55,6 +56,7 @@
     <td class="num">{{ r.f_advance }}</td>
     <td class="num">{{ r.f_penalty }}</td>
     <td class="num">{{ r.f_loan }}</td>
+    {% if run.round_to %}<td class="num">{{ r.f_rounding }}</td>{% endif %}
     <td class="num">{{ r.f_net }}</td>
     <td class="num">{{ r.f_amount_to_site }}</td>
     <td class="num">{{ r.f_amount_to_office }}</td>
@@ -70,6 +72,7 @@
     <td class="num">{{ g.totals.advance }}</td>
     <td class="num">{{ g.totals.penalty }}</td>
     <td class="num">{{ g.totals.loan }}</td>
+    {% if run.round_to %}<td class="num">{{ g.totals.rounding }}</td>{% endif %}
     <td class="num">{{ g.totals.net }}</td>
     <td class="num">{{ g.totals.amount_to_site }}</td>
     <td class="num">{{ g.totals.amount_to_office }}</td>

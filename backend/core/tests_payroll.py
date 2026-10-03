@@ -3125,7 +3125,11 @@ class CashDenominationTests(PayrollRunTests):
         counts = payroll.denominations(run)["site"]["counts"]
         self.assertEqual(counts[1000], 12)
         self.assertEqual(counts[100], 4)
+        # A run drawn up before the rounding rule still pays to the laari.
+        run.round_to = 0
+        run.save()
         run.lines.update(allowance=Decimal("350.50"))
+        run = type(run).objects.get(pk=run.pk)
         den = payroll.denominations(run)["site"]
         self.assertEqual(den["counts"][500], 2)
         self.assertEqual(den["counts"][50], 2)
@@ -3185,3 +3189,83 @@ class CashDenominationTests(PayrollRunTests):
         self.client.force_authenticate(self.hr)
         r = self.client.get("/api/v1/payroll/cash.pdf?year=2026")
         self.assertEqual(r.status_code, 400)
+
+
+class NetRoundingTests(CashDenominationTests):
+    """Cash is paid in notes, so a rufiyaa net is rounded UP to the nearest
+    5 (owner 2026-10-03). The few rufiyaa added are shown apart."""
+
+    def test_net_is_rounded_up_and_the_sheet_still_adds_up(self):
+        from . import payroll
+        run = self._run()
+        self.assertEqual(run.round_to, 5)
+        line = run.lines.get()
+        line.allowance = Decimal("331.26")
+        line.advance = Decimal("100")
+        line.save()
+        m = payroll.compute_line(line)
+        self.assertEqual(m["gross"], Decimal("6531.26"))
+        self.assertEqual(m["net"], Decimal("6435.00"))
+        self.assertEqual(m["rounding"], Decimal("3.74"))
+        self.assertEqual(m["gross"] - m["deductions"] + m["rounding"],
+                         m["net"])
+        den = payroll.denominations(run)["site"]
+        self.assertEqual(den["change"], Decimal("0"))
+        self.assertEqual(den["counts"][2] + den["counts"][1], 0)
+
+    def test_an_exact_multiple_and_a_nil_pay_are_left_alone(self):
+        from . import payroll
+        run = self._run()
+        line = run.lines.get()
+        self.assertEqual(payroll.compute_line(line)["rounding"], Decimal("0"))
+        line.advance = Decimal("7000")
+        line.save()
+        m = payroll.compute_line(line)
+        self.assertEqual(m["net"], Decimal("-800.00"))
+        self.assertEqual(m["rounding"], Decimal("0"))
+
+    def test_an_earlier_run_is_untouched_until_refreshed(self):
+        from . import payroll
+        run = self._run()
+        type(run).objects.filter(pk=run.pk).update(round_to=0)
+        run.refresh_from_db()
+        line = run.lines.get()
+        line.allowance = Decimal("1.26")
+        line.save()
+        self.assertEqual(payroll.compute_line(line)["net"],
+                         Decimal("6201.26"))
+        payroll.refresh_run(run, self.hr)
+        run.refresh_from_db()
+        self.assertEqual(run.round_to, 5)
+        self.assertEqual(payroll.compute_line(run.lines.get())["net"],
+                         Decimal("6205.00"))
+
+    def test_the_company_can_change_or_switch_off_the_rounding(self):
+        from .models import CompanyParameter
+        CompanyParameter.objects.update_or_create(
+            key="payroll_round_to", defaults={"value": "0"})
+        self.assertEqual(self._run().round_to, 0)
+
+    def test_usd_and_settlements_are_not_rounded(self):
+        from . import payroll
+        from .models import PayrollRun
+        self.assertEqual(payroll.run_rounding(
+            PayrollRun(currency="USD", year=2026, month=5)), 0)
+        self.assertEqual(payroll.run_rounding(
+            PayrollRun(currency="MVR", kind="SETTLEMENT", year=2026,
+                       month=5)), 0)
+
+    def test_the_rounding_is_labour_cost_when_the_run_is_locked(self):
+        run = self._run()
+        line = run.lines.get()
+        line.allowance = Decimal("1.26")
+        line.save()
+        for action, who in (("submit", self.hr), ("verify", self.pm),
+                            ("approve", self.director), ("lock", self.hr)):
+            self.client.force_authenticate(who)
+            r = self.client.post(f"/api/v1/payroll/runs/{run.id}",
+                                 {"action": action}, format="json")
+            self.assertEqual(r.status_code, 200, r.data)
+        posted = sum(p.amount for p in self.CostPosting.objects.filter(
+            site=self.site, source="STAFF", amount__gt=0))
+        self.assertEqual(posted, Decimal("6205.00"))

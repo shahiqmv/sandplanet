@@ -83,6 +83,7 @@ def _run_info(run, lines=True):
         "site_code": run.site.code if run.site_id else None,
         "currency": run.currency, "year": run.year, "month": run.month,
         "working_days": run.working_days, "status": run.status,
+        "round_to": run.round_to,
         "kind": run.kind,
         "last_working_day": run.last_working_day,
         "settlement_reason": run.settlement_reason,
@@ -675,8 +676,8 @@ def payroll_report_pdf(request, pk):
 
     def totals(rows):
         keys = ("basic_pay", "earned_basic", "allowance", "ot_pay", "gross",
-                "advance", "penalty", "loan", "net", "amount_to_site",
-                "amount_to_office")
+                "advance", "penalty", "loan", "rounding", "net",
+                "amount_to_site", "amount_to_office")
         return {k: _money(sum(Decimal(r[k] or 0) for r in rows)) for k in keys}
 
     group_list = []
@@ -684,8 +685,8 @@ def payroll_report_pdf(request, pk):
         for i, r in enumerate(rows, 1):
             r["no"] = r.get("pay_no") or i
             for k in ("basic_pay", "earned_basic", "allowance", "ot_pay",
-                      "gross", "advance", "penalty", "loan", "net",
-                      "amount_to_site", "amount_to_office"):
+                      "gross", "advance", "penalty", "loan", "rounding",
+                      "net", "amount_to_site", "amount_to_office"):
                 r["f_" + k] = _money(r[k] or 0) if r[k] not in (None, "") else ""
         group_list.append({"site_code": site_code, "rows": rows,
                            "totals": totals(rows)})
@@ -713,7 +714,8 @@ def _slip_context(line, register=None):
                       else payroll.register_summary(line.run))
     for k in ("basic_pay", "daily_rate", "earned_basic", "friday_pay",
               "ot_pay", "allowance", "gross", "advance", "penalty", "loan",
-              "deductions", "net", "amount_to_site", "amount_to_office"):
+              "deductions", "rounding", "net", "amount_to_site",
+              "amount_to_office"):
         info["f_" + k] = _money(info[k] or 0) if info.get(k) not in (None, "") \
             else "0.00"
     run = line.run
