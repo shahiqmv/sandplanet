@@ -298,7 +298,7 @@ def complete_action(action, user, note=""):
     audit("corrective_action", action.id, "ACTION_COMPLETED", actor=user,
           to_state="DONE", detail={"note": action.completion_note[:200]})
     notify_user(action.raised_by, f"Action done — {action.source_document.ref}",
-                f"{action.owner.full_name} says it is done. Verify it.",
+                f"{user.full_name} says it is done. Verify it.",
                 doc=action.source_document, category="approval")
     return None
 

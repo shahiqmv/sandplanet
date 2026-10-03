@@ -228,6 +228,24 @@ class CorrectiveActionTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("other than the person", r.data["detail"])
 
+    def test_the_pm_can_mark_done_for_an_owner_on_leave(self):
+        """An owner on leave must not hold the incident open; the PM marks it
+        done for him, and someone else still verifies (owner 2026-10-03)."""
+        action_id = self._raise().data["id"]
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(f"/api/v1/hse/actions/{action_id}/complete",
+                             {"note": "Caps fitted; owner on leave."},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        action = CorrectiveAction.objects.get(pk=action_id)
+        self.assertEqual(action.status, "DONE")
+        self.assertEqual(action.completed_by, self.pm)
+        r = self.client.post(f"/api/v1/hse/actions/{action_id}/verify")
+        self.assertEqual(r.status_code, 400)
+        self.client.force_authenticate(self.sa)
+        r = self.client.post(f"/api/v1/hse/actions/{action_id}/verify")
+        self.assertEqual(r.status_code, 200, r.data)
+
     def test_verified_action_lets_the_incident_close(self):
         action_id = self._raise().data["id"]
         self.client.force_authenticate(self.sa)

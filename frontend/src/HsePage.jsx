@@ -864,10 +864,20 @@ function ActionTable({ actions, me, canVerify, onChanged, onError }) {
             </td>
             <td style={td}>{a.status.replace(/_/g, " ")}</td>
             <td style={td}>
-              {a.status !== "DONE" && a.owner === me.id && (
+              {/* The owner, or the site team for him: an owner on leave must
+                  not hold an incident open (owner 2026-10-03). The server
+                  already allowed it; a different person still verifies. */}
+              {a.status !== "DONE" && (a.owner === me.id || canVerify) && (
                 <button disabled={busy === a.id} style={ghostButton}
-                        onClick={() => run(a.id, "complete",
-                          { note: window.prompt("What was done?") || "" })}>
+                        title={a.owner === me.id ? undefined
+                          : `Mark done on behalf of ${a.owner_name}`}
+                        onClick={() => {
+                          const note = window.prompt(a.owner === me.id
+                            ? "What was done?"
+                            : `What was done? (on behalf of ${a.owner_name})`);
+                          if (note === null) return;
+                          run(a.id, "complete", { note });
+                        }}>
                   Mark done
                 </button>
               )}
