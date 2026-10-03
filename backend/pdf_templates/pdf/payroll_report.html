@@ -39,7 +39,6 @@
     <th class="num">Allow.<br><span style="font-weight:400">+ Friday</span></th><th class="num">OT pay</th>
     <th class="num">Gross</th><th class="num">Adv</th><th class="num">Fines</th>
     <th class="num">Loan</th>{% if run.round_to %}<th class="num">Round</th>{% endif %}<th class="num">Net</th>
-    <th class="num">To site</th><th class="num">Office</th>
   </tr></thead>
   {% for r in g.rows %}
   <tr>
@@ -58,8 +57,6 @@
     <td class="num">{{ r.f_loan }}</td>
     {% if run.round_to %}<td class="num">{{ r.f_rounding }}</td>{% endif %}
     <td class="num">{{ r.f_net }}</td>
-    <td class="num">{{ r.f_amount_to_site }}</td>
-    <td class="num">{{ r.f_amount_to_office }}</td>
   </tr>
   {% endfor %}
   <tr class="sub">
@@ -74,8 +71,6 @@
     <td class="num">{{ g.totals.loan }}</td>
     {% if run.round_to %}<td class="num">{{ g.totals.rounding }}</td>{% endif %}
     <td class="num">{{ g.totals.net }}</td>
-    <td class="num">{{ g.totals.amount_to_site }}</td>
-    <td class="num">{{ g.totals.amount_to_office }}</td>
   </tr>
 </table>
 {% endfor %}
