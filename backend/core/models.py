@@ -1141,6 +1141,11 @@ class DocumentLine(models.Model):
     # authorisation. Prefilled from the supplier default, overridable per PR.
     credit_days = models.PositiveIntegerField(null=True, blank=True)
     action_taken = models.TextField(blank=True)  # payment slip / voucher no.
+    # A PR vendor row paid as an advance now and the balance in cash before
+    # the goods are collected: amount_cash is the advance, amount_credit the
+    # balance — which is NOT credit and gets no purchase order (owner
+    # 2026-10-04).
+    balance_before_collection = models.BooleanField(default=False)
     po_ref = models.TextField(blank=True)  # auto-filled at PO generation (R3)
     cost_head = models.ForeignKey(  # PR vendor lines carry a cost head (§6C.1)
         "CostHead", on_delete=models.PROTECT, null=True, blank=True,
@@ -2407,6 +2412,12 @@ class Quotation(models.Model):
     quote_date = models.DateField(null=True, blank=True)
     valid_until = models.DateField(null=True, blank=True)
     payment_terms = models.TextField(blank=True)
+    # An advance paid to place or hold the order, as a share of the awarded
+    # value. The balance follows the terms: on Cash it is paid before the
+    # goods are collected, on Credit it is owed on the supplier's credit
+    # period (owner 2026-10-04).
+    advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                          null=True, blank=True)
     # This supplier charges GST — off for unregistered vendors (owner
     # 2026-07-13). Applied at the company rate on the awarded net.
     gst_applicable = models.BooleanField(default=True)

@@ -97,6 +97,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                   "priority", "urgent_reason", "rate", "amount",
                   "amount_cash", "amount_credit", "vendor", "quotation_ref",
                   "payment_terms", "credit_days", "action_taken", "po_ref",
+                  "balance_before_collection",
                   "po_status", "is_changed",
                   "fulfil_source", "store_issue_line", "spec", "mar_ref",
                   "remarks", "ordered_pr_ref"]

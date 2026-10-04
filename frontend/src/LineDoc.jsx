@@ -1788,7 +1788,13 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                       ? Number(line.amount_cash).toLocaleString() : ""}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     {line.amount_credit
-                      ? Number(line.amount_credit).toLocaleString() : ""}</td>
+                      ? Number(line.amount_credit).toLocaleString() : ""}
+                    {/* not credit: the balance of an advance, paid in cash
+                        before the goods are collected (owner 2026-10-04) */}
+                    {line.balance_before_collection && (
+                      <div style={{ fontSize: 11, color: "#5a6b78" }}>
+                        balance, before collection</div>
+                    )}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
                     {(num(line.amount_cash) + num(line.amount_credit))
                       .toLocaleString()}</td>

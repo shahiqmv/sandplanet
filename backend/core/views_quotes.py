@@ -113,11 +113,17 @@ class QuotationSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name", read_only=True)
     total = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
+    terms_text = serializers.SerializerMethodField()
+
+    def get_terms_text(self, obj):
+        from .procurement import quotation_terms_text
+        return quotation_terms_text(obj)
 
     class Meta:
         model = Quotation
         fields = ["id", "supplier", "supplier_name", "quote_ref", "quote_date",
-                  "valid_until", "payment_terms", "gst_applicable", "notes",
+                  "valid_until", "payment_terms", "advance_percent",
+                  "terms_text", "gst_applicable", "notes",
                   "file_url", "total", "lines"]
 
     def get_total(self, obj):
@@ -150,6 +156,23 @@ def _can_edit_quotes(request, pr):
         return Response({"detail": "Quotations are editable until the PR is "
                                    "approved."}, status=400)
     return None
+
+
+def _advance_percent(raw):
+    """(value, error) for an advance entered on a quotation: blank for none,
+    else more than 0 and less than 100 — at 100 it is simply a cash order."""
+    from decimal import Decimal, InvalidOperation
+    if raw in (None, ""):
+        return None, None
+    try:
+        pct = Decimal(str(raw)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None, "The advance is a percentage."
+    if pct == 0:
+        return None, None
+    if not 0 < pct < 100:
+        return None, "The advance is between 0 and 100 percent."
+    return pct, None
 
 
 def _resync_pr(pr):
@@ -206,8 +229,11 @@ def pr_quotations(request, ref):
     except Supplier.DoesNotExist:
         return Response({"detail": "supplier must be an active supplier id."},
                         status=400)
+    advance, msg = _advance_percent(request.data.get("advance_percent"))
+    if msg:
+        return Response({"detail": msg}, status=400)
     quotation = Quotation.objects.create(
-        document=pr, supplier=supplier,
+        document=pr, supplier=supplier, advance_percent=advance,
         quote_ref=request.data.get("quote_ref", ""),
         quote_date=request.data.get("quote_date") or None,
         valid_until=request.data.get("valid_until") or None,
@@ -250,6 +276,11 @@ def quotation_detail(request, pk):
                     else request.data[field])
     if "gst_applicable" in request.data:
         quotation.gst_applicable = bool(request.data["gst_applicable"])
+    if "advance_percent" in request.data:
+        advance, msg = _advance_percent(request.data["advance_percent"])
+        if msg:
+            return Response({"detail": msg}, status=400)
+        quotation.advance_percent = advance
     quotation.save()
     if "lines" in request.data:
         _save_quote_lines(quotation, request.data["lines"])
@@ -452,7 +483,7 @@ def pr_vendor_payment(request, ref):
     # Post the PAID cost leg for this vendor + settle its payable (M6c)
     from .procurement import advance_pr_settlement, post_pr_vendor_paid
 
-    post_pr_vendor_paid(pr, line, request.user, payment_ref)
+    post_pr_vendor_paid(pr, line, request.user, payment_ref, side="cash")
     # status follows the vendor rows (slip for cash, PO for credit)
     old = pr.status
     advance_pr_settlement(pr, request.user)

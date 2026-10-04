@@ -139,9 +139,12 @@ def _line_info(line):
             cash = ln.amount_cash or 0
             if cash <= 0:
                 continue
-            gst = ln.gst_amount or 0
+            # an advance carries its share of the row's GST, not all of it
+            from .procurement import _gst_share
+            gst = _gst_share(ln, cash)
             rows.append({"line_id": ln.id,
                          "vendor": ln.vendor or ln.free_text_desc,
+                         "is_advance": (ln.amount_credit or 0) > 0,
                          "amount_cash": cash, "amount_credit": 0,
                          "gst_amount": gst, "gross": cash + gst,
                          "is_credit": False, "po_ref": ln.po_ref,

@@ -1128,7 +1128,7 @@ function PayLinePr({ l, payKey, startPay, fields }) {
                   {row.vendor}
                   <span style={{ fontSize: 11.5, color: "var(--muted)",
                                  marginLeft: 6 }}>
-                    {row.is_credit ? "credit" : "cash"}
+                    {row.is_credit ? "credit" : row.is_advance ? "advance" : "cash"}
                     {row.po_ref ? ` · PO ${row.po_ref}` : ""}</span>
                 </td>
                 <td style={{ ...td, borderTop: "none", textAlign: "right",

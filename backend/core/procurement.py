@@ -390,8 +390,9 @@ def withdraw_award(pr, row, quote_line_ids, reason, actor):
         gst = ((total * company_gst_rate() / Decimal("100"))
                .quantize(Decimal("0.01"))
                if quotation.gst_applicable else Decimal("0"))
-        row.amount_credit = (total or None) if is_credit else None
-        row.amount_cash = None if is_credit else (total or None)
+        money = vendor_row_money(quotation, total)
+        row.amount_credit = money["amount_credit"] or None
+        row.amount_cash = money["amount_cash"] or None
         row.gst_amount = gst
         row.remarks = (f"{len(left)}/{len(all_lines)} lines awarded · "
                        f"{len(lines)} withdrawn — {reason}")[:300]
@@ -679,7 +680,7 @@ def generate_pos_for_pr(pr, actor):
     )
     by_supplier = {}
     for ql in awarded:
-        if "credit" not in (ql.quotation.payment_terms or "").lower():
+        if not quotation_is_credit(ql.quotation):
             continue  # cash purchase — settled by slip, no PO
         by_supplier.setdefault(ql.quotation.supplier, []).append(ql)
 
@@ -698,6 +699,8 @@ def generate_pos_for_pr(pr, actor):
     quoted = {sup.name for sup in by_supplier}
     bare = [ln for ln in rows
             if (ln.amount_credit or 0) > 0 and not ln.po_ref.strip()
+            # a balance paid in cash before collection is not an order
+            and not ln.balance_before_collection
             and (ln.vendor or "").strip()
             and ln.vendor not in quoted and ln.vendor not in already]
 
@@ -718,7 +721,7 @@ def generate_pos_for_pr(pr, actor):
                     "supplier_name": supplier.name,
                     "supplier_contact": supplier.contact_person,
                     "quote_ref": quotation.quote_ref,
-                    "payment_terms": quotation.payment_terms,
+                    "payment_terms": quotation_terms_text(quotation),
                     "expected_delivery": (pr.current_revision.payload or {})
                     .get("requested_delivery", ""),
                 },
@@ -812,13 +815,20 @@ def advance_pr_settlement(pr, actor):
         # Signatory has approved it and it has issued. Counting the draft
         # marked the PR settled the moment the Director approved it (owner
         # 2026-08-22).
-        return bool(ln.action_taken.strip()
-                    or (ln.po_ref.strip() in issued_pos))
+        paid = bool(ln.action_taken.strip())
+        ordered = ln.po_ref.strip() in issued_pos
+        if (ln.amount_cash or 0) > 0 and (ln.amount_credit or 0) > 0:
+            # An advance and a balance: the advance must be PAID before the
+            # row is done — an issued order alone would close the PR and
+            # take the advance out of Finance's queue unpaid. A balance due
+            # before collection waits on Payables, not on the PR.
+            return paid and (ordered or ln.balance_before_collection)
+        return paid or ordered
 
     settled = [ln for ln in lines if _acted(ln) or _net(ln) <= 0]
     if len(settled) == len(lines):
         set_status(pr, "PAID_PO_ISSUED", actor, "PR_SETTLED")
-    elif any(_acted(ln) for ln in lines):
+    elif any(_acted(ln) or ln.action_taken.strip() for ln in lines):
         set_status(pr, "PAYMENT_PROCESSING", actor, "PR_PARTIALLY_SETTLED")
 
 
@@ -851,6 +861,47 @@ def company_gst_rate():
         return Decimal(str(v))
     except (CompanyParameter.DoesNotExist, Exception):
         return Decimal("8")
+
+
+def quotation_is_credit(quotation):
+    return "credit" in (quotation.payment_terms or "").lower()
+
+
+def quotation_terms_text(quotation):
+    """The quotation's payment terms as a person reads them."""
+    base = "Credit" if quotation_is_credit(quotation) else \
+        (quotation.payment_terms or "Cash")
+    pct = quotation.advance_percent
+    if not pct:
+        return quotation.payment_terms or base
+    tail = ("balance on credit" if quotation_is_credit(quotation)
+            else "balance before collection")
+    return f"{base} — {pct.normalize():f}% advance, {tail}"
+
+
+def vendor_row_money(quotation, total):
+    """How an awarded value is paid: the fields of the PR vendor row.
+
+    Plain cash is all paid on the voucher; plain credit is all on the order.
+    With an advance, the advance is the cash side — paid on the voucher —
+    and the balance sits on the other side: owed on the order when the terms
+    are credit, or paid in cash before the goods are collected when they are
+    not (owner 2026-10-04).
+    """
+    is_credit = quotation_is_credit(quotation)
+    pct = quotation.advance_percent or Decimal("0")
+    advance = ((total * pct / Decimal("100")).quantize(Decimal("0.01"))
+               if 0 < pct < 100 and total > 0 else Decimal("0"))
+    if advance > 0:
+        cash, credit = advance, total - advance
+    else:
+        cash, credit = ((None, total) if is_credit else (total, None))
+    return {
+        "payment_terms": quotation_terms_text(quotation),
+        "purchase_type": "CREDIT" if is_credit else "CASH",
+        "amount_cash": cash, "amount_credit": credit,
+        "balance_before_collection": bool(advance > 0 and not is_credit),
+    }
 
 
 def sync_pr_vendor_rows(pr):
@@ -896,23 +947,20 @@ def sync_pr_vendor_rows(pr):
         total = sum((line.amount or Decimal("0")) for line in awarded)
         gst = ((total * rate / Decimal("100")).quantize(Decimal("0.01"))
                if quotation.gst_applicable else Decimal("0"))
-        is_credit = "credit" in (quotation.payment_terms or "").lower()
+        is_credit = quotation_is_credit(quotation)
         line_no += 1
         name = quotation.supplier.name
         fields = dict(
             line_no=line_no, free_text_desc=name, vendor=name,
             quotation_ref=quotation.quote_ref,
-            payment_terms=quotation.payment_terms,
             # The supplier's agreed credit period, so the payable's due date
             # follows it (owner 2026-08-22). Purchasing can still override
             # it on the row.
             credit_days=(quotation.supplier.credit_days
                          if is_credit else None),
-            purchase_type="CREDIT" if is_credit else "CASH",
-            amount_cash=None if is_credit else total,
-            amount_credit=total if is_credit else None,
             gst_amount=gst,
             remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
+            **vendor_row_money(quotation, total),
         )
         ln = take(name, quotation.quote_ref)
         if ln is None:
@@ -1020,10 +1068,29 @@ def authorise_pr(pr, actor):
     (owner 2026-08-22). A PR with no cash never goes to Finance at all until
     the payable falls due.
     """
+    from .models import Payable
+
     for ln in pr.current_revision.lines.all():
         cash = ln.amount_cash or 0
         if cash > 0:
             _post_pr_line(pr, ln, cash, _gst_share(ln, cash), actor)
+        balance = ln.amount_credit or 0
+        if cash > 0 and balance > 0 and ln.balance_before_collection:
+            # The voucher pays the advance. The balance is the same cash
+            # purchase, approved with it, and paid before the goods are
+            # collected: it is committed here and waits on Payables for
+            # Finance to voucher when Purchasing is ready to collect.
+            gst = _gst_share(ln, balance)
+            if _already_committed(pr, ln) < cash + balance:
+                _post_pr_line(pr, ln, balance, gst, actor)
+            if not Payable.objects.filter(document=pr,
+                                          document_line=ln).exists():
+                Payable.objects.create(
+                    document=pr, document_line=ln, site=pr.site,
+                    vendor=ln.vendor or ln.free_text_desc,
+                    terms="Balance — pay before collection",
+                    amount=Decimal(str(balance)) + gst,
+                    due_date=date.today())
 
 
 def po_source_pr(po):
@@ -1157,14 +1224,26 @@ def reverse_pr_authorisation(pr, actor):
     pr.payables.filter(status="OUTSTANDING").update(status="CANCELLED")
 
 
-def post_pr_vendor_paid(pr, line, actor, ref):
+def post_pr_vendor_paid(pr, line, actor, ref, side=None):
     """PAID leg when Finance records a vendor payment / settlement (§4A).
-    Settles the vendor's payable if credit."""
+    Settles the vendor's payable if credit.
+
+    A row paid in two goes — an advance, then a balance — is paid one `side`
+    at a time: "cash" is the advance on the voucher, "credit" the balance on
+    its payable. Each posts its own share and only the balance settles the
+    payable; a row with one side is paid whole, as it always was.
+    """
     from . import costing
     from .models import Payable
 
-    net = (line.amount_cash or 0) + (line.amount_credit or 0)
+    cash, credit = line.amount_cash or 0, line.amount_credit or 0
+    net = cash + credit
     gst = line.gst_amount or 0
+    settle = True
+    if cash > 0 and credit > 0 and side in ("cash", "credit"):
+        net = cash if side == "cash" else credit
+        gst = _gst_share(line, net)
+        settle = side == "credit"
     if net > 0:
         materials = costing.by_code(costing.MATERIALS)
         costing.post(site=pr.site, cost_head=line.cost_head or materials,
@@ -1175,6 +1254,7 @@ def post_pr_vendor_paid(pr, line, actor, ref):
             costing.post(site=_ho_site(), cost_head=gst_head, state="PAID",
                          source="PR", amount=gst, document=pr,
                          document_line=line, is_stock_pool=True, actor=actor)
-    Payable.objects.filter(document=pr, document_line=line,
-                           status="OUTSTANDING").update(
-        status="SETTLED", settled_on=date.today(), settled_ref=ref)
+    if settle:
+        Payable.objects.filter(document=pr, document_line=line,
+                               status="OUTSTANDING").update(
+            status="SETTLED", settled_on=date.today(), settled_ref=ref)

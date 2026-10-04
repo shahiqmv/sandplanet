@@ -261,7 +261,7 @@ export function QuotationsSummary({ doc, me, onOpenWorkspace }) {
                         borderTop: "1px solid var(--sp-border)" }}>
             <strong style={{ color: "var(--sp-navy)" }}>{q.supplier_name}</strong>
             <span style={{ fontSize: 12, color: "#5a6b78" }}>
-              {q.quote_ref}{q.payment_terms && ` · ${q.payment_terms}`} ·
+              {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
               MVR {Number(q.total).toLocaleString()} ·
               {" "}{matched}/{q.lines.length} lines matched ·
               {" "}{q.lines.filter((l) => l.awarded).length} awarded
@@ -291,6 +291,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
   const [newRef, setNewRef] = useState("");
   const [newTerms, setNewTerms] = useState("Cash");
   const [newGst, setNewGst] = useState(true);
+  const [newAdvance, setNewAdvance] = useState("");
   const [newFile, setNewFile] = useState(null);
   const [newLines, setNewLines] = useState([]);
   const [notice, setNotice] = useState(null);
@@ -315,6 +316,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
         method: "POST",
         body: { supplier: +newSupplier, quote_ref: newRef,
                 payment_terms: newTerms, gst_applicable: newGst,
+                advance_percent: newAdvance,
                 lines: newLines.filter((l) => l.supplier_desc) },
       });
       if (newFile) {
@@ -331,6 +333,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
       setNewSupplier("");
       setNewRef("");
       setNewTerms("Cash");
+      setNewAdvance("");
       setNewGst(true);
       setNewFile(null);
       setNewLines([]);
@@ -361,6 +364,18 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
     try {
       await api(`/quotations/${q.id}`, { method: "PATCH",
         body: { gst_applicable: !q.gst_applicable } });
+      load();
+      onChanged?.();
+    } catch (e) { setError(e.message); }
+  }
+
+  // How the supplier is paid: cash or credit, with or without an advance.
+  // With an advance, the balance is paid before collection (cash) or owed
+  // on the credit period (credit) — owner 2026-10-04.
+  async function saveTerms(q, patch) {
+    setError(null);
+    try {
+      await api(`/quotations/${q.id}`, { method: "PATCH", body: patch });
       load();
       onChanged?.();
     } catch (e) { setError(e.message); }
@@ -432,9 +447,34 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
               <strong style={{ color: "var(--sp-navy)" }}>
                 {q.supplier_name}</strong>
               <span style={{ fontSize: 12, color: "#5a6b78" }}>
-                {q.quote_ref}{q.payment_terms && ` · ${q.payment_terms}`} ·
+                {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
                 net MVR {Number(q.total).toLocaleString()}
               </span>
+              {canEdit && (
+                <span style={{ fontSize: 12, display: "flex", gap: 4,
+                               alignItems: "center" }}>
+                  <select value={/credit/i.test(q.payment_terms || "") ? "Credit" : "Cash"}
+                          onChange={(e) => saveTerms(q, { payment_terms: e.target.value })}
+                          title="How this supplier is paid"
+                          style={{ ...inputStyle, width: 82, padding: "2px 4px",
+                                   fontSize: 12 }}>
+                    <option>Cash</option><option>Credit</option>
+                  </select>
+                  advance
+                  <input type="number" min="0" max="99" step="any"
+                         defaultValue={q.advance_percent ? Number(q.advance_percent) : ""}
+                         key={`adv-${q.id}-${q.advance_percent}`}
+                         placeholder="0"
+                         title="Advance paid now, as a % of the order. The balance is paid before collection (cash) or on the credit period (credit)."
+                         onBlur={(e) => {
+                           const now = e.target.value === "" ? null : Number(e.target.value);
+                           const was = q.advance_percent ? Number(q.advance_percent) : null;
+                           if (now !== was) saveTerms(q, { advance_percent: e.target.value });
+                         }}
+                         style={{ ...inputStyle, width: 56, padding: "2px 4px",
+                                  fontSize: 12 }} />%
+                </span>
+              )}
               <label style={{ fontSize: 12, display: "flex", gap: 4,
                               alignItems: "center",
                               color: q.gst_applicable ? "var(--sp-navy)"
@@ -535,6 +575,14 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
               <option>Cash</option>
               <option>Credit</option>
             </select>
+            <label style={{ fontSize: 13, display: "flex", gap: 4,
+                            alignItems: "center" }}
+                   title="Advance paid now, as a % of the order. The balance is paid before collection (cash) or on the credit period (credit).">
+              Advance
+              <input type="number" min="0" max="99" step="any"
+                     value={newAdvance} placeholder="0"
+                     onChange={(e) => setNewAdvance(e.target.value)}
+                     style={{ ...inputStyle, width: 64 }} />%</label>
             <label style={{ fontSize: 13, display: "flex", gap: 4,
                             alignItems: "center" }}
                    title="Vendor is GST-registered — adds GST at the company rate">

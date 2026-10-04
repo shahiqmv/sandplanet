@@ -123,7 +123,7 @@ def settle_payable(payable, actor, ref):
         return None
     from .procurement import post_pr_vendor_paid
     post_pr_vendor_paid(payable.document, payable.document_line, actor,
-                        ref or "")
+                        ref or "", side="credit")
     audit("document", payable.document_id, "PAYABLE_SETTLED", actor=actor,
           detail={"vendor": payable.vendor, "ref": ref})
     return None
