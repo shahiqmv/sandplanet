@@ -16,6 +16,7 @@ import PayablesPage from "../PayablesPage.jsx";
 import PaymentVouchersPage from "../PaymentVouchersPage.jsx";
 import ReceivablesPage from "../ReceivablesPage.jsx";
 import AccountsPage from "./AccountsPage.jsx";
+import AuditsPage from "./AuditsPage.jsx";
 import BankingPage from "./BankingPage.jsx";
 import { AgingPage, DocsPage, PartiesPage } from "./CreditPage.jsx";
 import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
@@ -62,7 +63,8 @@ const SECTIONS = [
   ["books", "Books", [
     ["accounts", "Chart of accounts", BOOK_ROLES],
     ["journals", "Journal entries", BOOK_ROLES],
-    ["import", "Import from Excel", BOOK_ROLES]]],
+    ["import", "Import from Excel", BOOK_ROLES],
+    ["audits", "External audits", BOOK_ROLES]]],
   ["reports", "Reports", [
     ["pnl", "Profit and loss", BOOK_ROLES],
     ["bs", "Balance sheet", BOOK_ROLES],
@@ -312,6 +314,7 @@ export default function App() {
         {page === "vouchers" && <PaymentVouchersPage me={me} onOpenDoc={openDoc} openRef={sub} key={sub || "list"} />}
         {page === "payables" && <PayablesPage me={me} onOpenDoc={openDoc} />}
         {page === "rentals" && <RentalsPage sub={sub} go={go} key={sub || "list"} />}
+        {page === "audits" && <AuditsPage sub={sub} go={go} key={sub || "list"} />}
         {page === "utilities" && <UtilitiesPage sub={sub} go={go} />}
         {page === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
         {page === "receivables" && <ReceivablesPage me={me} />}

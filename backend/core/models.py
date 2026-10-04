@@ -9376,3 +9376,90 @@ class LedgerImport(models.Model):
 
     class Meta:
         ordering = ["-id"]
+
+
+def external_audit_path(instance, filename):
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"audits/{uuid.uuid4().hex[:14]}{ext}"
+
+
+class ExternalAudit(models.Model):
+    """One audit of the company by an outside auditor — the yearly audit of
+    the financial statements, a tax audit, anything else of the kind. A
+    register and a place for its papers; the fee is paid like any other
+    payment, on a payment requisition (owner 2026-10-04)."""
+
+    class Kind(models.TextChoices):
+        FINANCIAL = "FINANCIAL", "Financial statements audit"
+        TAX = "TAX", "Tax audit"
+        OTHER = "OTHER", "Other audit"
+
+    class Status(models.TextChoices):
+        PLANNED = "PLANNED", "Planned"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        DRAFT = "DRAFT", "Draft received"
+        COMPLETED = "COMPLETED", "Report issued"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Opinion(models.TextChoices):
+        UNMODIFIED = "UNMODIFIED", "Unmodified (clean)"
+        QUALIFIED = "QUALIFIED", "Qualified"
+        ADVERSE = "ADVERSE", "Adverse"
+        DISCLAIMER = "DISCLAIMER", "Disclaimer of opinion"
+
+    ref = models.CharField(max_length=20, unique=True)
+    kind = models.CharField(max_length=12, choices=Kind.choices,
+                            default=Kind.FINANCIAL)
+    title = models.CharField(max_length=200)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    auditor = models.CharField(max_length=160)
+    partner = models.CharField(max_length=160, blank=True)
+    auditor_contact = models.CharField(max_length=200, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.PLANNED)
+    started_on = models.DateField(null=True, blank=True)
+    report_date = models.DateField(null=True, blank=True)
+    opinion = models.CharField(max_length=12, choices=Opinion.choices,
+                               blank=True)
+    # for the record only: the fee is paid on a payment requisition
+    fee_currency = models.CharField(max_length=3, default="MVR")
+    fee_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                     null=True, blank=True)
+    payment_ref = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-period_end", "-id"]
+
+
+class ExternalAuditFile(models.Model):
+    """A paper of an audit: the engagement letter, the signed report."""
+
+    class Kind(models.TextChoices):
+        ENGAGEMENT = "ENGAGEMENT", "Engagement letter"
+        DRAFT = "DRAFT", "Draft report"
+        REPORT = "REPORT", "Audit report (final)"
+        MANAGEMENT = "MANAGEMENT", "Management letter"
+        REPRESENTATION = "REPRESENTATION", "Representation letter"
+        INVOICE = "INVOICE", "Auditor's invoice"
+        OTHER = "OTHER", "Other"
+
+    audit = models.ForeignKey(ExternalAudit, on_delete=models.CASCADE,
+                              related_name="files")
+    kind = models.CharField(max_length=16, choices=Kind.choices,
+                            default=Kind.OTHER)
+    label = models.CharField(max_length=160, blank=True)
+    file = models.FileField(upload_to=external_audit_path)
+    original_name = models.CharField(max_length=200, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
