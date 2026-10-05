@@ -1,0 +1,73 @@
+{% load brand %}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  .txt { white-space: pre-wrap; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  .decl { font-size: 9.5pt; line-height: 1.5; margin: 10px 0 6px; }
+  table.sig td { height: 46px; vertical-align: bottom; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="UNIT HANDOVER" %}
+{% include "pdf/_letterhead.html" with title="UNIT HANDOVER CERTIFICATE" subline=subline %}
+
+<table>
+  <tr><td class="lbl" style="width:18%">Certificate no.</td><td style="width:32%"><strong>{{ h.certificate_no }}</strong></td>
+      <td class="lbl" style="width:18%">Project</td><td>{{ project.code }} — {{ project.title }}</td></tr>
+  <tr><td class="lbl">Unit</td><td><strong>{{ unit.ref }}</strong>{% if unit.name %} — {{ unit.name }}{% endif %}</td>
+      <td class="lbl">Site</td><td>{{ site.code }} — {{ site.name }}</td></tr>
+  {% if unit.scope or unit.location %}
+  <tr><td class="lbl">Scope</td><td>{{ unit.scope|default:"—" }}</td>
+      <td class="lbl">Location</td><td>{{ unit.location|default:"—" }}</td></tr>
+  {% endif %}
+</table>
+
+<h2>1. JOINT INSPECTION</h2>
+<table>
+  <tr><td class="lbl" style="width:18%">Inspected on</td><td style="width:32%">{{ h.inspected_on|date:"D, d M Y" }}</td>
+      <td class="lbl" style="width:18%">Offered on</td><td>{{ h.offered_on|date:"d M Y" }}</td></tr>
+  <tr><td class="lbl">For the client</td><td class="txt">{{ h.client_attendees }}</td>
+      <td class="lbl">For the contractor</td><td class="txt">{{ h.our_attendees|default:"—" }}</td></tr>
+  {% if h.inspection_notes %}
+  <tr><td class="lbl">Notes</td><td colspan="3" class="txt">{{ h.inspection_notes }}</td></tr>
+  {% endif %}
+</table>
+
+<h2>2. OUTSTANDING ITEMS — {{ snags|length }}</h2>
+{% if snags %}
+<table>
+  <thead><tr><th style="width:11%">Ref</th><th style="width:20%;text-align:left">Location</th>
+      <th style="text-align:left">Item</th><th style="width:10%">Class</th><th style="width:14%">To be done by</th></tr></thead>
+  <tbody>
+  {% for s in snags %}
+  <tr><td>{{ s.ref_no }}</td><td>{{ s.location }}</td><td>{{ s.description }}</td>
+      <td>{{ s.get_severity_display|cut:" — holds the handover" }}</td>
+      <td>{% if s.due_date %}{{ s.due_date|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="note">The items above are minor, do not prevent the use of the unit, and will be made good by the contractor by the dates shown.</p>
+{% else %}
+<p class="note">No items outstanding at handover.</p>
+{% endif %}
+
+<h2>3. HANDOVER</h2>
+<p class="decl">The unit described above has been inspected jointly and is handed over by the contractor and taken over by the
+client{% if h.handed_over_on %} on <strong>{{ h.handed_over_on|date:"d F Y" }}</strong>{% else %} on the date entered below{% endif %},
+complete except for the outstanding items listed in section 2.
+{% if dlp_months %}The defects liability period for this unit is <strong>{{ dlp_months }} month{{ dlp_months|pluralize }}</strong> from the date of
+handover{% if dlp_ends %}, ending on <strong>{{ dlp_ends|date:"d F Y" }}</strong>{% endif %}.{% endif %}
+This certificate covers this unit only and does not affect retention or any other term of the contract.</p>
+
+<table class="sig">
+  <tr><td class="t" style="width:50%">For the contractor — {{ co.legal_name }}</td><td class="t">For the client</td></tr>
+  <tr><td></td><td>{% if h.client_signatory %}{{ h.client_signatory }}{% if h.client_position %}<br><span class="note">{{ h.client_position }}</span>{% endif %}{% endif %}</td></tr>
+  <tr><td style="height:16px" class="note">Name, signature and date</td><td style="height:16px" class="note">Name, signature and date{% if not h.handed_over_on %} of handover{% endif %}</td></tr>
+</table>
+<p class="note">Printed {{ printed_at|date:"d M Y — H:i" }} from Planet.</p>
+</body>
+</html>

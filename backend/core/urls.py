@@ -19,7 +19,7 @@ from . import version as version_api, \
     views_payroll as payroll_api, views_quotes as quotes, \
     views_trading as trading_api, views_fleet as fleet_api, \
     views_stock as stock, views_subcontract as subcontract_api, \
-    views_units as units_api, views_tools as tools_api, views_transfers as transfers_api, \
+    views_units as units_api, views_unit_handover as unit_handover_api, views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
     views_me as me_api, \
     views_staff_requests as sreq_api, \
@@ -530,6 +530,15 @@ urlpatterns = [
     path("projects/<int:pk>/reorder-units", units_api.project_reorder_units,
          name="project-reorder-units"),
     path("units/<int:pk>", units_api.unit_detail, name="unit-detail"),
+    path("units/<int:pk>/handover", unit_handover_api.unit_handover,
+         name="unit-handover"),
+    path("units/<int:pk>/handover/certificate.pdf",
+         unit_handover_api.unit_handover_certificate,
+         name="unit-handover-certificate"),
+    path("units/<int:pk>/handover/snags", unit_handover_api.unit_snags,
+         name="unit-handover-snags"),
+    path("units/<int:pk>/handover/<str:action>",
+         unit_handover_api.unit_handover_action, name="unit-handover-action"),
     path("units/<int:pk>/progress", units_api.unit_progress,
          name="unit-progress"),
     path("sites/<int:pk>/units", units_api.site_units, name="site-units"),

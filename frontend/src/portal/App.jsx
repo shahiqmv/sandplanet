@@ -384,6 +384,13 @@ function UnitsView({ project, onBack }) {
                   {u.size ? ` · ${u.size}` : ""}
                 </span>
                 <span className={`pill ${tone(u)}`}>{u.status_label}</span>
+                {u.handover && u.handover.status !== "NONE" && (
+                  <span className={`pill ${u.handover.status === "HANDED_OVER"
+                                            ? "ok" : "warn"}`}>
+                    {u.handover.status === "HANDED_OVER"
+                      ? `Handed over ${u.handover.handed_over_on}`
+                      : u.handover.status === "INSPECTED" ? "Inspected"
+                      : "Ready for inspection"}</span>)}
                 <span className="tnum" style={{ minWidth: 46,
                                                 textAlign: "right" }}>
                   {Math.round(Number(u.percent))}%</span>

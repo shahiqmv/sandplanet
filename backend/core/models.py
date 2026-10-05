@@ -8599,6 +8599,14 @@ class SnagItem(models.Model):
     # A snag found during the defects-liability period rather than at
     # taking-over — the distinction the client cares about.
     in_dlp = models.BooleanField(default=False)
+    # The unit it was found in, where the project hands over unit by unit —
+    # a villa, a pool (owner 2026-10-05). A unit can be handed over with
+    # MINOR snags still open; a MAJOR one holds the handover.
+    unit = models.ForeignKey("ProjectUnit", on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name="snags")
+    severity = models.CharField(
+        max_length=5, default="MINOR",
+        choices=[("MINOR", "Minor"), ("MAJOR", "Major — holds the handover")])
 
     class Meta:
         ordering = ["dossier", "status", "due_date", "id"]
@@ -9474,3 +9482,62 @@ class ExternalAuditFile(models.Model):
 
     class Meta:
         ordering = ["id"]
+
+
+def unit_handover_path(instance, filename):
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"handover/units/{uuid.uuid4().hex[:14]}{ext}"
+
+
+class UnitHandover(models.Model):
+    """One unit handed to the client on its own — a villa, a pool — as it is
+    finished, ahead of the rest of the project (owner 2026-10-05).
+
+    Offered for inspection, inspected jointly with the client, handed over on
+    a signed certificate. The unit's defects-liability period runs from ITS
+    handover date, not the project's. Retention and claims are untouched.
+    """
+
+    class Status(models.TextChoices):
+        OFFERED = "OFFERED", "Offered for inspection"
+        INSPECTED = "INSPECTED", "Inspected"
+        HANDED_OVER = "HANDED_OVER", "Handed over"
+
+    unit = models.OneToOneField(ProjectUnit, on_delete=models.CASCADE,
+                                related_name="handover")
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.OFFERED)
+    certificate_no = models.CharField(max_length=30, blank=True)
+    offered_on = models.DateField()
+    offered_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    percent_at_offer = models.DecimalField(max_digits=5, decimal_places=2,
+                                           default=0)
+    proposed_inspection = models.DateField(null=True, blank=True)
+    inspected_on = models.DateField(null=True, blank=True)
+    client_attendees = models.TextField(blank=True)
+    our_attendees = models.TextField(blank=True)
+    inspection_notes = models.TextField(blank=True)
+    handed_over_on = models.DateField(null=True, blank=True)
+    # the client has no login: who signed for them, in whose words
+    client_signatory = models.CharField(max_length=120, blank=True)
+    client_position = models.CharField(max_length=120, blank=True)
+    signed_copy = models.FileField(upload_to=unit_handover_path, null=True,
+                                   blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def defects_liability_ends(self):
+        months = self.unit.project.defects_liability_months
+        d = self.handed_over_on
+        if not (d and months):
+            return None
+        import calendar
+        from datetime import date as _date
+        y, m = divmod(d.month - 1 + months, 12)
+        y, m = d.year + y, m + 1
+        return _date(y, m, min(d.day, calendar.monthrange(y, m)[1]))

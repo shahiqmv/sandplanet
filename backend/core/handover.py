@@ -478,9 +478,13 @@ def next_snag_ref(dossier):
 
 
 @transaction.atomic
-def raise_snag(dossier, data, user, photo=None):
+def raise_snag(dossier, data, user, photo=None, unit=None):
     if not (data.get("description") or "").strip():
         return None, "What is the defect?"
+    if unit is None and data.get("unit_id"):
+        unit = dossier.project.units.filter(pk=data.get("unit_id")).first()
+    if unit is not None and not (data.get("location") or "").strip():
+        data = {**{k: data.get(k) for k in data}, "location": unit.ref}
     if not (data.get("location") or "").strip():
         return None, "Where is it? A snag without a location cannot be found."
     snag = SnagItem.objects.create(
@@ -492,8 +496,14 @@ def raise_snag(dossier, data, user, photo=None):
         raised_by=user, owner_id=data.get("owner_id") or None,
         owner_note=(data.get("owner_note") or "").strip(),
         due_date=_as_date(data.get("due_date")),
-        photo=photo,
-        in_dlp=bool(dossier.taking_over_on))
+        photo=photo, unit=unit,
+        severity=("MAJOR" if str(data.get("severity") or "").upper()
+                  == "MAJOR" else "MINOR"),
+        # a unit handed over on its own is in ITS defects period from then
+        in_dlp=bool(dossier.taking_over_on
+                    or (unit is not None
+                        and getattr(getattr(unit, "handover", None),
+                                    "handed_over_on", None))))
     audit("project", dossier.project_id, "SNAG_RAISED", actor=user,
           detail={"ref": snag.ref_no, "location": snag.location[:60],
                   "in_dlp": snag.in_dlp})
@@ -503,6 +513,9 @@ def raise_snag(dossier, data, user, photo=None):
 @transaction.atomic
 def update_snag(snag, data, user):
     changed = []
+    if "severity" in data and data["severity"] in ("MINOR", "MAJOR"):
+        snag.severity = data["severity"]
+        changed.append("severity")
     for field in ("status", "location", "description", "discipline",
                   "owner_note", "due_date"):
         if field in data:

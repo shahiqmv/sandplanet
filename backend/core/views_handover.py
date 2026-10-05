@@ -78,13 +78,15 @@ class SnagSerializer(serializers.ModelSerializer):
     raised_by_name = serializers.CharField(source="raised_by.full_name",
                                            read_only=True)
     photo_url = serializers.SerializerMethodField()
+    unit_ref = serializers.CharField(source="unit.ref", read_only=True,
+                                     default=None)
 
     class Meta:
         model = SnagItem
         fields = ["id", "ref_no", "location", "discipline", "description",
                   "raised_on", "raised_by_name", "owner", "owner_name",
                   "owner_note", "due_date", "status", "fixed_on", "closed_on",
-                  "in_dlp", "photo_url"]
+                  "in_dlp", "photo_url", "unit", "unit_ref", "severity"]
 
     def get_photo_url(self, obj):
         try:

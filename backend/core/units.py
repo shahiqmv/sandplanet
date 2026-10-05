@@ -367,13 +367,18 @@ def apply_dpr(doc, actor):
     return applied
 
 
+def _handover_summary(unit):
+    from .unit_handover import summary
+    return summary(unit)
+
+
 def board(project):
     """The unit board: every unit with its stage line, for the team, for
     management and for the client portal."""
     from django.utils import timezone
     today = timezone.localdate()
     units = (project.units.select_related("category")
-             .prefetch_related("stage_progress__stage",
+             .prefetch_related("stage_progress__stage", "snags", "handover",
                                "category__stages",
                                "project__unit_stages")
              .order_by("sort_order", "id"))
@@ -414,6 +419,7 @@ def board(project):
                              if u.started_on else None),
             "target_date": u.target_date, "hold_reason": u.hold_reason,
             "last_reported_on": last, "last_dpr": last_doc,
+            "handover": _handover_summary(u),
             "stages": [{"id": st.id, "name": st.name, "weight": st.weight,
                         "percent": (done[st.id].percent if st.id in done
                                     else ZERO),
@@ -442,4 +448,6 @@ def board(project):
                ).quantize(Decimal("0.01")) if rows else ZERO
     return {"units": rows, "categories": list(cats.values()),
             "overall_percent": overall, "unit_count": len(rows),
-            "complete": sum(1 for r in rows if r["status"] == "COMPLETE")}
+            "complete": sum(1 for r in rows if r["status"] == "COMPLETE"),
+            "handed_over": sum(1 for r in rows
+                               if r["handover"]["status"] == "HANDED_OVER")}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import UnitHandover, { HandoverChip } from "./UnitHandover.jsx";
 import { Chip, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -37,6 +38,7 @@ export default function UnitsPanel({ projectId, me }) {
   // Units are listed in the order the site walks them — generated refs
   // rarely match that (owner 2026-08-23).
   const [ordering, setOrdering] = useState(false);
+  const [handing, setHanding] = useState(null);   // unit id, handover open
 
   const load = () => api(`/projects/${projectId}/units`).then(setData)
     .catch((e) => setError(e.message));
@@ -176,21 +178,26 @@ export default function UnitsPanel({ projectId, me }) {
           <th style={th}>Stage now</th>
           <th style={th}>Progress</th><th style={th}>Status</th>
           <th style={th}>Last reported</th>
+          <th style={th}>Handover</th>
         </tr></thead>
         <tbody>
           {shown.map((u, i) => (
             <UnitRow key={u.id} u={u} open={open === u.id}
               onToggle={() => !ordering && setOpen(open === u.id ? null : u.id)}
               can={can} me={me} patchUnit={patchUnit} call={call}
+              onHandover={() => setHanding(u.id)}
               ordering={ordering && !filter.trim()} index={i}
               last={i === shown.length - 1} onMove={moveUnit} />))}
           {shown.length === 0 && (
-            <tr><td style={td} colSpan={6}>
+            <tr><td style={td} colSpan={7}>
               {data.unit_count === 0
                 ? "No units yet — generate them from the BOQ categories above."
                 : "No unit matches."}</td></tr>)}
         </tbody>
       </table>
+      {handing && (
+        <UnitHandover unitId={handing}
+          onClose={() => { setHanding(null); load(); }} />)}
     </section>
   );
 }
@@ -260,7 +267,7 @@ function SetUp({ projectId, can, unitPriced, onDone }) {
 }
 
 function UnitRow({ u, open, onToggle, can, me, patchUnit, call,
-                  ordering, index, last, onMove }) {
+                  ordering, index, last, onMove, onHandover }) {
   const canReport = REPORT_ROLES.includes(me.role);
   return (<>
     <tr style={{ cursor: ordering ? "default" : "pointer" }}
@@ -297,9 +304,16 @@ function UnitRow({ u, open, onToggle, can, me, patchUnit, call,
       <td style={td}>{u.last_reported_on || "—"}
         {u.last_dpr && <div style={{ fontSize: 11, color: "var(--muted)" }}>
           {u.last_dpr}</div>}</td>
+      <td style={td} onClick={(e) => e.stopPropagation()}>
+        {u.handover?.status !== "NONE" && <HandoverChip h={u.handover} />}
+        <button style={{ ...ghostButton, padding: "2px 8px", fontSize: 12,
+                         display: "block", marginTop: 3 }}
+                onClick={onHandover}>
+          {u.handover?.status === "NONE" ? "Hand over…" : "Open"}</button>
+      </td>
     </tr>
     {open && (
-      <tr><td colSpan={6} style={{ padding: "6px 14px 12px",
+      <tr><td colSpan={7} style={{ padding: "6px 14px 12px",
                                    background: "var(--sky-soft, #f3f8fb)" }}>
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 320px" }}>
