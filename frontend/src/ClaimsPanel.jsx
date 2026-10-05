@@ -561,7 +561,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                         marginBottom: 4 }}>
             Back charges (client deductions — cumulative)</div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 4 }}>
-            After GST: a GST-inclusive contra off the total. Before GST: netted
+            Enter each back charge as its total to date, earlier claims
+            included; this claim deducts the increase. After GST: a GST-inclusive contra off the total. Before GST: netted
             off the certified work, so it reduces the taxable amount.</div>
           {deds.map((row, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4,
@@ -587,6 +588,25 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
               <button style={{ ...ghostButton, padding: "2px 8px" }}
                 onClick={() => setDeds(deds.filter((_, j) => j !== i))}>
                 ✕</button>
+              {/* The figure is the running total. A line carried over from
+                  the last claim at the same figure deducts NOTHING on this
+                  one — which read as a broken deduction on SFR Villa 42
+                  IPA-02 (owner 2026-10-05). Say what this claim takes. */}
+              {(() => {
+                const prev = Number((d.deduction_lines || []).find((dl) =>
+                  (dl.label || "").trim().toLowerCase()
+                    === (row.label || "").trim().toLowerCase())?.previous || 0);
+                if (!prev) return null;
+                const now = Number(row.cumulative_amount || 0) - prev;
+                return (
+                  <span style={{ fontSize: 11.5,
+                                 color: now === 0 ? "#b45309" : "var(--muted)" }}>
+                    {prev.toLocaleString(undefined, { minimumFractionDigits: 2 })} already
+                    deducted on earlier claims · this claim takes{" "}
+                    <b>{now.toLocaleString(undefined, { minimumFractionDigits: 2 })}</b>
+                    {now === 0 && " — raise the total to deduct more"}
+                  </span>);
+              })()}
             </div>
           ))}
           <datalist id="ded-presets">
