@@ -29,6 +29,10 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(null);
   const [filter, setFilter] = useState("");
+  // One project at a time: with several unit projects on a site the page
+  // ran one board after another and got long (owner 2026-10-05). "" = the
+  // first one tracking units; "all" = every board, as before.
+  const [pick, setPick] = useState("");
   // the unit whose handover is open, and the project to re-read when it shuts
   const [handing, setHanding] = useState(null);
   const reloadBoard = (pid) => api(`/projects/${pid}/units`)
@@ -45,6 +49,11 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
 
   const tracked = (projects || []).filter(
     (p) => boards[p.id] && boards[p.id].unit_count > 0);
+  const chosen = pick === "all" ? null
+    : (tracked.find((p) => String(p.id) === pick) || tracked[0]);
+  // a search looks across every project, or it would miss the unit
+  const shown = pick === "all" || filter.trim() || !chosen
+    ? tracked : [chosen];
 
   return (
     <section style={card}>
@@ -52,6 +61,18 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
                     flexWrap: "wrap", marginBottom: 12 }}>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 18 }}>
           Unit Progress — {site.code}</h2>
+        {tracked.length > 1 && (
+          <select value={pick === "all" ? "all" : String(chosen?.id || "")}
+                  onChange={(e) => setPick(e.target.value)}
+                  title="Which project's units to show"
+                  style={{ ...inputStyle, width: "auto", maxWidth: 420,
+                           fontWeight: 600 }}>
+            {tracked.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.code} — {p.title} ({boards[p.id].complete}/{boards[p.id].unit_count})
+              </option>))}
+            <option value="all">All {tracked.length} projects</option>
+          </select>)}
         <input placeholder="Find a unit…" value={filter}
                onChange={(e) => setFilter(e.target.value)}
                style={{ ...inputStyle, width: 190, marginLeft: "auto" }} />
@@ -64,13 +85,15 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
           project’s <strong>Commercial → Units</strong> tab.
         </p>)}
 
-      {tracked.map((p) => {
+      {shown.map((p) => {
         const d = boards[p.id];
         const units = d.units.filter((u) => {
           const q = filter.trim().toLowerCase();
           return !q || `${u.ref} ${u.name} ${u.current_stage}`
             .toLowerCase().includes(q);
         });
+        // searching every project: leave out the ones with nothing to show
+        if (filter.trim() && units.length === 0 && shown.length > 1) return null;
         return (
           <div key={p.id} style={{ marginBottom: 26 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 12,
@@ -161,7 +184,7 @@ function UnitRows({ u, open, onToggle, onHandover }) {
       <td style={td} onClick={(e) => e.stopPropagation()}>
         {u.handover?.status !== "NONE" && <HandoverChip h={u.handover} />}
         <button style={{ ...ghostButton, padding: "2px 8px", fontSize: 12,
-                         display: "block", marginTop: 3 }}
+                         display: "block", marginTop: 3, whiteSpace: "nowrap" }}
                 onClick={onHandover}>
           {u.handover?.status === "NONE" ? "Hand over…" : "Open"}</button>
       </td>

@@ -307,7 +307,7 @@ function UnitRow({ u, open, onToggle, can, me, patchUnit, call,
       <td style={td} onClick={(e) => e.stopPropagation()}>
         {u.handover?.status !== "NONE" && <HandoverChip h={u.handover} />}
         <button style={{ ...ghostButton, padding: "2px 8px", fontSize: 12,
-                         display: "block", marginTop: 3 }}
+                         display: "block", marginTop: 3, whiteSpace: "nowrap" }}
                 onClick={onHandover}>
           {u.handover?.status === "NONE" ? "Hand over…" : "Open"}</button>
       </td>
