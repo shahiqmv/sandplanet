@@ -1233,8 +1233,11 @@ class PaidWindowTests(TestCase):
         emp.save()
         self.assertEqual(self._days(self._run(), "W-LEFT"), 10.0)
 
-    def test_a_transfer_is_split_between_the_two_sites(self):
-        """Neither site pays a whole month for the same person."""
+    def test_a_transfer_is_paid_whole_by_the_site_he_ends_the_month_at(self):
+        """One run, one payslip: the site he is on at the end of the month
+        pays the whole of it, his days from the old site included — and the
+        old site's run does not list him (owner 2026-10-06). Before this a
+        transfer was split 11 + 20 across two runs."""
         self._worker("W-XFER", date(2026, 7, 1), to_date=date(2026, 7, 11))
         self._worker("W-XFER", date(2026, 7, 12), site=self.other)
         here = self._days(self._run(), "W-XFER")
@@ -1242,8 +1245,27 @@ class PaidWindowTests(TestCase):
                                          year=2026, month=7, working_days=31,
                                          actor=self.hr)
         there = self._days(there_run, "W-XFER")
-        self.assertEqual((here, there), (11.0, 20.0))
-        self.assertEqual(here + there, 31.0)      # exactly one month, once
+        self.assertEqual((here, there), (None, 31.0))   # one month, once
+        line = there_run.lines.get(employee__emp_no="W-XFER")
+        self.assertEqual(line.site_id, self.other.id)
+        self.assertEqual([(p["site"], p["days"]) for p in line.site_split],
+                         [(self.site.id, "11"), (self.other.id, "20")])
+
+    def test_the_cost_of_a_transfer_follows_the_days_to_each_site(self):
+        """Paid once, costed where the work was done."""
+        from .models import CostPosting
+        self._worker("W-COST", date(2026, 7, 1), to_date=date(2026, 7, 11))
+        self._worker("W-COST", date(2026, 7, 12), site=self.other)
+        run = payroll.generate_run(site=self.other, currency="MVR",
+                                   year=2026, month=7, working_days=31,
+                                   actor=self.hr)
+        run.round_to = 0
+        run.save()
+        payroll.lock_run(run, self.hr)
+        posted = {p.site.code: p.amount for p in CostPosting.objects.filter(
+            source="STAFF", staff_year=2026, staff_month=7, amount__gt=0)}
+        self.assertEqual(posted[self.site.code], Decimal("1100.00"))   # 11/31
+        self.assertEqual(posted[self.other.code], Decimal("2000.00"))  # 20/31
 
     def test_long_gone_worker_with_an_untidied_allocation_stays_out(self):
         emp = self._worker("W-GONE", date(2025, 1, 1))
@@ -2668,7 +2690,8 @@ class PayrollSheetQueryTests(TestCase):
         rows, n = self._queries(lambda: payroll.marked_but_unpayable(
             self.site, "MVR", 2026, 5))
         self.assertEqual([r["emp_no"] for r in rows], ["EMP-9999"])
-        self.assertLess(n, 8, f"{n} queries")
+        # +2 since 2026-10-06: the pay-site map (allocations, marks)
+        self.assertLess(n, 10, f"{n} queries")
 
     def test_batched_window_agrees_with_the_per_worker_one(self):
         """Same answer whichever way it is asked — including the cases the
@@ -3272,8 +3295,9 @@ class NetRoundingTests(CashDenominationTests):
 
 
 class DeductionOnceAMonthTests(PaidWindowTests):
-    """A man on two site runs in one month (a transfer) was charged his
-    advance on both (HR 2026-10-06). The month's recovery is one amount."""
+    """The month's advance is recovered once. A transfer is now one line on
+    one run (owner 2026-10-06), so this is a safety net: a man who somehow
+    has a line on two runs of the month is charged on the first only."""
 
     def _advance(self, emp, amount="900"):
         from .models import Document, SalaryAdvance
@@ -3288,7 +3312,14 @@ class DeductionOnceAMonthTests(PaidWindowTests):
     def _line(self, run, emp_no):
         return run.lines.get(employee__emp_no=emp_no)
 
-    def test_a_transfer_is_charged_the_advance_once(self):
+    def _stray_run(self):
+        """A run of the same month with a line nothing generated."""
+        from .models import PayrollRun
+        return PayrollRun.objects.create(site=self.other, currency="MVR",
+                                         year=2026, month=7, working_days=31,
+                                         created_by=self.hr)
+
+    def test_a_transfer_is_charged_once_on_its_one_line(self):
         emp = self._worker("W-ADV", date(2026, 7, 1), to_date=date(2026, 7, 11))
         self._worker("W-ADV", date(2026, 7, 12), site=self.other)
         self._advance(emp)
@@ -3296,37 +3327,59 @@ class DeductionOnceAMonthTests(PaidWindowTests):
         there = payroll.generate_run(site=self.other, currency="MVR",
                                      year=2026, month=7, working_days=31,
                                      actor=self.hr)
-        self.assertEqual(self._line(here, "W-ADV").advance, Decimal("900"))
-        self.assertEqual(self._line(there, "W-ADV").advance, Decimal("0"))
-        # a refresh of either run keeps it on the one that has it
-        payroll.refresh_run(there, self.hr)
-        payroll.refresh_run(here, self.hr)
-        self.assertEqual(self._line(here, "W-ADV").advance, Decimal("900"))
-        self.assertEqual(self._line(there, "W-ADV").advance, Decimal("0"))
+        self.assertFalse(here.lines.filter(employee=emp).exists())
+        self.assertEqual(self._line(there, "W-ADV").advance, Decimal("900"))
 
-    def test_both_runs_charging_it_is_cleared_by_one_refresh(self):
-        """The runs already drawn up before the fix: refresh the one that
-        should not carry it."""
-        emp = self._worker("W-ADV2", date(2026, 7, 1), to_date=date(2026, 7, 11))
-        self._worker("W-ADV2", date(2026, 7, 12), site=self.other)
+    def test_a_second_line_in_the_month_takes_none(self):
+        from .models import PayrollLine
+        emp = self._worker("W-ADV2", date(2026, 7, 1))
         self._advance(emp)
         here = self._run()
-        there = payroll.generate_run(site=self.other, currency="MVR",
-                                     year=2026, month=7, working_days=31,
-                                     actor=self.hr)
-        there.lines.filter(employee=emp).update(advance=Decimal("900"))
-        payroll.refresh_run(there, self.hr)
-        self.assertEqual(self._line(there, "W-ADV2").advance, Decimal("0"))
         self.assertEqual(self._line(here, "W-ADV2").advance, Decimal("900"))
+        stray = self._stray_run()
+        self.assertEqual(payroll.deductions_on_run(emp, stray)["advance"],
+                         Decimal("0"))
+        # ...unless the first line is excluded (settled on the way out)
+        payroll.set_excluded(self._line(here, "W-ADV2"), True,
+                             "settled in cash", self.hr)
+        self.assertEqual(payroll.deductions_on_run(emp, stray)["advance"],
+                         Decimal("900"))
+        PayrollLine.objects.create(run=stray, employee=emp, site=self.other,
+                                   basic_pay=Decimal("3100"),
+                                   days_worked=Decimal("31"))
+        self.assertEqual(payroll.deductions_on_run(emp, here)["advance"],
+                         Decimal("900"))
 
-    def test_an_excluded_line_does_not_hold_it(self):
-        emp = self._worker("W-ADV3", date(2026, 7, 1), to_date=date(2026, 7, 11))
-        self._worker("W-ADV3", date(2026, 7, 12), site=self.other)
+    def test_the_old_sites_run_drops_a_moved_man_on_refresh(self):
+        """September's drafts, drawn up under the old rule: refreshing the
+        old site's run takes the moved man off it and says so."""
+        emp = self._worker("W-MOVED", date(2026, 7, 1))
         self._advance(emp)
         here = self._run()
-        payroll.set_excluded(self._line(here, "W-ADV3"), True,
-                             "settled in cash", self.hr)
+        self.assertEqual(self._line(here, "W-MOVED").advance, Decimal("900"))
+        # moved after the run was drawn up — the transfer closes the old
+        # allocation and re-tags his days from the 12th
+        from . import merge_employees
+        merge_employees.transfer_from(emp, self.other, date(2026, 7, 12),
+                                      self.hr)
+        summary, err = payroll.refresh_run(here, self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(summary["moved_to_other_site"], ["W-MOVED"])
+        self.assertFalse(here.lines.filter(employee=emp).exists())
         there = payroll.generate_run(site=self.other, currency="MVR",
                                      year=2026, month=7, working_days=31,
                                      actor=self.hr)
-        self.assertEqual(self._line(there, "W-ADV3").advance, Decimal("900"))
+        line = self._line(there, "W-MOVED")
+        self.assertEqual((line.advance, float(line.days_worked)),
+                         (Decimal("900"), 31.0))
+
+    def test_a_moved_mans_hand_entries_stay_and_are_reported(self):
+        emp = self._worker("W-HAND", date(2026, 7, 1))
+        here = self._run()
+        here.lines.filter(employee=emp).update(allowance=Decimal("250"))
+        from . import merge_employees
+        merge_employees.transfer_from(emp, self.other, date(2026, 7, 12),
+                                      self.hr)
+        summary, _ = payroll.refresh_run(here, self.hr)
+        self.assertEqual(summary["moved_to_other_site"], ["W-HAND"])
+        self.assertTrue(here.lines.filter(employee=emp).exists())  # kept

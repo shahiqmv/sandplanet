@@ -47,6 +47,18 @@ def _can_see_run(request, run):
                 and run.site.is_current_pm(request.user))
 
 
+def _site_split(line):
+    """Where a man's month was worked, by site code — shown where his days
+    came from more than one site (owner 2026-10-06)."""
+    if not line.site_split:
+        return []
+    codes = dict(Site.objects.filter(
+        id__in=[p["site"] for p in line.site_split]).values_list("id", "code"))
+    return [{"site_code": codes.get(p["site"], "?"), "days": p.get("days"),
+             "ot_hours": p.get("ot_hours"), "fridays": p.get("fridays")}
+            for p in line.site_split]
+
+
 def _line_info(line, register=None, fri_hours=None):
     # fri_hours is the run's Friday-OT policy, read once by _run_info; per
     # line it was one parameter query each — 229 of them on SJR.
@@ -67,6 +79,7 @@ def _line_info(line, register=None, fri_hours=None):
         "job_title": line.employee.job_category.name
         if line.employee.job_category_id else "",
         "site_code": line.site.code if line.site_id else "",
+        "site_split": _site_split(line),
         "basic_pay": line.basic_pay, "ot_rate": line.ot_rate,
         "days_worked": line.days_worked, "fridays_worked": line.fridays_worked,
         "ot_hours": line.ot_hours, "allowance": line.allowance,

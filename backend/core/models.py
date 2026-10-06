@@ -3534,6 +3534,11 @@ class PayrollLine(models.Model):
     pay_no = models.PositiveIntegerField(null=True, blank=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
                                  related_name="payroll_lines")
+    # One run pays the whole month, at the site the man is on at its end
+    # (owner 2026-10-06). Where he worked at more than one site, this says
+    # how the days split, so the cost can follow the work when the run
+    # locks: [{"site": id, "days": "11.0", "ot_hours": "4.0", "fridays": 1}].
+    site_split = models.JSONField(default=list, blank=True)
     site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
                              blank=True, related_name="+")  # worker's site
     basic_pay = models.DecimalField(max_digits=12, decimal_places=2,

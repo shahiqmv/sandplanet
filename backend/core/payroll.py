@@ -265,6 +265,128 @@ def paid_window(employee, site, year, month, allocs=None, span=None):
     return start, end
 
 
+def pay_site_map(year, month, employee_ids=None):
+    """Which site pays each worker for the month: the one he is on at the
+    end of it (owner 2026-10-06).
+
+    A man transferred mid-month was on two runs, paid by each for its own
+    days — two payslips he could not follow, and recoveries charged twice.
+    Now the LAST allocation of the month decides: a transfer on the 12th
+    puts his whole month on the new site's run; a man who left the company
+    mid-month stays with the site he left from. A man with no allocation in
+    the month at all but marked in a register belongs to the site that
+    marked him last. Returns {employee_id: site_id}.
+    """
+    from .models import EmployeeSiteAllocation
+
+    m_start = date(year, month, 1)
+    m_end = date(year, month, month_days(year, month))
+    allocs = (EmployeeSiteAllocation.objects
+              .filter(from_date__lte=m_end)
+              .filter(Q(to_date__isnull=True) | Q(to_date__gte=m_start))
+              .order_by("employee_id", "from_date", "id"))
+    if employee_ids is not None:
+        allocs = allocs.filter(employee_id__in=employee_ids)
+    out = {}
+    for a in allocs:                      # ordered: the last one wins
+        out[a.employee_id] = a.site_id
+    marks = Attendance.objects.filter(day__year=year, day__month=month)
+    if employee_ids is not None:
+        marks = marks.filter(employee_id__in=employee_ids)
+    for r in marks.exclude(employee_id__in=out.keys()).order_by(
+            "employee_id", "day", "id").values("employee_id", "site_id"):
+        out[r["employee_id"]] = r["site_id"]
+    return out
+
+
+def month_sites(employee, year, month):
+    """Every site the man was allocated to, or marked at, in the month —
+    the places his days come from."""
+    from .models import EmployeeSiteAllocation, Site
+
+    m_start = date(year, month, 1)
+    m_end = date(year, month, month_days(year, month))
+    ids = set(EmployeeSiteAllocation.objects.filter(
+        employee=employee, from_date__lte=m_end).filter(
+        Q(to_date__isnull=True) | Q(to_date__gte=m_start))
+        .values_list("site_id", flat=True))
+    ids |= set(Attendance.objects.filter(
+        employee=employee, day__year=year, day__month=month)
+        .values_list("site_id", flat=True))
+    return list(Site.objects.filter(id__in=ids).order_by("id"))
+
+
+def month_prefill(employee, site, year, month, working_days, cap=None):
+    """The man's month on the run of his pay site: his days, overtime and
+    rest days from EVERY site he worked at, plus the split by site for the
+    cost.
+
+    Returns (days, ot, fridays, rest_paid, split). A man who worked at one
+    site only comes out exactly as before, split empty. One who worked at
+    two is counted in ONE pass over the whole register — the way the
+    combined run always counted — not site by site, because the sites'
+    windows overlap at the rest days around the move and each would pay
+    them. The split is then read off the marks: days in proportion to the
+    days each site marked, overtime and Fridays to the site they were
+    worked at."""
+    sites = month_sites(employee, year, month)
+    if len(sites) <= 1:
+        days, ot, fridays, rest = _attendance_prefill(
+            employee, site, year, month, working_days, cap=cap)
+        return days, ot, fridays, rest, []
+    days, ot, fridays, rest = _attendance_prefill(
+        employee, site, year, month, working_days, cap=cap, all_sites=True)
+    start, last = month_window(employee, site, year, month)
+    if cap is not None and cap < last:
+        last = cap
+    week = set((site or sites[0]).working_days)
+    ot_by, fri_by = {}, {}
+    for a in Attendance.objects.filter(employee=employee, day__gte=start,
+                                       day__lte=last):
+        if a.remark == "PRESENT" and a.day.isoweekday() not in week:
+            fri_by[a.site_id] = fri_by.get(a.site_id, 0) + 1
+            continue
+        ot_by[a.site_id] = ot_by.get(a.site_id, Decimal("0")) + (
+            a.ot_approved or 0)
+    # The days: each site's own count by its own rules, scaled so they add
+    # up to the one-pass total. A clean transfer gives exactly 11 + 20; the
+    # overlap at a move (both sites' windows reaching the same rest days)
+    # is shared out in proportion rather than paid twice.
+    weights = {}
+    for s in sites:
+        d, _o, _f, _r = _attendance_prefill(employee, s, year, month,
+                                            working_days, cap=cap)
+        weights[s.id] = d
+    total_w = sum(weights.values(), Decimal("0"))
+    split, placed = [], Decimal("0")
+    for s in sites:
+        share = (q(days * weights[s.id] / total_w) if total_w
+                 else Decimal("0"))
+        if s is sites[-1] and total_w:
+            share = days - placed            # the rounding lands on the last
+        placed += share
+        part = {"site": s.id, "days": f"{share.normalize():f}",
+                "ot_hours": f"{ot_by.get(s.id, Decimal('0')).normalize():f}",
+                "fridays": fri_by.get(s.id, 0)}
+        if share or ot_by.get(s.id) or fri_by.get(s.id):
+            split.append(part)
+    return days, ot, fridays, rest, split
+
+
+def month_window(employee, site, year, month):
+    """(start, end) of the man's payable days in the month, across every
+    site — end < start means none. The run's "is he owed anything" test."""
+    starts, ends = [], []
+    for s in month_sites(employee, year, month) or [site]:
+        a, b = paid_window(employee, s, year, month)
+        if a <= b:
+            starts.append(a)
+            ends.append(b)
+    if not starts:
+        return paid_window(employee, site, year, month)
+    return min(starts), max(ends)
+
+
 def eligible_workers(site, currency, year, month):
     """Who belongs on a run for this site/currency/month.
 
@@ -292,7 +414,14 @@ def eligible_workers(site, currency, year, month):
         allocs = EmployeeSiteAllocation.objects.filter(
             site=site, from_date__lte=m_end).filter(
             Q(to_date__isnull=True) | Q(to_date__gte=m_start))
-        emp_ids = set(allocs.values_list("employee_id", flat=True)) | marked_ids
+        # The site he is on at the END of the month pays the whole of it
+        # (owner 2026-10-06): a man allocated here but moved on belongs to
+        # the other site's run, with his days from here carried over.
+        pay_site = pay_site_map(year, month)
+        emp_ids = {e for e in
+                   (set(allocs.values_list("employee_id", flat=True))
+                    | marked_ids)
+                   if pay_site.get(e) == site.id}
         # A leaver gets deactivated, so is_active alone would lose them. Keep
         # them when their allocation closed during/after the month; still
         # exclude the long-gone whose allocation was never tidied up.
@@ -306,7 +435,7 @@ def eligible_workers(site, currency, year, month):
         # took EMP-0600 off SJR's rufiyaa run in the first place
         # (owner 2026-09-02). A subquery, so this stays one statement.
         usd_ot_ids = Attendance.objects.filter(
-            site=site, day__year=year, day__month=month,
+            employee_id__in=emp_ids, day__year=year, day__month=month,
             ot_approved__gt=0, employee__currency="USD").values_list(
             "employee_id", flat=True)
         qs = Employee.objects.payroll_eligible().filter(id__in=emp_ids).filter(
@@ -344,7 +473,7 @@ def eligible_workers(site, currency, year, month):
 
 
 def _attendance_prefill(employee, site, year, month, working_days,
-                        cap=None):
+                        cap=None, all_sites=False):
     """Days worked (expected − absences), approved OT hours, and Fridays
     (rest days) worked for a worker in a month, from attendance. A rest day is
     any weekday not in the site's working week; being PRESENT on one is the
@@ -358,7 +487,7 @@ def _attendance_prefill(employee, site, year, month, working_days,
 
     qs = Attendance.objects.filter(employee=employee, day__year=year,
                                    day__month=month)
-    if site is not None:
+    if site is not None and not all_sites:
         qs = qs.filter(site=site)
     site_obj = site
     if site_obj is None:  # combined run — use the worker's current site
@@ -366,7 +495,8 @@ def _attendance_prefill(employee, site, year, month, working_days,
         site_obj = Site.objects.filter(pk=sid).first() if sid else None
     work_week = set(site_obj.working_days) if site_obj else {6, 7, 1, 2, 3, 4}
 
-    start, last = paid_window(employee, site, year, month)
+    start, last = (month_window(employee, site, year, month) if all_sites
+                   else paid_window(employee, site, year, month))
     # A final settlement caps the window at the man's last working day. It is
     # the one place a stated date outranks the register, because a register
     # that keeps marking men after they have gone is exactly what a late
@@ -529,7 +659,10 @@ def register_summary(run):
         employee_id__in=run.lines.values_list("employee_id", flat=True),
         day__year=run.year, day__month=run.month)
     if run.site_id:
-        qs = qs.filter(site_id=run.site_id)
+        # a man paid his whole month here after a transfer was marked at
+        # both sites, and both registers are the evidence behind his days
+        moved = [ln.employee_id for ln in run.lines.all() if ln.site_split]
+        qs = qs.filter(Q(site_id=run.site_id) | Q(employee_id__in=moved))
     rows = qs.values("employee_id").annotate(
         marked=Count("id"),
         present=Count("id", filter=Q(remark="PRESENT")),
@@ -668,9 +801,13 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         allocs, spans = window_inputs([w.id for w in workers], site, year,
                                       month)
         for emp in workers:
-            w_start, w_end = paid_window(emp, site, year, month,
-                                         allocs=allocs[emp.id],
-                                         span=spans[emp.id])
+            if site is not None:
+                # his whole month, wherever in it he worked
+                w_start, w_end = month_window(emp, site, year, month)
+            else:
+                w_start, w_end = paid_window(emp, site, year, month,
+                                             allocs=allocs[emp.id],
+                                             span=spans[emp.id])
             if w_start > w_end:
                 continue        # no payable day in this month at this site.
                                 # If the register names him anyway the run
@@ -679,16 +816,20 @@ def generate_run(*, site, currency, year, month, working_days, actor):
             if (currency != "USD" and (emp.currency or "MVR") == "USD"
                     and not split and not usd_ot_on_mvr(emp, currency)):
                 continue        # his pay is all on the USD sheet
+            site_split = []
             if currency == "USD":
                 days, ot, fridays = (usd_paid_days(emp, year, month),
                                      Decimal("0"), 0)
             else:
-                days, ot, fridays, _rest = _attendance_prefill(
+                days, ot, fridays, _rest, site_split = month_prefill(
                     emp, site, year, month, working_days)
+            # a site run's line belongs to the site that pays it — not to
+            # wherever the man happens to be on the day it is drawn up
+            line_site = site.id if site is not None else emp.current_site_id()
             if currency == "USD" and split:
                 # basic-only, in USD — the rest of his pay is on his site run
                 PayrollLine.objects.create(
-                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    run=run, employee=emp, site_id=line_site, site_split=site_split,
                     basic_pay=emp.usd_basic_pay, ot_rate=Decimal("0"),
                     days_worked=days, ot_hours=Decimal("0"), fridays_worked=0)
             elif currency == "USD":
@@ -698,7 +839,7 @@ def generate_run(*, site, currency, year, month, working_days, actor):
                 # 2026-09-05).
                 ded = deductions_on_run(emp, run, usd=True)
                 PayrollLine.objects.create(
-                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    run=run, employee=emp, site_id=line_site, site_split=site_split,
                     basic_pay=emp.basic_pay or 0, ot_rate=Decimal("0"),
                     days_worked=days, ot_hours=Decimal("0"), fridays_worked=0,
                     advance=ded["advance"], loan=ded["loan"])
@@ -707,7 +848,7 @@ def generate_run(*, site, currency, year, month, working_days, actor):
                 # with them. No basic: that is on the USD sheet. Deductions
                 # are recovered there too, so none here.
                 PayrollLine.objects.create(
-                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    run=run, employee=emp, site_id=line_site, site_split=site_split,
                     basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
                     days_worked=Decimal("0"), ot_hours=ot,
                     fridays_worked=fridays)
@@ -716,14 +857,14 @@ def generate_run(*, site, currency, year, month, working_days, actor):
                 # hours) + allowances + deductions stay MVR
                 ded = deductions_on_run(emp, run)
                 PayrollLine.objects.create(
-                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    run=run, employee=emp, site_id=line_site, site_split=site_split,
                     basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
                     days_worked=days, ot_hours=ot, fridays_worked=0,
                     advance=ded["advance"], loan=ded["loan"])
             else:
                 ded = deductions_on_run(emp, run)
                 PayrollLine.objects.create(
-                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    run=run, employee=emp, site_id=line_site, site_split=site_split,
                     basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(currency),
                     days_worked=days, ot_hours=ot, fridays_worked=fridays,
                     advance=ded["advance"], loan=ded["loan"])
@@ -985,7 +1126,8 @@ def refresh_run(run, actor):
         if w_start <= w_end:
             eligible[e.id] = e
 
-    changed, added, stale, removed = [], [], [], []
+    changed, added, stale, removed, moved = [], [], [], [], []
+    pay_site = pay_site_map(run.year, run.month) if site is not None else {}
     with transaction.atomic():
         # Pay policy is re-read on a refresh, and the rounding is policy.
         if run.round_to != run_rounding(run):
@@ -1029,22 +1171,34 @@ def refresh_run(run, actor):
                 # overtime would have kept him, had he worked any.
                 wrong_run = (site is not None and not is_split_pay(emp)
                              and (emp.currency or "MVR") != currency)
+                # ...or he ended the month at another site, whose run now
+                # pays his whole month, these days included (owner
+                # 2026-10-06). A line with HR's own entries on it stays and
+                # is reported, so the allowance can be carried over by hand.
+                moved_on = (site is not None
+                            and pay_site.get(emp.id) not in (None, site.id))
+                if moved_on:
+                    moved.append(emp.emp_no)
                 # Otherwise only when there is genuinely no payable day in
                 # the month. "Not eligible" alone is too broad: a leaver whose
                 # allocation was never closed is ineligible yet worked the
                 # month, and deleting his line would be the very fault this
                 # run exposed.
-                if empty_line and (wrong_run or w_start > w_end):
+                if empty_line and (wrong_run or moved_on or w_start > w_end):
                     line.delete()
                     removed.append(emp.emp_no)
                 continue
             split = is_split_pay(emp)
+            site_split = []
             if currency == "USD":
                 days, ot, fridays, rest_paid = (
                     usd_paid_days(emp, run.year, run.month), Decimal("0"), 0, 0)
             else:
-                days, ot, fridays, rest_paid = _attendance_prefill(
+                days, ot, fridays, rest_paid, site_split = month_prefill(
                     emp, site, run.year, run.month, run.working_days)
+            line.site_split = site_split
+            if site is not None:
+                line.site_id = site.id
             if line.rest_day_revoked:
                 days = max(days - rest_paid, 0)
             before = (line.days_worked, line.ot_hours, line.fridays_worked,
@@ -1095,10 +1249,11 @@ def refresh_run(run, actor):
                 # (owner 2026-09-02 / 2026-09-05).
                 if not usd_ot_on_mvr(emp, currency):
                     continue
-                _d, ot, fridays, _rest = _attendance_prefill(
+                _d, ot, fridays, _rest, site_split = month_prefill(
                     emp, site, run.year, run.month, run.working_days)
                 PayrollLine.objects.create(
-                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    run=run, employee=emp, site_id=site.id,
+                    site_split=site_split,
                     basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
                     days_worked=Decimal("0"), ot_hours=ot,
                     fridays_worked=fridays)
@@ -1108,7 +1263,7 @@ def refresh_run(run, actor):
                 days, ot, fridays = (usd_paid_days(emp, run.year, run.month),
                                      Decimal("0"), 0)
             else:
-                days, ot, fridays, _rest = _attendance_prefill(
+                days, ot, fridays, _rest, site_split = month_prefill(
                     emp, site, run.year, run.month, run.working_days)
             if currency == "USD" and is_split_pay(emp):
                 PayrollLine.objects.create(
@@ -1119,7 +1274,9 @@ def refresh_run(run, actor):
                 continue
             ded = deductions_on_run(emp, run, usd=(currency == "USD"))
             PayrollLine.objects.create(
-                run=run, employee=emp, site_id=emp.current_site_id(),
+                run=run, employee=emp,
+                site_id=site.id if site is not None else emp.current_site_id(),
+                site_split=site_split,
                 basic_pay=emp.basic_pay or 0,
                 ot_rate=Decimal("0") if currency == "USD"
                 else emp.ot_rate(currency),
@@ -1131,13 +1288,48 @@ def refresh_run(run, actor):
     if changed or added:
         reset_to_draft(run, actor, "figures refreshed from attendance")
     summary = {"changed": changed, "added": added, "no_longer_eligible": stale,
-               "removed": removed}
+               "removed": removed, "moved_to_other_site": moved}
     audit("payroll_run", run.id, "PAYROLL_RUN_REFRESHED", actor=actor,
           detail={"period": f"{run.year}-{run.month:02d}",
                   "site": site.code if site else "ALL",
                   "changed": len(changed), "added": len(added),
                   "no_longer_eligible": stale, "removed": removed})
     return summary, None
+
+
+def cost_split(line, money, gross):
+    """{site_id: amount} — where a line's labour cost lands.
+
+    One run pays the man's whole month; the cost still belongs where the
+    work was done (owner 2026-10-06). Basic, allowances and the rounding
+    follow the days worked at each site; overtime pay follows the hours;
+    Friday pay follows the Fridays. A man who worked at one site only costs
+    that site the lot, exactly as before. Any rounding remainder stays on
+    the paying site so the parts always add up to the gross.
+    """
+    split = line.site_split or []
+    if not split or gross <= 0:
+        return {line.site_id: gross}
+    tot_days = sum(Decimal(str(p.get("days") or 0)) for p in split)
+    tot_ot = sum(Decimal(str(p.get("ot_hours") or 0)) for p in split)
+    tot_fri = sum(int(p.get("fridays") or 0) for p in split)
+    ot_pay, fri_pay = money["ot_pay"], money["friday_pay"]
+    rest = gross - ot_pay - fri_pay             # basic + allowance + rounding
+    out = {}
+    for p in split:
+        amt = Decimal("0")
+        if tot_days:
+            amt += rest * Decimal(str(p.get("days") or 0)) / tot_days
+        if tot_ot:
+            amt += ot_pay * Decimal(str(p.get("ot_hours") or 0)) / tot_ot
+        if tot_fri:
+            amt += fri_pay * Decimal(int(p.get("fridays") or 0)) / tot_fri
+        out[p["site"]] = out.get(p["site"], Decimal("0")) + q(amt)
+    # what the shares could not place (no days anywhere, or rounding)
+    remainder = gross - sum(out.values(), Decimal("0"))
+    if remainder:
+        out[line.site_id] = out.get(line.site_id, Decimal("0")) + remainder
+    return {k: v for k, v in out.items() if v}
 
 
 def lock_run(run, actor):
@@ -1168,7 +1360,8 @@ def lock_run(run, actor):
         for vehicle, share in operator_allocation(line, gross):
             vehicle_shares.append((line, vehicle, share))
             gross -= share
-        by_site[line.site_id] += gross
+        for site_id, part in cost_split(line, money, gross).items():
+            by_site[site_id] += part
     with transaction.atomic():
         reversed_sites = set()
         for site_id, gross in by_site.items():

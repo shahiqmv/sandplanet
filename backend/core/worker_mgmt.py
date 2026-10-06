@@ -146,12 +146,60 @@ def create_remove_batch(site, employee_ids, actor, reason=""):
     return batch, None
 
 
+def transfer_block(employee, site, on=None):
+    """Why this man cannot leave `site` today, or None.
+
+    One run pays his whole month at the site he ends it on, with his days
+    from here carried across — so this site must have nothing left open on
+    him when he goes (owner 2026-10-06): every working day up to yesterday
+    marked, no overtime awaiting approval, no fine awaiting approval.
+    """
+    from .models import Attendance, WorkerFine
+    on = on or date.today()
+    problems = []
+    pending = Attendance.objects.filter(
+        employee=employee, site=site, ot_requested__gt=0,
+        ot_approved__isnull=True).count()
+    if pending:
+        problems.append(f"{pending} day{'s' if pending != 1 else ''} of "
+                        "overtime awaiting approval")
+    alloc = (employee.site_allocations.filter(site=site, to_date__isnull=True)
+             .order_by("-from_date").first())
+    start = max(alloc.from_date if alloc else on, date(on.year, on.month, 1))
+    if employee.join_date:
+        start = max(start, employee.join_date)
+    marked = set(Attendance.objects.filter(
+        employee=employee, site=site, day__gte=start, day__lt=on)
+        .values_list("day", flat=True))
+    work_week = set(site.working_days)
+    blank = [d for d in (start + timedelta(days=i)
+                         for i in range((on - start).days))
+             if d.isoweekday() in work_week and d not in marked]
+    if blank:
+        problems.append(f"{len(blank)} working day"
+                        f"{'s' if len(blank) != 1 else ''} not marked "
+                        f"(first {blank[0]:%d %b})")
+    fines = WorkerFine.objects.filter(employee=employee, site=site,
+                                      status="PENDING").count()
+    if fines:
+        problems.append(f"{fines} fine{'s' if fines != 1 else ''} awaiting "
+                        "approval")
+    if not problems:
+        return None
+    return (f"{employee.full_name}: close the month here first — "
+            + "; ".join(problems) + ".")
+
+
 def create_transfer_batch(site, employee_ids, to_site, actor):
     if to_site is None or to_site.id == site.id:
         return None, "Choose a different destination site."
     emps, err = _resolve_workers(site, employee_ids)
     if err:
         return None, err
+    for e in emps:
+        block = transfer_block(e, site)
+        if block:
+            return None, block
     with transaction.atomic():
         batch = WCR.objects.create(kind=WCR.Kind.TRANSFER, site=site,
                                    to_site=to_site, requested_by=actor)
@@ -198,8 +246,14 @@ def approve_batch(batch, actor):
         return _activate_add(batch, actor)
     if not _is_site_pm(actor, batch.site):
         return "The site PM approves this batch."
-    return _apply_remove(batch, actor) if batch.kind == WCR.Kind.REMOVE \
-        else _apply_transfer(batch, actor)
+    if batch.kind == WCR.Kind.REMOVE:
+        return _apply_remove(batch, actor)
+    # the register may have moved on since the batch was raised
+    for item in batch.items.select_related("employee"):
+        block = transfer_block(item.employee, batch.site)
+        if block:
+            return block
+    return _apply_transfer(batch, actor)
 
 
 def return_batch(batch, actor, note=""):

@@ -53,6 +53,23 @@ class WorkerBatchTests(TestCase):
             out.append(e)
         return out
 
+    def _closed_month(self, emp, site=None):
+        """The old site has nothing open on him: every working day of the
+        month up to yesterday marked (owner 2026-10-06 — one run pays the
+        whole month at the site he ends it on, so a transfer needs the
+        register here closed first)."""
+        from datetime import date as _d, timedelta
+        from .models import Attendance
+        site = site or self.site
+        today = _d.today()
+        day = _d(today.year, today.month, 1)
+        while day < today:
+            if day.isoweekday() in site.working_days:
+                Attendance.objects.get_or_create(
+                    employee=emp, day=day,
+                    defaults={"site": site, "remark": "PRESENT"})
+            day += timedelta(days=1)
+
     # ---- ADD -----------------------------------------------------------------
 
     def test_add_batch_lifecycle(self):
@@ -174,6 +191,8 @@ class WorkerBatchTests(TestCase):
 
     def test_transfer_batch(self):
         emps = self._direct(self.site, 2)
+        for e in emps:
+            self._closed_month(e)
         r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
                              {"kind": "TRANSFER",
                               "employee_ids": [e.id for e in emps],
@@ -191,6 +210,7 @@ class WorkerBatchTests(TestCase):
         """He used to stand on both rosters on the day he moved, so both sites
         could mark him — two days' pay for one (owner 2026-08-20)."""
         emp = self._direct(self.site, 1)[0]
+        self._closed_month(emp)
         bid = self.client.post(
             f"/api/v1/sites/{self.site.id}/worker-batches",
             {"kind": "TRANSFER", "employee_ids": [emp.id],
@@ -239,6 +259,7 @@ class WorkerBatchTests(TestCase):
         far = Site.objects.create(code="BVR", name="Bvlgari",
                                   status=Site.Status.ACTIVE)
         emp = self._direct(self.site, 1)[0]
+        self._closed_month(emp)
         r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
                              {"kind": "TRANSFER", "employee_ids": [emp.id],
                               "to_site_id": far.id}, format="json")
@@ -255,6 +276,9 @@ class WorkerBatchTests(TestCase):
         SitePmHistory.objects.create(site=self.dest, pm_user=other,
                                      from_date=date(2026, 1, 1))
         emp = self._direct(self.site, 1)[0]
+        for _e in (emp if isinstance(emp, list) else [emp]):
+            self._closed_month(_e)
+        self._closed_month(emp)
         bid = self.client.post(
             f"/api/v1/sites/{self.site.id}/worker-batches",
             {"kind": "TRANSFER", "employee_ids": [emp.id],
@@ -678,3 +702,82 @@ class CancelledHireReleasesPassportTests(WorkerBatchTests):
         self.assertTrue(emp.is_active)
         self.assertEqual(emp.passport_no, "P-REALHIRE")
         self.assertNotIn("cancelled", emp.full_name.lower())
+
+
+class TransferGateTests(WorkerBatchTests):
+    """A man cannot leave a site that still has something open on him:
+    one run pays his whole month at the site he ends it on, with his days
+    from here carried across (owner 2026-10-06)."""
+
+    def _request(self, emp):
+        self._auth(self.sa)
+        return self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                                {"kind": "TRANSFER", "employee_ids": [emp.id],
+                                 "to_site_id": self.dest.id}, format="json")
+
+    def test_unmarked_days_hold_the_transfer(self):
+        from datetime import date as _d
+        emp = self._direct(self.site, 1)[0]
+        today = _d.today()
+        if today.day == 1:
+            return                      # nothing before today in this month
+        r = self._request(emp)
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("not marked", r.data["detail"])
+        self._closed_month(emp)
+        self.assertEqual(self._request(emp).status_code, 201)
+
+    def test_overtime_awaiting_approval_holds_the_transfer(self):
+        from datetime import date as _d, timedelta
+        from .models import Attendance
+        emp = self._direct(self.site, 1)[0]
+        self._closed_month(emp)
+        row = (Attendance.objects.filter(employee=emp).order_by("-day").first()
+               or Attendance.objects.create(employee=emp, site=self.site,
+                                            day=_d.today() - timedelta(days=1),
+                                            remark="PRESENT"))
+        row.ot_requested = 3
+        row.save()
+        r = self._request(emp)
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("overtime awaiting approval", r.data["detail"])
+        row.ot_approved = 3
+        row.ot_approved_by = self.pm
+        row.save()
+        self.assertEqual(self._request(emp).status_code, 201)
+
+    def test_a_pending_fine_holds_the_transfer(self):
+        from datetime import date as _d
+        from .models import FineOffence, WorkerFine
+        emp = self._direct(self.site, 1)[0]
+        self._closed_month(emp)
+        off = FineOffence.objects.create(name="No helmet", category="SAFETY")
+        WorkerFine.objects.create(ref="FN-T-1", employee=emp, site=self.site,
+                                  offence=off, category="SAFETY", amount=100,
+                                  violation_date=_d.today(),
+                                  description="No helmet on the deck",
+                                  recorded_by=self.sa)
+        r = self._request(emp)
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("fine", r.data["detail"])
+
+    def test_the_gate_holds_at_approval_too(self):
+        from datetime import date as _d, timedelta
+        from .models import Attendance
+        emp = self._direct(self.site, 1)[0]
+        self._closed_month(emp)
+        bid = self._request(emp).data["id"]
+        # overtime requested after the batch was raised
+        row = Attendance.objects.filter(employee=emp).order_by("-day").first()
+        if row is None:
+            row = Attendance.objects.create(
+                employee=emp, site=self.site,
+                day=_d.today() - timedelta(days=1), remark="PRESENT")
+        row.ot_requested = 2
+        row.save()
+        self._auth(self.pm)
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
+                             {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 400, r.data)
+        emp.refresh_from_db()
+        self.assertEqual(emp.current_site_id(), self.site.id)

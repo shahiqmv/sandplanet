@@ -383,6 +383,17 @@ function OtBreakdown({ year, month, siteId, label, onClose }) {
 // register or a wide gap is the shape of both July faults — two BVR men paid
 // 31 days with no attendance at all, and a whole site paid eleven days short
 // of what it had marked (owner 2026-08-14).
+// His month came from more than one site: the days each one gave.
+function SplitNote({ line }) {
+  if (!line.site_split?.length) return null;
+  return (
+    <div style={{ fontSize: 10.5, color: "#5a6b78", whiteSpace: "nowrap" }}
+         title="Paid here for the whole month; the cost follows the days to each site when the run locks">
+      {line.site_split.map((p) => `${p.site_code} ${Number(p.days)}d`
+        + (Number(p.ot_hours) ? ` +${Number(p.ot_hours)}h` : "")).join(" · ")}
+    </div>);
+}
+
 function Marked({ line }) {
   const marked = line.days_marked ?? 0;
   const gap = Number(line.days_worked) - marked;
@@ -527,6 +538,13 @@ function RunDetail({ runId, onBack, me, backLabel }) {
       if ((r.no_longer_eligible || []).length)
         bits.push(`${r.no_longer_eligible.length} no longer eligible `
                   + `(${r.no_longer_eligible.join(", ")}) — review these`);
+      // One run pays the whole month at the site the man ends it on
+      // (owner 2026-10-06); a line left here with HR's own entries is
+      // reported so the allowance can be carried to his new site's run.
+      if ((r.moved_to_other_site || []).length)
+        bits.push(`${r.moved_to_other_site.length} moved to another site, `
+                  + "whose run pays their whole month "
+                  + `(${r.moved_to_other_site.join(", ")})`);
       setError(null);
       window.alert("Refreshed — " + bits.join(", ") + ".");
     } catch (e) { setError(e.message); }
