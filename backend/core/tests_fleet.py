@@ -395,15 +395,21 @@ class RentalReceiptTests(InvoiceBase):
     def test_finance_records_a_receipt_and_the_aging_and_statement_follow(self):
         a, inv = self.issued()
         self.assertEqual(inv.total, Decimal("33480.00"))       # 31000 + 8 %
+        # The invoice is issued TODAY, so the receipts must come after it, or
+        # the statement lists them first — this read "2026-10-05" and went
+        # red on 6 Oct 2026. Dates relative to today, never fixed.
+        on = str(date.today())
+        later = str(date.today() + timedelta(days=15))
+        far = str(date.today() + timedelta(days=90))
         self.login(self.rm)
-        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-05",
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": on,
                                                         "allocations": [{"invoice_id": inv.id, "amount": "10000"}]},
                              format="json")
         self.assertEqual(r.status_code, 400)                   # the Rental Manager is not the money desk
         self.login(self.finance)
         r = self.client.get(f"/api/v1/fleet/receipts/allocate?customer={self.cust.id}&amount=10000")
         self.assertEqual(r.data["allocations"][0]["amount"], "10000.00")
-        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-05",
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": on,
                                                         "method": "TT", "reference": "TT-778",
                                                         "allocations": r.data["allocations"]}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
@@ -411,15 +417,15 @@ class RentalReceiptTests(InvoiceBase):
         ag = self.client.get("/api/v1/fleet/receivables").data
         self.assertEqual(ag["total"], "23480.00")
         self.assertEqual(ag["customers"][0]["invoices"][0]["outstanding"], "23480.00")
-        st = self.client.get(f"/api/v1/fleet/customers/{self.cust.id}/statement?to=2026-12-31").data
+        st = self.client.get(f"/api/v1/fleet/customers/{self.cust.id}/statement?to={far}").data
         self.assertEqual([e["kind"] for e in st["rows"]], ["INVOICE", "RECEIPT"])
         self.assertEqual(st["closing"], "23480.00")
         # settle the rest → PAID; an over-allocation is refused
-        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-20",
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": later,
                                                         "allocations": [{"invoice_id": inv.id, "amount": "30000"}]},
                              format="json")
         self.assertEqual(r.status_code, 400)
-        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-20",
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": later,
                                                         "allocations": [{"invoice_id": inv.id, "amount": "23480"}]},
                              format="json")
         self.assertEqual(r.status_code, 201, r.data)

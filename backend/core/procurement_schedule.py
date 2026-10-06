@@ -42,6 +42,11 @@ VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
 # depends on them could never be worked out (owner 2026-08-30).
 _PLAN_FIELDS = ("bundle", "category", "description", "make_brand",
                 "specification", "uom", "trade", "remarks")
+# The PM owns the schedule after the QS has built it, and the remark is the
+# living part of it — what the client reads, updated as things move. It is
+# open to the project team at EVERY stage, submitted, confirmed or signed
+# off; the rest of the line still waits for a reopen (owner 2026-10-06).
+_LIVE_FIELDS = ("remarks",)
 _COMM_FIELDS = ("planned_supplier",)
 # Written from both sides — see _apply_sourcing.
 _SOURCING_FIELDS = ("source_country",)
@@ -262,6 +267,18 @@ def update_line(line, data, actor):
                 _renumber(sec)
     elif role in CONFIRM_ROLES and doc.status == "SUBMITTED":
         _apply_commercial(line, data)
+    elif role in PROPOSE_ROLES and doc.status != "CANCELLED":
+        held = [f for f in (*_PLAN_FIELDS, "item_id", "quantity",
+                            "required_date", "tds_required", "supply_by",
+                            "section_id", "section_code", "order_by_date")
+                if f not in _LIVE_FIELDS and f in data
+                and str(data.get(f) or "") != str(getattr(line, f, "") or "")]
+        if held or not any(f in data for f in _LIVE_FIELDS):
+            return ("At this stage only the remarks can be changed — reopen "
+                    "the schedule to change the line itself.")
+        for f in _LIVE_FIELDS:
+            if f in data:
+                setattr(line, f, (data.get(f) or "").strip())
     else:
         return "This line can't be edited at its current stage by your role."
     line.save()
@@ -493,14 +510,21 @@ def reopen(sched, actor):
     """A proposer reopens a signed-off schedule to change lines — the same
     change-batch add_line opens implicitly, but as an explicit action so the
     team can edit an existing signed-off schedule. Goes back to DRAFT; the
-    signed lines stay operational until it's re-submitted and re-signed."""
+    signed lines stay operational until it's re-submitted and re-signed.
+
+    A schedule sitting with Purchasing or the Director can be taken back
+    the same way: the PM owns it and must never be shut out of it (owner
+    2026-10-06). Whoever had it is told."""
     doc = sched.document
     if actor.role not in PROPOSE_ROLES:
         return "Only the project team can reopen the schedule for changes."
-    if doc.status != "SIGNED_OFF":
-        return "Only a signed-off schedule can be reopened for changes."
+    if doc.status not in ("SIGNED_OFF", "SUBMITTED", "CONFIRMED"):
+        return "Only a submitted or signed-off schedule can be reopened."
+    taken_back = doc.status != "SIGNED_OFF"
     _set_status(doc, "DRAFT", "REOPEN", actor,
-                comment="Reopened for changes", notify=False)
+                comment=("Taken back by the project team for changes"
+                         if taken_back else "Reopened for changes"),
+                notify=taken_back)
     audit("document", doc.id, "PSC_REOPENED", actor=actor)
     return None
 
@@ -782,7 +806,10 @@ def schedule_dict(sched, user):
                                if sched.baseline_signed_by_id else ""),
         "can_edit_plan": user.role in PROPOSE_ROLES and doc.status == "DRAFT",
         "can_reopen": (user.role in PROPOSE_ROLES
-                       and doc.status == "SIGNED_OFF"),
+                       and doc.status in ("SIGNED_OFF", "SUBMITTED",
+                                          "CONFIRMED")),
+        "can_edit_remarks": (user.role in PROPOSE_ROLES
+                             and doc.status != "CANCELLED"),
         "can_submit": (user.role in PROPOSE_ROLES and doc.status == "DRAFT"
                        and (any(ln.state == "PROPOSED" or ln.amended_at
                                 for ln in lines)

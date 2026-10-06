@@ -154,11 +154,22 @@ class ProcurementScheduleTests(TestCase):
         d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
         self.assertFalse(d["can_edit_plan"])
         self.assertTrue(d["can_reopen"])
-        # Editing a line while signed off is rejected (baseline is locked).
+        # The line itself is locked while signed off (the baseline) — but
+        # the remark is the PM's living note and stays open (owner
+        # 2026-10-06).
+        self.assertTrue(d["can_edit_remarks"])
         r = self.client.patch(
             f"/api/v1/procurement-schedule-lines/{line_id}",
-            {"remarks": "typo fix"}, format="json")
+            {"description": "Something else"}, format="json")
         self.assertEqual(r.status_code, 400)
+        self.assertIn("only the remarks", r.data["detail"])
+        r = self.client.patch(
+            f"/api/v1/procurement-schedule-lines/{line_id}",
+            {"remarks": "Supplier confirmed shipping 12 Oct"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["lines"][0]["remarks"],
+                         "Supplier confirmed shipping 12 Oct")
+        self.assertEqual(r.data["status"], "SIGNED_OFF")
         # Reopen → DRAFT → the PM can edit again.
         r = self.client.post(f"/api/v1/procurement-schedules/{pk}/reopen")
         self.assertEqual(r.status_code, 200, r.data)
@@ -284,6 +295,29 @@ class ProcurementScheduleTests(TestCase):
         self.assertIn("more than once", err)
         sched.refresh_from_db()
         self.assertIsNotNone(sched.baseline_signed_at)
+
+    def test_the_pm_can_take_a_submitted_schedule_back(self):
+        """Submitted to Purchasing, the PM was shut out until it came back
+        or was signed off. He owns it (owner 2026-10-06)."""
+        pk = self._open()
+        line_id = self._add_line(pk).data["lines"][0]["id"]
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.se)
+        d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
+        self.assertEqual((d["status"], d["can_edit_plan"], d["can_reopen"],
+                          d["can_edit_remarks"]),
+                         ("SUBMITTED", False, True, True))
+        r = self.client.patch(
+            f"/api/v1/procurement-schedule-lines/{line_id}",
+            {"remarks": "Awaiting the client's colour choice"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.client.force_authenticate(self.purch)
+        self.assertFalse(self.client.get(
+            f"/api/v1/procurement-schedules/{pk}").data["can_reopen"])
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/reopen")
+        self.assertEqual((r.status_code, r.data["status"], r.data["can_edit_plan"]),
+                         (200, "DRAFT", True))
 
     def test_reopen_only_from_signed_off_and_by_team(self):
         pk = self._open()                              # DRAFT

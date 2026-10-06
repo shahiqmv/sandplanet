@@ -378,8 +378,9 @@ function LineRow({ ln, c, member, sel, on }) {
         <TrackingLine t={ln.tracking} />
       </td>
       <td style={{ ...cell, whiteSpace: "nowrap" }}>
-        {(c.can_edit_plan || c.can_confirm) &&
-          <button style={linkBtn} onClick={() => on.edit(ln.id)}>Edit</button>}
+        {(c.can_edit_plan || c.can_confirm || c.can_edit_remarks) &&
+          <button style={linkBtn} onClick={() => on.edit(ln.id)}>
+            {c.can_edit_plan || c.can_confirm ? "Edit" : "Remark"}</button>}
         {c.can_link && <button style={{ ...linkBtn, marginLeft: 8,
           color: "var(--sky)" }}
           onClick={() => on.track(sel.track === ln.id ? null : ln.id)}>
@@ -807,8 +808,12 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
               onClick={() => act("return")}>Return to PM</Btn></>}
           {c.can_reopen &&
             <Btn variant="secondary" disabled={busy} onClick={reopen}
-              title="Reopen the signed-off schedule so the team can edit lines">
-              Reopen for changes</Btn>}
+              title={c.status === "SIGNED_OFF"
+                ? "Reopen the signed-off schedule so the team can edit lines"
+                : "Take the schedule back from " + (c.status === "SUBMITTED"
+                  ? "Purchasing" : "the Director") + " to change lines"}>
+              {c.status === "SIGNED_OFF" ? "Reopen for changes"
+                : "Take back for changes"}</Btn>}
           {me.role === "ADMIN" && c.status === "DRAFT" && (
             <Btn variant="ghost" disabled={busy} onClick={del}
               title={"Delete this draft schedule (e.g. opened on the wrong "
@@ -895,7 +900,8 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
       })}
 
       {editId && <Modal onClose={() => setEditId(null)}>
-        <LineForm mode={c.can_confirm ? "commercial" : "plan"} c={c}
+        <LineForm mode={c.can_confirm ? "commercial"
+                        : c.can_edit_plan ? "plan" : "remarks"} c={c}
           me={me} line={c.lines.find((l) => l.id === editId)}
           onCancel={() => setEditId(null)}
           onSaved={() => { setEditId(null); load(); }} />
@@ -1490,7 +1496,8 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
         lineId = ((d.lines || []).find((l) => !known.has(l.id)) || {}).id;
       } else {
         await api(`/procurement-schedule-lines/${line.id}`,
-          { method: "PATCH", body: f });
+          { method: "PATCH",
+            body: remarksOnly ? { remarks: f.remarks || "" } : f });
       }
       if (lineId && imgFile) {
         const fd = new FormData();
@@ -1512,13 +1519,28 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
   }
 
   const commercial = mode === "commercial";
+  // Submitted, confirmed or signed off: the line is locked, the remark is
+  // not — it is the PM's running note to the client (owner 2026-10-06).
+  const remarksOnly = mode === "remarks";
   return (
     <div style={{ ...card, marginTop: 10, border: "1px solid var(--sky)" }}>
       <div style={{ fontWeight: 600, marginBottom: 8 }}>
-        {isNew ? "New line" : commercial ? "Confirm commercial fields"
+        {isNew ? "New line" : remarksOnly ? "Update the remark"
+          : commercial ? "Confirm commercial fields"
           : "Edit line"}</div>
       {err && <p style={{ color: "var(--red-fg)" }}>{err}</p>}
-      {!commercial ? (
+      {remarksOnly ? (
+        <div style={grid}>
+          <L k="Remarks" wide><input style={inputStyle} value={f.remarks || ""}
+            autoFocus onChange={set("remarks")} /></L>
+          <p style={{ gridColumn: "1 / -1", fontSize: 12, margin: 0,
+                      color: "var(--muted)" }}>
+            The schedule is with {c.status === "SUBMITTED" ? "Purchasing"
+              : c.status === "CONFIRMED" ? "the Director" : "the client"}:
+            only the remark can be changed here. Reopen the schedule to change
+            the line itself.</p>
+        </div>
+      ) : !commercial ? (
         <div style={grid}>
           <L k="Section code"><input style={inputStyle} value={f.section_code}
             onChange={set("section_code")} placeholder="A" /></L>
