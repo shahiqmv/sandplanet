@@ -1251,6 +1251,17 @@ class PaidWindowTests(TestCase):
         self.assertEqual([(p["site"], p["days"]) for p in line.site_split],
                          [(self.site.id, "11"), (self.other.id, "20")])
 
+    def test_two_open_allocations_are_settled_by_the_register(self):
+        """Hired at SFR, added again at RCM, every mark at SFR: the later
+        allocation would have made an idle site his pay site (EMP-0316,
+        owner 2026-10-06). The register decides."""
+        emp = self._worker("W-TWICE", date(2026, 6, 1))        # marks here
+        self.alloc.objects.create(employee=emp, site=self.other,
+                                  from_date=date(2026, 6, 5))  # never closed
+        self.assertEqual(payroll.pay_site_map(2026, 7).get(emp.id),
+                         self.site.id)
+        self.assertEqual(self._days(self._run(), "W-TWICE"), 31.0)
+
     def test_the_cost_of_a_transfer_follows_the_days_to_each_site(self):
         """Paid once, costed where the work was done."""
         from .models import CostPosting

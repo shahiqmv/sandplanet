@@ -287,15 +287,27 @@ def pay_site_map(year, month, employee_ids=None):
               .order_by("employee_id", "from_date", "id"))
     if employee_ids is not None:
         allocs = allocs.filter(employee_id__in=employee_ids)
-    out = {}
+    out, open_sites = {}, {}
     for a in allocs:                      # ordered: the last one wins
         out[a.employee_id] = a.site_id
+        if a.to_date is None:
+            open_sites.setdefault(a.employee_id, set()).add(a.site_id)
     marks = Attendance.objects.filter(day__year=year, day__month=month)
     if employee_ids is not None:
         marks = marks.filter(employee_id__in=employee_ids)
-    for r in marks.exclude(employee_id__in=out.keys()).order_by(
-            "employee_id", "day", "id").values("employee_id", "site_id"):
-        out[r["employee_id"]] = r["site_id"]
+    last_mark = {}
+    for r in marks.order_by("employee_id", "day", "id").values(
+            "employee_id", "site_id"):
+        last_mark[r["employee_id"]] = r["site_id"]
+    for emp_id, site_id in last_mark.items():
+        if emp_id not in out:
+            out[emp_id] = site_id         # no allocation at all: the register
+        elif (len(open_sites.get(emp_id, ())) > 1
+              and site_id in open_sites[emp_id]):
+            # Two allocations left open — hired twice, never tidied (EMP-0316:
+            # added at SFR, added again at RCM, every mark at SFR). The
+            # paperwork cannot decide; the register can.
+            out[emp_id] = site_id
     return out
 
 
