@@ -52,23 +52,39 @@ class Command(BaseCommand):
                 leaving.append((ln.employee.emp_no, to, ln.days_worked,
                                 ln.ot_hours, hand))
             for emp_id, emp in eligible.items():
+                # the same rules generate/refresh apply: a USD man is here
+                # for his overtime only, and only with a rufiyaa OT rate
+                usd = (emp.currency or "MVR") == "USD"
+                if usd and not payroll.is_split_pay(emp):
+                    if not payroll.usd_ot_on_mvr(emp, "MVR"):
+                        continue
+                d, o, f, r, split = payroll.month_prefill(
+                    emp, site, year, month, run.working_days)
+                if usd and not payroll.is_split_pay(emp):
+                    d, r = Decimal("0"), 0
                 if emp_id not in lines:
-                    d, o, f, _r, split = payroll.month_prefill(
-                        emp, site, year, month, run.working_days)
                     joining.append((emp.emp_no, d, o, f, split))
                     continue
                 ln = lines[emp_id]
                 if ln.excluded:
                     continue
-                d, o, f, r, split = payroll.month_prefill(
-                    emp, site, year, month, run.working_days)
                 if ln.rest_day_revoked:
                     d = max(d - r, 0)
                 if (Decimal(str(ln.days_worked)), Decimal(str(ln.ot_hours)),
                         ln.fridays_worked) != (d, o, f):
+                    # the register moved since the run was drawn up, or the
+                    # rule itself: say which, so HR knows what to look at
+                    d0, o0, f0, r0 = payroll._attendance_prefill(
+                        emp, site, year, month, run.working_days)
+                    if usd and not payroll.is_split_pay(emp):
+                        d0 = Decimal("0")
+                    elif ln.rest_day_revoked:
+                        d0 = max(d0 - r0, 0)
+                    why = ("rule" if (d0, o0, f0) != (d, o, f)
+                           else "register changed since the run")
                     moving.append((emp.emp_no, ln.days_worked, d,
                                    ln.ot_hours, o, ln.fridays_worked, f,
-                                   split))
+                                   split, why))
 
             def origin(split):
                 return (" — from " + " + ".join(
@@ -84,10 +100,10 @@ class Command(BaseCommand):
                 self.stdout.write(
                     f"  JOINS   {emp_no}: {d} days, {o} OT h, {f} Fri"
                     + origin(split))
-            for emp_no, d0, d1, o0, o1, f0, f1, split in moving:
+            for emp_no, d0, d1, o0, o1, f0, f1, split, why in moving:
                 self.stdout.write(
-                    f"  CHANGES {emp_no}: days {d0} -> {d1}, OT {o0} -> {o1}, "
-                    f"Fri {f0} -> {f1}" + origin(split))
+                    f"  CHANGES {emp_no} ({why}): days {d0} -> {d1}, "
+                    f"OT {o0} -> {o1}, Fri {f0} -> {f1}" + origin(split))
             if not (leaving or joining or moving):
                 self.stdout.write("  no change")
         self.stdout.write("\nRead-only: nothing was changed. HR applies this "
