@@ -7,7 +7,7 @@ import calendar
 from datetime import date, timedelta
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
-from django.db.models import Max, Min
+from django.db.models import Q, Max, Min
 
 from .audit import audit
 from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
@@ -557,6 +557,31 @@ def register_summary(run):
     return out
 
 
+def deductions_on_run(employee, run, usd=False):
+    """The month's advance and loan for a worker, on THIS run — or nothing,
+    when another run of the same month already carries them.
+
+    A man transferred mid-month is on two site runs, each paid for its own
+    days; each asked for his deductions on its own and he was charged the
+    advance twice (HR, 2026-10-06). The month's recovery is one amount: the
+    first run drawn up takes it, and a run drawn up or refreshed after that
+    sees it there and takes none. Refreshing the run that should not carry
+    it clears it, because the other run still holds it. An excluded line
+    (settled on the way out) does not count as holding it.
+    """
+    from .models import PayrollLine
+    zero = {"advance": Decimal("0"), "loan": Decimal("0")}
+    elsewhere = (PayrollLine.objects
+                 .filter(employee=employee, run__year=run.year,
+                         run__month=run.month, excluded=False)
+                 .filter(Q(advance__gt=0) | Q(loan__gt=0))
+                 .exclude(run=run))
+    if elsewhere.exists():
+        return zero
+    return (_usd_deductions(employee, run.year, run.month) if usd
+            else deductions_for(employee, run.year, run.month))
+
+
 def _usd_deductions(employee, year, month):
     """A USD line's advance and loan, converted from the rufiyaa they were
     lent in at the company rate (owner's choice, 2026-09-05)."""
@@ -671,7 +696,7 @@ def generate_run(*, site, currency, year, month, working_days, actor):
                 # here at the company rate, because he has no rufiyaa line to
                 # recover them from unless he happens to work overtime (owner
                 # 2026-09-05).
-                ded = _usd_deductions(emp, year, month)
+                ded = deductions_on_run(emp, run, usd=True)
                 PayrollLine.objects.create(
                     run=run, employee=emp, site_id=emp.current_site_id(),
                     basic_pay=emp.basic_pay or 0, ot_rate=Decimal("0"),
@@ -689,14 +714,14 @@ def generate_run(*, site, currency, year, month, working_days, actor):
             elif currency != "USD" and split:
                 # site MVR line: no basic (paid in USD); OT (incl. rest-day
                 # hours) + allowances + deductions stay MVR
-                ded = deductions_for(emp, year, month)
+                ded = deductions_on_run(emp, run)
                 PayrollLine.objects.create(
                     run=run, employee=emp, site_id=emp.current_site_id(),
                     basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
                     days_worked=days, ot_hours=ot, fridays_worked=0,
                     advance=ded["advance"], loan=ded["loan"])
             else:
-                ded = deductions_for(emp, year, month)
+                ded = deductions_on_run(emp, run)
                 PayrollLine.objects.create(
                     run=run, employee=emp, site_id=emp.current_site_id(),
                     basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(currency),
@@ -1034,7 +1059,7 @@ def refresh_run(run, actor):
                 line.ot_rate = Decimal("0")
                 line.days_worked, line.ot_hours, line.fridays_worked = (
                     days, Decimal("0"), 0)
-                ded = _usd_deductions(emp, run.year, run.month)
+                ded = deductions_on_run(emp, run, usd=True)
                 line.advance, line.loan = ded["advance"], ded["loan"]
             elif usd_ot_on_mvr(emp, currency):
                 line.basic_pay = Decimal("0")
@@ -1049,7 +1074,7 @@ def refresh_run(run, actor):
                 else:
                     line.basic_pay = emp.basic_pay or 0
                     line.fridays_worked = fridays
-                ded = deductions_for(emp, run.year, run.month)
+                ded = deductions_on_run(emp, run)
                 line.advance, line.loan = ded["advance"], ded["loan"]
             after = (line.days_worked, line.ot_hours, line.fridays_worked,
                      line.ot_rate, line.basic_pay)
@@ -1092,9 +1117,7 @@ def refresh_run(run, actor):
                     days_worked=days, ot_hours=Decimal("0"), fridays_worked=0)
                 added.append(emp.emp_no)
                 continue
-            ded = (_usd_deductions(emp, run.year, run.month)
-                   if currency == "USD"
-                   else deductions_for(emp, run.year, run.month))
+            ded = deductions_on_run(emp, run, usd=(currency == "USD"))
             PayrollLine.objects.create(
                 run=run, employee=emp, site_id=emp.current_site_id(),
                 basic_pay=emp.basic_pay or 0,

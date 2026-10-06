@@ -3269,3 +3269,64 @@ class NetRoundingTests(CashDenominationTests):
         posted = sum(p.amount for p in self.CostPosting.objects.filter(
             site=self.site, source="STAFF", amount__gt=0))
         self.assertEqual(posted, Decimal("6205.00"))
+
+
+class DeductionOnceAMonthTests(PaidWindowTests):
+    """A man on two site runs in one month (a transfer) was charged his
+    advance on both (HR 2026-10-06). The month's recovery is one amount."""
+
+    def _advance(self, emp, amount="900"):
+        from .models import Document, SalaryAdvance
+        doc = Document.objects.create(
+            doc_type="PYR", ref=f"PYR-ADV-{emp.emp_no}", site=self.site,
+            doc_date=date(2026, 7, 2), status="AUTHORISED", created_by=self.hr)
+        SalaryAdvance.objects.create(
+            employee=emp, document=doc, kind="ADVANCE",
+            amount=Decimal(amount), months=1, period_year=2026,
+            period_month=7)
+
+    def _line(self, run, emp_no):
+        return run.lines.get(employee__emp_no=emp_no)
+
+    def test_a_transfer_is_charged_the_advance_once(self):
+        emp = self._worker("W-ADV", date(2026, 7, 1), to_date=date(2026, 7, 11))
+        self._worker("W-ADV", date(2026, 7, 12), site=self.other)
+        self._advance(emp)
+        here = self._run()
+        there = payroll.generate_run(site=self.other, currency="MVR",
+                                     year=2026, month=7, working_days=31,
+                                     actor=self.hr)
+        self.assertEqual(self._line(here, "W-ADV").advance, Decimal("900"))
+        self.assertEqual(self._line(there, "W-ADV").advance, Decimal("0"))
+        # a refresh of either run keeps it on the one that has it
+        payroll.refresh_run(there, self.hr)
+        payroll.refresh_run(here, self.hr)
+        self.assertEqual(self._line(here, "W-ADV").advance, Decimal("900"))
+        self.assertEqual(self._line(there, "W-ADV").advance, Decimal("0"))
+
+    def test_both_runs_charging_it_is_cleared_by_one_refresh(self):
+        """The runs already drawn up before the fix: refresh the one that
+        should not carry it."""
+        emp = self._worker("W-ADV2", date(2026, 7, 1), to_date=date(2026, 7, 11))
+        self._worker("W-ADV2", date(2026, 7, 12), site=self.other)
+        self._advance(emp)
+        here = self._run()
+        there = payroll.generate_run(site=self.other, currency="MVR",
+                                     year=2026, month=7, working_days=31,
+                                     actor=self.hr)
+        there.lines.filter(employee=emp).update(advance=Decimal("900"))
+        payroll.refresh_run(there, self.hr)
+        self.assertEqual(self._line(there, "W-ADV2").advance, Decimal("0"))
+        self.assertEqual(self._line(here, "W-ADV2").advance, Decimal("900"))
+
+    def test_an_excluded_line_does_not_hold_it(self):
+        emp = self._worker("W-ADV3", date(2026, 7, 1), to_date=date(2026, 7, 11))
+        self._worker("W-ADV3", date(2026, 7, 12), site=self.other)
+        self._advance(emp)
+        here = self._run()
+        payroll.set_excluded(self._line(here, "W-ADV3"), True,
+                             "settled in cash", self.hr)
+        there = payroll.generate_run(site=self.other, currency="MVR",
+                                     year=2026, month=7, working_days=31,
+                                     actor=self.hr)
+        self.assertEqual(self._line(there, "W-ADV3").advance, Decimal("900"))
