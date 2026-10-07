@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
-    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_bills as bills_api, views_cameras as cameras_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_discussion as discussion_api, views_bills as bills_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
@@ -760,6 +760,12 @@ urlpatterns = [
     path("bills/to-pay", bills_api.to_pay, name="bills-to-pay"),
     path("bills/charges/<int:pk>/cancel", bills_api.charge_cancel,
          name="bill-charge-cancel"),
+    path("discussion/mine", discussion_api.mine, name="discussion-mine"),
+    path("discussion/recipients/<int:pk>/answered", discussion_api.answered,
+         name="discussion-answered"),
+    path("discussion/<str:key>", discussion_api.thread, name="discussion"),
+    path("discussion/<str:key>/people", discussion_api.people,
+         name="discussion-people"),
     path("audits", ext_audit_api.audits, name="ext-audits"),
     path("audits/<str:ident>", ext_audit_api.audit_detail, name="ext-audit"),
     path("audits/<str:ident>/files", ext_audit_api.audit_files,

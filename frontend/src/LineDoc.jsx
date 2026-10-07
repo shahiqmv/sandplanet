@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { shrinkPhoto } from "./imageResize.js";
 import PoAmendPanel from "./PoAmendPanel.jsx";
+import Discussion from "./Discussion.jsx";
 import AwardWithdrawModal from "./AwardWithdrawModal.jsx";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { VesselPicker, VesselTrack } from "./Vessels.jsx";
@@ -1969,6 +1970,10 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
           ))}
         </>
       )}
+
+      {/* Notes and questions on this document; a question put to someone
+          sits on their My Tasks until answered (owner 2026-10-07). */}
+      {doc.id && <Discussion threadKey={`doc:${doc.id}`} me={me} />}
 
       {/* Amending an ISSUED order, and the Director's decision on one.
           Distinct from the MR "Amend (new revision)" button above: that

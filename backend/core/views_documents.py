@@ -1263,6 +1263,13 @@ def pending_groups(user):
         add("To pay — authorised payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
                  "Execute payment and record the reference"))
+    # Questions put to me on a document, waiting for an answer (owner
+    # 2026-10-07). Not a gate: the document moves on without them.
+    from .discussion import open_followups
+    asks = open_followups(user)
+    if asks:
+        groups.append({"title": "To answer — questions put to you",
+                       "items": asks})
     for g in groups:
         for it in g["items"]:
             if it.get("doc_type") in MONEY_TYPES and "amount" not in it:

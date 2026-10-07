@@ -876,6 +876,13 @@ export default function App() {
       if (site) { setOpenSite(site); setDocView({ mode: "dma" }); }
       return;
     }
+    // A question on a claim: the claim lives on its project's Claims tab.
+    if (item.doc_type === "CLAIM") {
+      setOpenSite(null);
+      setDocView({ mode: "project", projectId: item.project_id,
+                   tab: "claims" });
+      return;
+    }
     // Pending OT is not a document either: it opens the site's attendance
     // page straight onto the OT approval tab (owner 2026-09-03).
     if (item.doc_type === "OT") {

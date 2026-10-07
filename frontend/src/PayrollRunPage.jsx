@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiDownload } from "./api.js";
 import SettlementPanel from "./SettlementPanel.jsx";
+import Discussion from "./Discussion.jsx";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 // Monthly payroll runs (owner's salary sheet). MVR runs are per site and wait
@@ -758,6 +759,9 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           </tfoot>
         </table>
       </div>
+      {/* HR, the PM and the Director talk about the run here; a question
+          put to someone sits on their My Tasks (owner 2026-10-07) */}
+      {run?.id && <Discussion threadKey={`payroll:${run.id}`} me={me} />}
     </section>
   );
 }

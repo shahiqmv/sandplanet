@@ -9546,3 +9546,56 @@ class UnitHandover(models.Model):
         y, m = divmod(d.month - 1 + months, 12)
         y, m = d.year + y, m + 1
         return _date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+class Comment(models.Model):
+    """A line of the discussion that lives on a document — a PYR, an MR, a
+    DPR, a claim, a payroll run (owner 2026-10-07).
+
+    A NOTE is for the record. A FOLLOWUP is addressed to people and sits on
+    their My Tasks until someone answers it in the thread or the person
+    asked marks it answered. A thread never blocks the workflow.
+
+    `thread` is "doc:<id>", "claim:<id>" or "payroll:<id>"; `document` is
+    set for the document threads so a document's conversation can be found
+    from it directly."""
+
+    class Kind(models.TextChoices):
+        NOTE = "NOTE", "Note"
+        FOLLOWUP = "FOLLOWUP", "Follow-up"
+
+    thread = models.CharField(max_length=40, db_index=True)
+    document = models.ForeignKey(Document, on_delete=models.CASCADE,
+                                 null=True, blank=True,
+                                 related_name="comments")
+    kind = models.CharField(max_length=10, choices=Kind.choices,
+                            default=Kind.NOTE)
+    body = models.TextField()
+    author = models.ForeignKey(User, on_delete=models.PROTECT,
+                               related_name="comments")
+    reply_to = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="replies")
+    status_at = models.CharField(max_length=30, blank=True)   # the document's
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+
+class CommentRecipient(models.Model):
+    """Who a follow-up was put to, and whether it has been answered."""
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE,
+                                related_name="recipients")
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name="followups")
+    answered_at = models.DateTimeField(null=True, blank=True)
+    answered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                    blank=True, related_name="+")
+    answer = models.ForeignKey(Comment, on_delete=models.SET_NULL, null=True,
+                               blank=True, related_name="+")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["comment", "user"],
+                                    name="uniq_comment_recipient"),
+        ]

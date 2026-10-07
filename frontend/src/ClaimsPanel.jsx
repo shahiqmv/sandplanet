@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "./api.js";
+import Discussion from "./Discussion.jsx";
 import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -759,6 +760,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           )}
         </div>
       )}
+      {/* notes and questions on this claim (owner 2026-10-07) */}
+      {claimId && <Discussion threadKey={`claim:${claimId}`} />}
     </div>
   );
 }
