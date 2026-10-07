@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import Discussion from "./Discussion.jsx";
 import { api, apiUpload } from "./api.js";
 import BoqPanel from "./BoqPanel.jsx";
 import { Btn, Chip, buttonStyle, card, ghostButton, inputStyle, td, th }
@@ -399,6 +400,7 @@ function TenderDetail({ id, me, onClose }) {
         <div style={{ marginTop: 12 }}>
           <BoqPanel base={`/tenders/${t.id}`} me={me} />
         </div>)}
+      {t?.ref && <Discussion threadKey={`ref:${t.ref}`} me={me} />}
     </div>
   );
 }

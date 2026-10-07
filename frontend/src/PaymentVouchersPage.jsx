@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Discussion from "./Discussion.jsx";
 import { api, apiUpload } from "./api.js";
 import { Btn, RefStamp, StatusChip, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -1074,6 +1075,7 @@ function VoucherModal({ pv, onClose, error, children }) {
                       color: "#a3271b", background: "#f9e8e6" }}>{error}</p>
         )}
         {children}
+        {pv?.ref && <Discussion threadKey={`ref:${pv.ref}`} inline />}
       </div>
     </div>
   );

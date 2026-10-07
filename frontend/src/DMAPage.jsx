@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Discussion from "./Discussion.jsx";
 import { api } from "./api.js";
 import { DayPicker, StatusChip, buttonStyle, card, ghostButton, inputStyle,
   td, th } from "./ui.jsx";
@@ -477,6 +478,7 @@ export default function DMAPage({ site, me, onClose }) {
           </span>
         )}
       </div>
+      {doc?.ref && <Discussion threadKey={`ref:${doc.ref}`} me={me} />}
     </section>
   );
 }

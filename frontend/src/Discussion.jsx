@@ -105,18 +105,22 @@ function Composer({ threadKey, onSent, busy, setBusy, setError }) {
   }
 
   return (
-    <div style={{ position: "relative", borderTop: "1px solid var(--sp-border, #d5dde3)",
+    <div style={{ borderTop: "1px solid var(--sp-border, #d5dde3)",
                   padding: "8px 10px 10px" }}>
+      <div style={{ position: "relative" }}>
       <textarea ref={taRef} value={body} onChange={onChange} onKeyDown={onKeyDown}
         onClick={(e) => setMention(readMention(body, e.target.selectionStart))}
         placeholder="Write a note — or @name someone to ask them"
         style={{ ...inputStyle, width: "100%", minHeight: 64,
-                 fontFamily: "inherit", resize: "vertical" }} />
+                 fontFamily: "inherit", resize: "vertical", display: "block" }} />
+      {/* the list drops down under the box, never over the words being
+          typed (owner 2026-10-07) */}
       {mention && people.length > 0 && (
-        <div style={{ position: "absolute", left: 10, right: 10, bottom: 52,
+        <div style={{ position: "absolute", left: 0, right: 0, top: "100%",
+                      marginTop: 2,
                       background: "#fff", border: "1px solid var(--sp-border, #d5dde3)",
                       borderRadius: 8, boxShadow: "0 6px 20px rgba(15,30,45,.15)",
-                      zIndex: 5, maxHeight: 220, overflowY: "auto" }}>
+                      zIndex: 5, maxHeight: 200, overflowY: "auto" }}>
           {people.map((p, i) => (
             <div key={p.id} onMouseDown={(e) => { e.preventDefault(); pick(p); }}
                  style={{ padding: "6px 10px", cursor: "pointer", fontSize: 13,
@@ -126,6 +130,7 @@ function Composer({ threadKey, onSent, busy, setBusy, setError }) {
                 {p.role}</span>
             </div>))}
         </div>)}
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
         <span style={{ fontSize: 12, color: asked.length ? "var(--sp-navy)" : "var(--muted)" }}>
           {asked.length
@@ -190,7 +195,7 @@ function Thread({ d, me, onChanged, setError }) {
 
 /** The panel: docked on the right on a wide screen, below on a narrow one,
  *  with a tab that shows the count and opens it. Remembers open/closed. */
-export default function Discussion({ threadKey, me }) {
+export default function Discussion({ threadKey, me, inline = false }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -236,7 +241,7 @@ export default function Discussion({ threadKey, me }) {
               setError={setError} onSent={setD} />
   </>);
 
-  if (wide) {
+  if (wide && !inline) {
     // the tab on the right edge, and the panel it opens
     if (!open) {
       return (

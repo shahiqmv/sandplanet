@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import Discussion from "./Discussion.jsx";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, SelectOrOther, card, inputStyle, td, th } from "./ui.jsx";
 
@@ -868,6 +869,7 @@ export function CaseDetail({ id, me, onBack }) {
           ))}
         </div>
       )}
+      {c?.id && <Discussion threadKey={`doc:${c.id}`} me={me} />}
     </div>
   );
 }

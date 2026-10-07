@@ -26,6 +26,16 @@ MAX_BODY = 2000
 
 # ---- what a thread is about ---------------------------------------------------
 
+def canonical(key):
+    """"ref:<REF>" — a document named by its reference, which is all a
+    viewer may have — becomes "doc:<id>". Anything else is returned as is."""
+    if str(key).startswith("ref:"):
+        doc = Document.objects.filter(ref__iexact=key[4:],
+                                      is_void=False).only("id").first()
+        return f"doc:{doc.id}" if doc else key
+    return key
+
+
 def parse_key(key):
     """("doc"|"claim"|"payroll", id) or None."""
     try:

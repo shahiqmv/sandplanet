@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { BTN, buttonStyle, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import Discussion from "./Discussion.jsx";
 import HsePhotos, { PhotoPicker, ReportButton } from "./HsePhotos.jsx";
 
 // The records an HSE officer already keeps on the bigger sites: toolbox
@@ -90,6 +91,7 @@ export function ToolboxTab({ me, sites, siteFilter }) {
                 {open === r.id && (
                   <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
                     {r.key_points && <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap", marginTop: 6 }}>{r.key_points}</div>}
+                    <Discussion threadKey={`ref:${r.ref}`} me={me} inline />
                     <HsePhotos base={`/hse/toolbox-talks/${r.ref}`} photos={r.photos || []} canAdd canRemove
                                onChanged={(photos) => setRows((all) => all.map((x) => (x.id === r.id ? { ...x, photos } : x)))}
                                emptyNote="This talk was recorded before photos were asked for — add one." />

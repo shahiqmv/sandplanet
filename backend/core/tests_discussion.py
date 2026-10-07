@@ -116,6 +116,19 @@ class DiscussionTests(TestCase):
             answered_at__isnull=True).count(), 1)
         self.assertEqual(Comment.objects.count(), 1)
 
+    def test_a_thread_can_be_named_by_the_documents_reference(self):
+        """A viewer may only have the reference; "ref:MR-SJR-900" is the
+        same thread as "doc:<id>"."""
+        self.post(self.sa, "By reference.")
+        self.c.force_authenticate(self.pm)
+        r = self.c.get("/api/v1/discussion/ref:mr-sjr-900")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["key"], self.key)
+        self.assertEqual([x["body"] for x in r.data["comments"]],
+                         ["By reference."])
+        self.assertEqual(self.c.get("/api/v1/discussion/ref:NOPE-1")
+                         .status_code, 404)
+
     def test_a_payroll_run_has_a_thread_too(self):
         from .models import PayrollRun
         hr = make_user("d_hr", User.Role.HO_HR)

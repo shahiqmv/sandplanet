@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { BTN, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 import { ToolboxTab, TrainingTab, WorkerRecordsTab } from "./HseRecords.jsx";
 import { AssessmentsTab, InspectionsTab, PermitsTab } from "./HseWork.jsx";
+import Discussion from "./Discussion.jsx";
 import HsePhotos, { PhotoPicker, ReportButton, uploadPhotos } from "./HsePhotos.jsx";
 
 // Safety (HSE). The app's whole safety functionality used to be one checkbox
@@ -607,6 +608,7 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
           </span>
         </div>
       )}
+      {incident?.ref && <Discussion threadKey={`ref:${incident.ref}`} me={me} />}
     </Modal>
   );
 }

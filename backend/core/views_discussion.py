@@ -8,15 +8,16 @@ from .models import CommentRecipient
 
 
 def _target(request, key):
+    key = svc.canonical(key)
     obj = svc.target(key)
     if obj is None or not svc.can_see(request.user, key, obj):
-        return None, Response({"detail": "Not found."}, status=404)
-    return obj, None
+        return None, None, Response({"detail": "Not found."}, status=404)
+    return key, obj, None
 
 
 @api_view(["GET", "POST"])
 def thread(request, key):
-    obj, err = _target(request, key)
+    key, obj, err = _target(request, key)
     if err:
         return err
     if request.method == "POST":
@@ -30,7 +31,7 @@ def thread(request, key):
 
 @api_view(["GET"])
 def people(request, key):
-    obj, err = _target(request, key)
+    key, obj, err = _target(request, key)
     if err:
         return err
     return Response({"people": svc.people(key, obj, request.GET.get("q", ""),
@@ -44,7 +45,7 @@ def answered(request, pk):
     if rec is None:
         return Response({"detail": "Not found."}, status=404)
     key = rec.comment.thread
-    obj, err = _target(request, key)
+    key, obj, err = _target(request, key)
     if err:
         return err
     msg = svc.mark_answered(rec, request.user)

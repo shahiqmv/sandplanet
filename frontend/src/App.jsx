@@ -73,6 +73,7 @@ import CompanyPage from "./CompanyPage.jsx";
 import ActivityPage from "./ActivityPage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
+import Discussion from "./Discussion.jsx";
 import HRDashboard from "./HRDashboard.jsx";
 import PortfolioPage from "./PortfolioPage.jsx";
 
@@ -1204,6 +1205,15 @@ export default function App() {
                          onSaved={(doc) => { bump();
                            setDocView({ mode: "line-view", doc }); }}
                          onCancel={closeDoc} />
+          )}
+          {/* The discussion on whatever document is open — every viewer,
+              one mount, by reference (owner 2026-10-07: "all across the
+              app including DPR"). The panel docks on the right. */}
+          {docView?.doc?.ref && ["line-view", "dpr-view", "pyr-view",
+                                 "ipr-view", "irn-view", "qa-view",
+                                 "shipment-view"].includes(docView.mode) && (
+            <Discussion key={docView.doc.ref}
+                        threadKey={`ref:${docView.doc.ref}`} me={me} />
           )}
           {docView?.mode === "line-view" && (
             <LineDocView doc={docView.doc} me={me} onClose={closeDoc}
