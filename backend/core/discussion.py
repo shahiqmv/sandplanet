@@ -22,6 +22,8 @@ from .models import Comment, CommentRecipient, Document, User
 from .permissions import scoped_site_ids
 
 MAX_BODY = 2000
+ATTENDANCE_HO_ROLES = ("HO_HR", "DIRECTOR", "FINANCE", "SIGNATORY", "ADMIN",
+                       "PA")
 
 
 # ---- what a thread is about ---------------------------------------------------
@@ -36,12 +38,34 @@ def canonical(key):
     return key
 
 
+class AttendanceDay:
+    """A site's register for one day — not a record of its own, one row
+    per worker, so the thread hangs off the pair (owner 2026-10-07)."""
+    def __init__(self, site, day):
+        self.site, self.day = site, day
+        self.site_id = site.id
+
+    @property
+    def ref(self):
+        return f"ATT-{self.site.code}-{self.day:%Y-%m-%d}"
+
+
 def parse_key(key):
-    """("doc"|"claim"|"payroll", id) or None."""
+    """("doc"|"claim"|"payroll", id), ("att", (site_id, day)) or None."""
     try:
         kind, ident = str(key).split(":", 1)
-        ident = int(ident)
     except (ValueError, AttributeError):
+        return None
+    if kind == "att":
+        try:
+            site_id, day = ident.split(":", 1)
+            from datetime import date as _date
+            return "att", (int(site_id), _date.fromisoformat(day))
+        except ValueError:
+            return None
+    try:
+        ident = int(ident)
+    except ValueError:
         return None
     if kind not in ("doc", "claim", "payroll"):
         return None
@@ -54,6 +78,10 @@ def target(key):
     if parsed is None:
         return None
     kind, ident = parsed
+    if kind == "att":
+        from .models import Site
+        site = Site.objects.filter(pk=ident[0]).first()
+        return AttendanceDay(site, ident[1]) if site else None
     if kind == "doc":
         return Document.objects.select_related("site").filter(
             pk=ident, is_void=False).first()
@@ -68,6 +96,10 @@ def target(key):
 def describe(key, obj):
     """The few facts a task card or a notification needs."""
     kind = parse_key(key)[0]
+    if kind == "att":
+        return {"ref": obj.ref, "doc_type": "ATT", "doc_date": obj.day,
+                "status": "", "site_id": obj.site_id,
+                "site_code": obj.site.code, "day": obj.day.isoformat()}
     if kind == "doc":
         return {"ref": obj.ref, "doc_type": obj.doc_type,
                 "doc_date": obj.doc_date, "status": obj.status,
@@ -91,6 +123,12 @@ def can_see(user, key, obj):
     kind = parse_key(key)[0]
     if not user.is_active:
         return False
+    if kind == "att":
+        # the site's own team, and the head-office roles that run or pay it
+        if user.role in ATTENDANCE_HO_ROLES:
+            return True
+        ids = scoped_site_ids(user)
+        return ids is None or obj.site_id in ids
     if kind == "doc":
         from .views_documents import SCA_VIEW_ROLES
         ids = scoped_site_ids(user)
@@ -122,7 +160,16 @@ def _chain(key, obj):
     raised it, the site's PMs, and the roles that act on it."""
     kind = parse_key(key)[0]
     people, roles = [], []
-    if kind == "doc":
+    if kind == "att":
+        # the site's team first: its PMs and whoever is allocated to it
+        people += list(obj.site.current_pms())
+        for u in User.objects.filter(
+                is_active=True, role__in=("SITE_ADMIN", "SITE_ENGINEER"),
+                site_allocations__site=obj.site,
+                site_allocations__to_date__isnull=True).distinct():
+            people.append(u)
+        roles += ["HO_HR", "DIRECTOR", "FINANCE", "SIGNATORY"]
+    elif kind == "doc":
         if obj.created_by_id:
             people.append(obj.created_by)
         if obj.site_id:

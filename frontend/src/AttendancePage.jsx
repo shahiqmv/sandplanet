@@ -4,6 +4,7 @@ import ShiftAllocation from "./ShiftAllocation.jsx";
 import { DayPicker, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 import OtApprovalPanel from "./OtApprovalPanel.jsx";
+import Discussion from "./Discussion.jsx";
 
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
 const REST_REMARKS = ["OFF", "PRESENT", "HALF_DAY"];
@@ -619,6 +620,10 @@ export default function AttendancePage({ site, me, onClose,
           </>
         )}
       </div>
+      {/* The thread on this day's register — a question from the PD, HR or
+          Finance about the 5th sits on the 5th (owner 2026-10-07). */}
+      {site?.id && day && (
+        <Discussion key={`att-${day}`} threadKey={`att:${site.id}:${day}`} me={me} />)}
     </section>
   );
 }

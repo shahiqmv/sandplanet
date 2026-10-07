@@ -147,6 +147,36 @@ class DiscussionTests(TestCase):
         d = self.c.get("/api/v1/discussion/mine").data
         self.assertEqual((d["count"], d["asked_count"]), (0, 0))
 
+    def test_a_days_attendance_has_a_thread(self):
+        """Not a record of its own: the thread hangs off site + day. The
+        site's team and the head-office roles that run or pay it can see
+        it; another site's staff cannot (owner 2026-10-07)."""
+        fin = make_user("d_fin", User.Role.FINANCE)
+        key = f"att:{self.site.id}:2026-10-05"
+        self.c.force_authenticate(fin)
+        r = self.c.post(f"/api/v1/discussion/{key}",
+                        {"body": "Why were 12 men absent on the 5th?",
+                         "to": [self.pm.id]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["about"]["ref"], "ATT-SJR-2026-10-05")
+        self.assertEqual(r.data["about"]["doc_type"], "ATT")
+        self.c.force_authenticate(self.pm)
+        items = self.c.get("/api/v1/discussion/mine").data["items"]
+        self.assertEqual([(i["doc_type"], i["site_code"], i["day"])
+                          for i in items], [("ATT", "SJR", "2026-10-05")])
+        self.assertEqual(self.tasks(self.pm), ["ATT-SJR-2026-10-05"])
+        names = [p["name"] for p in self.c.get(
+            f"/api/v1/discussion/{key}/people").data["people"]]
+        self.assertIn(self.sa.full_name, names)       # the site's own team
+        self.assertNotIn(self.far.full_name, names)
+        self.c.force_authenticate(self.far)
+        self.assertEqual(self.c.get(f"/api/v1/discussion/{key}").status_code,
+                         404)
+        self.assertEqual(self.c.get("/api/v1/discussion/att:9999:2026-10-05")
+                         .status_code, 404)
+        self.assertEqual(self.c.get(f"/api/v1/discussion/att:{self.site.id}:x")
+                         .status_code, 404)
+
     def test_a_payroll_run_has_a_thread_too(self):
         from .models import PayrollRun
         hr = make_user("d_hr", User.Role.HO_HR)

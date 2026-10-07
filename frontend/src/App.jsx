@@ -878,6 +878,13 @@ export default function App() {
       if (site) { setOpenSite(site); setDocView({ mode: "dma" }); }
       return;
     }
+    // A question on a day's attendance opens that site's register on the day.
+    if (item.doc_type === "ATT") {
+      const site = sites.find((s) => s.code === item.site_code);
+      if (site) { setOpenSite(site);
+                  setDocView({ mode: "attendance", tab: "day", day: item.day }); }
+      return;
+    }
     // A question on a claim: the claim lives on its project's Claims tab.
     if (item.doc_type === "CLAIM") {
       setOpenSite(null);
