@@ -875,6 +875,53 @@ class ProgressClaimTests(TestCase):
                          round(float(w["total"]) - 112.52, 2))
         self.assertEqual(d["deduction_lines"][0]["label"], "Materials from store")
 
+    def test_an_amount_withheld_is_its_own_line_and_is_released_later(self):
+        """The client withholds a sum against a pending snag — not retention,
+        not a back charge (owner 2026-10-07). It comes off the certified
+        work under its own name, and lowering its running total on a later
+        claim pays it back by itself."""
+        from . import commercial
+        from .models import ClaimDeduction, ProgressClaim
+        c1 = self._create()
+        self._value_pct(c1["id"], {"A": "65", "B": "65"})
+        r = self.client.post(
+            f"/api/v1/claims/{c1['id']}/deductions",
+            {"rows": [{"label": "Hold until snags cleared",
+                       "cumulative_amount": "1500", "kind": "WITHHELD"}]},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = ClaimDeduction.objects.get(claim_id=c1["id"])
+        self.assertEqual((row.kind, row.before_gst), ("WITHHELD", True))
+        d1 = self._detail(c1["id"])
+        w1 = d1["waterfall"]
+        self.assertEqual(float(w1["withheld_cumulative"]), 1500.0)
+        self.assertEqual(d1["deduction_lines"][0]["kind"], "WITHHELD")
+        self.assertEqual(round(float(w1["net_due"]), 2),
+                         round(float(w1["k_gross"]) - float(w1["advance_recovered"])
+                               - float(w1["retention_held"]) - 1500, 2))
+        labels = [x["label"] for x in commercial.claim_payment_summary(
+            ProgressClaim.objects.get(pk=c1["id"]))]
+        self.assertIn("Less: amount withheld — Hold until snags cleared", labels)
+        self.assertFalse(any("back charge" in lb for lb in labels))
+        self._status(c1["id"], "SUBMITTED")
+        self._status(c1["id"], "CERTIFIED")
+        # the next claim carries the line; the snags are cleared, so the QS
+        # lowers it to 0 and the 1,500 comes back on this claim
+        c2 = self._create()
+        d2 = self._detail(c2["id"])
+        self.assertEqual([(x["label"], x["kind"], float(x["cumulative"]))
+                          for x in d2["deduction_lines"]],
+                         [("Hold until snags cleared", "WITHHELD", 1500.0)])
+        self._value_pct(c2["id"], {"A": "65", "B": "65"})     # no new work
+        self.client.post(
+            f"/api/v1/claims/{c2['id']}/deductions",
+            {"rows": [{"label": "Hold until snags cleared",
+                       "cumulative_amount": "0", "kind": "WITHHELD"}]},
+            format="json")
+        w2 = self._detail(c2["id"])["waterfall"]
+        self.assertEqual(round(float(w2["net_due"]), 2), 1500.0)
+        self.assertEqual(float(w2["withheld_cumulative"]), 0.0)
+
     def test_a_back_charge_can_be_taken_before_gst(self):
         """Some back charges are netted off the certified work itself, so
         GST is charged on the reduced amount; the rest stay a GST-inclusive

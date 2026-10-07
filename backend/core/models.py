@@ -5066,6 +5066,18 @@ class ClaimDeduction(models.Model):
     # netted off the certified work itself, before GST is charged, so they
     # reduce the taxable amount (owner 2026-09-19).
     before_gst = models.BooleanField(default=False)
+    # Not every deduction is a back charge. The client also WITHHOLDS a sum
+    # against a pending snag or the like — not retention, not a charge —
+    # and releases it when the work is done (owner 2026-10-07). It is netted
+    # off the certified work like a before-GST line, so lowering its running
+    # total on a later claim pays it back by itself; it is shown and
+    # reported apart, under its own name.
+    class Kind(models.TextChoices):
+        BACK_CHARGE = "BACK_CHARGE", "Back charge"
+        WITHHELD = "WITHHELD", "Amount withheld"
+
+    kind = models.CharField(max_length=12, choices=Kind.choices,
+                            default=Kind.BACK_CHARGE)
     sort_order = models.IntegerField(default=0)
 
     class Meta:

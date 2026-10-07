@@ -301,7 +301,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
     setVals(v);
     setDeds((detail.deduction_lines || []).map((dl) => ({
       label: dl.label, cumulative_amount: dl.cumulative,
-      before_gst: !!dl.before_gst })));
+      before_gst: !!dl.before_gst, kind: dl.kind || "BACK_CHARGE" })));
   }
   useEffect(() => {
     api(`/claims/${claimId}`).then(hydrate).catch((e) => setError(e.message));
@@ -560,11 +560,15 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
         <div style={{ margin: "6px 0 10px", fontSize: 12 }}>
           <div style={{ fontWeight: 600, color: "var(--navy)",
                         marginBottom: 4 }}>
-            Back charges (client deductions — cumulative)</div>
+            Back charges and amounts withheld (cumulative)</div>
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 4 }}>
-            Enter each back charge as its total to date, earlier claims
-            included; this claim deducts the increase. After GST: a GST-inclusive contra off the total. Before GST: netted
-            off the certified work, so it reduces the taxable amount.</div>
+            Enter each line as its total to date, earlier claims included;
+            this claim deducts the increase. A <b>back charge</b> is a client
+            deduction (after GST: a GST-inclusive contra; before GST: netted
+            off the certified work). An <b>amount withheld</b> is what the
+            client holds against a pending snag — not a charge, not retention —
+            always netted off the certified work; lower its total on a later
+            claim and the difference is released.</div>
           {deds.map((row, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4,
                                   alignItems: "center" }}>
@@ -577,6 +581,18 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 onChange={(e) => { const n = deds.slice();
                   n[i] = { ...n[i], cumulative_amount: e.target.value };
                   setDeds(n); }} />
+              <select value={row.kind || "BACK_CHARGE"}
+                style={{ ...inputStyle, width: 128, padding: "3px 6px" }}
+                title="A client deduction, or a sum held against a snag"
+                onChange={(e) => { const n = deds.slice();
+                  n[i] = { ...n[i], kind: e.target.value,
+                           before_gst: e.target.value === "WITHHELD"
+                             ? true : n[i].before_gst };
+                  setDeds(n); }}>
+                <option value="BACK_CHARGE">Back charge</option>
+                <option value="WITHHELD">Amount withheld</option>
+              </select>
+              {row.kind !== "WITHHELD" && (
               <select value={row.before_gst ? "before" : "after"}
                 style={{ ...inputStyle, width: 112, padding: "3px 6px" }}
                 title="Which side of GST this back charge is taken"
@@ -585,7 +601,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                   setDeds(n); }}>
                 <option value="after">After GST</option>
                 <option value="before">Before GST</option>
-              </select>
+              </select>)}
               <button style={{ ...ghostButton, padding: "2px 8px" }}
                 onClick={() => setDeds(deds.filter((_, j) => j !== i))}>
                 ✕</button>
@@ -615,8 +631,9 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           </datalist>
           <button style={{ ...ghostButton, padding: "2px 10px" }}
             onClick={() => setDeds([...deds,
-              { label: "", cumulative_amount: "", before_gst: false }])}>
-            + Add deduction</button>
+              { label: "", cumulative_amount: "", before_gst: false,
+                kind: "BACK_CHARGE" }])}>
+            + Add line</button>
           <span style={{ marginLeft: 8, color: "var(--muted)" }}>
             (saved with “Save &amp; recalc”)</span>
         </div>
@@ -643,8 +660,14 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
               <W label="Less advance recovery" v={-w.advance_recovered}
                  ccy={ccy} neg />
               {/* Back charges netted off before GST, above retention */}
-              {(d.deduction_lines || []).filter((dl) => dl.before_gst).map((dl, i) => (
+              {(d.deduction_lines || []).filter((dl) => dl.before_gst && dl.kind !== "WITHHELD").map((dl, i) => (
                 <W key={`pre-${i}`} label={`Less back charge — ${dl.label}`}
+                   v={-dl.cumulative} ccy={ccy} neg />
+              ))}
+              {/* what the client holds against a snag; released when its
+                  running total comes down (owner 2026-10-07) */}
+              {(d.deduction_lines || []).filter((dl) => dl.kind === "WITHHELD").map((dl, i) => (
+                <W key={`wh-${i}`} label={`Less amount withheld — ${dl.label}`}
                    v={-dl.cumulative} ccy={ccy} neg />
               ))}
               <W label="Less retention" v={-w.retention_held} ccy={ccy} neg />

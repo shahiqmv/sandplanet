@@ -663,7 +663,8 @@ def create_claim(project, data, actor):
         ClaimDeduction.objects.bulk_create([
             ClaimDeduction(claim=claim, label=d.label,
                            cumulative_amount=d.cumulative_amount,
-                           before_gst=d.before_gst, sort_order=d.sort_order)
+                           before_gst=d.before_gst, kind=d.kind,
+                           sort_order=d.sort_order)
             for d in previous.deductions.all()])
     audit("project", project.id, "CLAIM_CREATED", actor=actor,
           detail={"ref": claim.ref, "lines": len(new_items)})
@@ -721,11 +722,14 @@ def set_claim_deductions(claim, rows, actor):
         label = (r.get("label") or "").strip()
         if not label:
             continue
+        kind = ("WITHHELD" if str(r.get("kind") or "").upper() == "WITHHELD"
+                else "BACK_CHARGE")
         cleaned.append(ClaimDeduction(
-            claim=claim, label=label,
+            claim=claim, label=label, kind=kind,
             cumulative_amount=_dec(r.get("cumulative_amount")) or ZERO,
-            before_gst=str(r.get("before_gst") or "").lower()
-            in ("1", "true", "yes", "before"),
+            # a withheld sum always comes off the certified work
+            before_gst=kind == "WITHHELD" or str(r.get("before_gst") or "")
+            .lower() in ("1", "true", "yes", "before"),
             sort_order=i))
     claim.deductions.all().delete()
     ClaimDeduction.objects.bulk_create(cleaned)
@@ -940,7 +944,7 @@ def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
     return (cum_pct or ZERO) / Decimal("100") * contract_amount
 
 
-def _deductions_to_date(claim, before_gst=False):
+def _deductions_to_date(claim, before_gst=False, charges_only=False):
     """Every back charge raised on this claim or any earlier one, on one
     side of GST (the latest claim carrying a label decides which side).
 
@@ -956,9 +960,10 @@ def _deductions_to_date(claim, before_gst=False):
     for c in reversed(chain):                     # oldest first
         for d in c.deductions.all():
             seen[d.label.strip().lower()] = (
-                Decimal(str(d.cumulative_amount or 0)), d.before_gst)
-    return sum((amt for amt, pre in seen.values() if pre == before_gst),
-               ZERO)
+                Decimal(str(d.cumulative_amount or 0)), d.before_gst, d.kind)
+    return sum((amt for amt, pre, kind in seen.values()
+                if pre == before_gst
+                and not (charges_only and kind == "WITHHELD")), ZERO)
 
 
 def _claim_net(claim, _cache=None):
@@ -1176,11 +1181,15 @@ def claim_valuation(claim, _cache=None):
     # (owner 2026-09-20, MXR). The QS may pin the exact cumulative held amount
     # with an override before the claim is certified (owner 2026-07-27).
     pre_to_date = _deductions_to_date(claim, True)
+    # A sum the client withholds against a snag is not a reduction of the
+    # work: retention stays on the full work value, or releasing the hold
+    # would come back short (owner 2026-10-07).
+    charges_to_date = _deductions_to_date(claim, True, charges_only=True)
     if claim.retention_held_override is not None:
         retention_held = _q(claim.retention_held_override)
     else:
         retention_held = _q(claim.retention_pct / Decimal("100")
-                            * (k1 + k2 + k4 - pre_to_date))
+                            * (k1 + k2 + k4 - charges_to_date))
     retention_released = Decimal(str(claim.retention_released or 0))  # M2
     net_retention = retention_released - retention_held              # M
 
@@ -1206,7 +1215,7 @@ def claim_valuation(claim, _cache=None):
         pv = prev_ded.get(d.label.strip().lower(), ZERO)
         deduction_lines.append({"id": d.id, "label": d.label, "previous": pv,
                                 "present": cum - pv, "cumulative": cum,
-                                "before_gst": d.before_gst})
+                                "before_gst": d.before_gst, "kind": d.kind})
         if d.before_gst:
             pre_cum += cum
             pre_present += (cum - pv)
@@ -1272,6 +1281,10 @@ def claim_valuation(claim, _cache=None):
             "deductions_pre_present": pre_present,
             "deductions_pre_cumulative": pre_cum,
             "deductions_pre_to_date": pre_to_date,
+            "withheld_cumulative": sum(
+                (Decimal(str(d.cumulative_amount or 0))
+                 for d in claim.deductions.all() if d.kind == "WITHHELD"),
+                ZERO),
             "taxable_due": taxable_due,
             "taxable_cumulative": taxable_cumulative,
             "gst": gst, "total": total,
@@ -1490,9 +1503,15 @@ def claim_payment_summary(claim, dp=2):
     # Back charges netted off before GST sit above retention, in the
     # cumulative block (owner 2026-09-19).
     for d in val["deduction_lines"]:
-        if d["before_gst"]:
+        if d["before_gst"] and d.get("kind") != "WITHHELD":
             add(f"Less: back charge — {d['label']}", ZERO, d["cumulative"],
                 d["previous"], sign=-1)
+    # ...then what the client is holding against a snag, released on a
+    # later claim by lowering its running total (owner 2026-10-07)
+    for d in val["deduction_lines"]:
+        if d.get("kind") == "WITHHELD":
+            add(f"Less: amount withheld — {d['label']}", ZERO,
+                d["cumulative"], d["previous"], sign=-1)
     add("Retention", ZERO, w["retention_held"], P("retention_held"), sign=-1)
     if w["retention_released"]:
         add("Retention released", ZERO, w["retention_released"],
