@@ -2795,3 +2795,51 @@ class IprAmendLineTests(IprDropLineTests):
             {"project_id": self.project.id, "qty": "1"}])
         self.assertEqual(r.status_code, 400)
         self.assertIn("already vouchered or paid", r.data["detail"])
+
+
+class ShipmentDocumentRemoveTests(ShipmentDeleteTests):
+    """A wrong clearance document could be uploaded but never taken off or
+    replaced (owner 2026-10-07)."""
+
+    def _file(self, name="doc.pdf"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, b"%PDF-1.4 test",
+                                  content_type="application/pdf")
+
+    def _upload(self, ref, sid, kind="PACKING_LIST", name="doc.pdf"):
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/documents",
+                             {"doc_type": kind, "file": self._file(name)},
+                             format="multipart")
+        assert r.status_code == 201, r.data
+        return r.data["shipments"][0]["documents"]
+
+    def test_remove_then_upload_the_right_one(self):
+        from .models import AuditLog, ShipmentDocument
+        ref, sid = self._book()
+        docs = self._upload(ref, sid, name="wrong.pdf")
+        self.assertEqual([d["file_name"] for d in docs], ["wrong.pdf"])
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/shipments/{sid}/documents/{docs[0]['id']}/remove")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["shipments"][0]["documents"], [])
+        self.assertEqual(ShipmentDocument.objects.filter(shipment_id=sid).count(), 0)
+        self.assertTrue(AuditLog.objects.filter(
+            event="SHIPMENT_DOCUMENT_REMOVED").exists())
+        docs = self._upload(ref, sid, name="right.pdf")
+        self.assertEqual([d["file_name"] for d in docs], ["right.pdf"])
+
+    def test_only_head_office_and_not_on_a_cleared_shipment(self):
+        from .models import ImportShipment
+        ref, sid = self._book()
+        docs = self._upload(ref, sid)
+        self.client.force_authenticate(make_user("fin_sd", User.Role.FINANCE))
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/shipments/{sid}/documents/{docs[0]['id']}/remove")
+        self.assertEqual(r.status_code, 403)
+        ImportShipment.objects.filter(pk=sid).update(status="CLEARED")
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/shipments/{sid}/documents/{docs[0]['id']}/remove")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("cleared", r.data["detail"])

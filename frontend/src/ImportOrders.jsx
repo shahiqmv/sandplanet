@@ -1701,6 +1701,14 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
     try { await apiUpload(`/ipr/${refIpr}/shipments/${s.id}/documents`, fd);
       onChanged(); } catch (e) { onError(e.message); }
   }
+  async function removeDoc(d) {
+    if (!window.confirm(`Remove the ${d.doc_type_display} (${d.file_name || "file"}) `
+      + "from this shipment? Upload the right one afterwards.")) return;
+    onError(null);
+    try { await api(`/ipr/${refIpr}/shipments/${s.id}/documents/${d.id}/remove`,
+      { method: "POST" }); onChanged(); }
+    catch (e) { onError(e.message); }
+  }
   async function receive() {
     onError(null);
     try {
@@ -1868,9 +1876,17 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
       {/* documents */}
       <div style={{ fontSize: 12.5 }}>
         {s.documents.map((d) => (
-          <span key={d.id} style={{ marginRight: 10 }}>
+          <span key={d.id} style={{ marginRight: 10, whiteSpace: "nowrap" }}>
             <a href={d.file_url} target="_blank" rel="noreferrer">
-              📎 {d.doc_type_display}</a></span>
+              📎 {d.doc_type_display}</a>
+            {/* the wrong file, or one to replace: take it off, then upload
+                the right one (owner 2026-10-07) */}
+            {canManage && s.status !== "CLEARED" && (
+              <button title={`Remove this ${d.doc_type_display} — upload the right one afterwards`}
+                style={{ border: "none", background: "none", cursor: "pointer",
+                         color: "#c0392b", fontSize: 11, padding: "0 3px" }}
+                onClick={() => removeDoc(d)}>✕</button>
+            )}</span>
         ))}
         {s.missing_clearing.length > 0 && (
           <span style={{ color: "#b35900", marginLeft: 4 }}>

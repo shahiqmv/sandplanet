@@ -572,6 +572,29 @@ def ipr_shipment_document(request, ref, pk):
 
 
 @api_view(["POST"])
+def ipr_shipment_document_remove(request, ref, pk, doc_id):
+    """Take a shipping document off the shipment (to replace it, upload
+    the right one afterwards)."""
+    from .models import ShipmentDocument
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office manages shipping documents."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    sd = ShipmentDocument.objects.filter(pk=doc_id, shipment=s).first()
+    if sd is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.remove_shipment_document(sd, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
 def ipr_shipment_receive(request, ref, pk):
     """Open an IRN to count this shipment into the HO store."""
     doc, err = _get_ipr(request, ref)

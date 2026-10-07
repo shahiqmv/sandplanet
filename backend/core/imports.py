@@ -1763,6 +1763,32 @@ def add_shipment_document(shipment, doc_type, upload, actor, notes=""):
     return doc
 
 
+def remove_shipment_document(doc, actor):
+    """Take a shipping document off a shipment — the wrong file, or one to
+    be replaced by uploading again (owner 2026-10-07: there was no way to
+    remove or replace one). Returns an error or None.
+
+    What the document already set in motion stands: a B/L that fired the
+    BL-triggered payment milestones does not un-fire them, and a document
+    already sent to the clearing agent stays sent — the removal is noted so
+    Head Office knows to send the right one."""
+    from .audit import audit
+    shipment = doc.shipment
+    if shipment.status == "CLEARED":
+        return "This shipment is cleared; its documents are the record."
+    name, kind = doc.file_name, doc.doc_type
+    shared = bool(shipment.shared_with_agent_at)
+    doc.file.delete(save=False)
+    doc.delete()
+    for o in shipment.orders():
+        audit("document", o.document_id, "SHIPMENT_DOCUMENT_REMOVED",
+              actor=actor,
+              detail={"ref": o.document.ref, "shipment": shipment.seq,
+                      "type": kind,
+                      "file": name, "already_shared_with_agent": shared})
+    return None
+
+
 SHARE_ATTACH_CAP = 20 * 1024 * 1024   # most mailboxes bounce past ~25 MB
 SHARE_CC_PARAM = "clearance_share_cc"
 

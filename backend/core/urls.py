@@ -362,6 +362,9 @@ urlpatterns = [
          imports_api.ipr_shipment_share, name="ipr-shipment-share"),
     path("ipr/<str:ref>/shipments/<int:pk>/documents",
          imports_api.ipr_shipment_document, name="ipr-shipment-document"),
+    path("ipr/<str:ref>/shipments/<int:pk>/documents/<int:doc_id>/remove",
+         imports_api.ipr_shipment_document_remove,
+         name="ipr-shipment-document-remove"),
     path("ipr/<str:ref>/shipments/<int:pk>/receive",
          imports_api.ipr_shipment_receive, name="ipr-shipment-receive"),
     # --- shipment tracking (ShipsGo) ---
