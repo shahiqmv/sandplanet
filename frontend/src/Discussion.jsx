@@ -159,7 +159,7 @@ function Thread({ d, me, onChanged, setError }) {
   return (
     <div style={{ padding: "6px 10px", overflowY: "auto", flex: "1 1 auto" }}>
       {d.comments.map((c) => (
-        <div key={c.id}
+        <div key={c.id} id={`comment-${c.id}`}
              style={{ borderLeft: `3px solid ${c.open ? "#b45309"
                         : c.kind === "FOLLOWUP" ? "#1a7f37" : "#c9d3da"}`,
                       padding: "4px 8px", margin: "4px 0 8px",
@@ -212,6 +212,17 @@ export default function Discussion({ threadKey, me, inline = false }) {
   const load = useCallback(() => api(`/discussion/${threadKey}`)
     .then(setD).catch((e) => setError(e.message)), [threadKey]);
   useEffect(() => { load(); }, [load]);
+  // Arriving from the corner badge: open, and scroll to that question.
+  useEffect(() => {
+    if (!d) return;
+    let focus = null;
+    try { focus = localStorage.getItem("planet:discussion:focus"); } catch { /* */ }
+    if (!focus || !d.comments.some((c) => String(c.id) === focus)) return;
+    try { localStorage.removeItem("planet:discussion:focus"); } catch { /* */ }
+    setOpen(true);
+    requestAnimationFrame(() => document.getElementById(`comment-${focus}`)
+      ?.scrollIntoView({ block: "center" }));
+  }, [d]);
   function toggle() {
     const next = !open;
     setOpen(next);

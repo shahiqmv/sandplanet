@@ -74,6 +74,7 @@ import ActivityPage from "./ActivityPage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
 import Discussion from "./Discussion.jsx";
+import DiscussionBadge from "./DiscussionBadge.jsx";
 import HRDashboard from "./HRDashboard.jsx";
 import PortfolioPage from "./PortfolioPage.jsx";
 
@@ -1124,6 +1125,8 @@ export default function App() {
           api("/auth/me").then(setMe)} />
       ) : (
         <div className={"shell" + (sideNav ? " with-rail" : "")}>
+        {/* questions waiting on you, wherever you are (owner 2026-10-07) */}
+        <DiscussionBadge onOpen={openApprovalItem} />
         {sideNav && (
           <SideNav groups={groups} activeKey={activeGroup?.key} hoPage={hoPage}
                    isCurrent={!openSite && !docView} pendingCount={pendingCount}

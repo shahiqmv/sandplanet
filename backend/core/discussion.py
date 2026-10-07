@@ -243,10 +243,14 @@ def post(key, obj, me, body, to_ids=None, reply_to=None):
     # A reply by anyone other than the asker answers what was put to
     # anyone on this thread (owner: the PD may answer the Signatory's
     # question). The asker's own further notes do not answer their own ask.
+    # A NEW question put to others is not an answer either — it answers
+    # only what was put to its author.
     now = timezone.now()
     answered = (CommentRecipient.objects
                 .filter(comment__thread=key, answered_at__isnull=True)
                 .exclude(comment=c).exclude(comment__author=me))
+    if recipients:
+        answered = answered.filter(user=me)
     askers = {r.comment.author for r in answered.select_related(
         "comment__author")}
     answered.update(answered_at=now, answered_by=me, answer=c)
@@ -282,25 +286,43 @@ def mark_answered(rec, me):
 
 # ---- the action list -------------------------------------------------------------
 
+def _item(c, r=None):
+    obj = c.document or target(c.thread)
+    if obj is None:
+        return None
+    about = describe(c.thread, obj)
+    who = c.author.full_name or c.author.username
+    age = (timezone.now() - c.created_at).days
+    return {**about, "thread": c.thread, "comment_id": c.id,
+            "recipient_id": r.id if r else None,
+            "asked_at": c.created_at, "days_open": age,
+            "asked_by": who, "body": c.body[:200],
+            "to": [x.user.full_name or x.user.username
+                   for x in c.recipients.all() if x.answered_at is None],
+            "hint": f"{who}: {c.body[:140]}"}
+
+
 def open_followups(user, limit=100):
     """Follow-ups waiting on this user, as My Tasks items: newest first."""
     rows = (CommentRecipient.objects
             .filter(user=user, answered_at__isnull=True)
             .select_related("comment__author", "comment__document__site")
+            .prefetch_related("comment__recipients__user")
             .order_by("-comment__created_at")[:limit])
-    items = []
-    for r in rows:
-        c = r.comment
-        obj = c.document or target(c.thread)
-        if obj is None:
-            continue
-        about = describe(c.thread, obj)
-        who = c.author.full_name or c.author.username
-        items.append({**about, "thread": c.thread, "comment_id": c.id,
-                      "recipient_id": r.id,
-                      "asked_at": c.created_at,
-                      "hint": f"{who}: {c.body[:140]}"})
-    return items
+    items = [_item(r.comment, r) for r in rows]
+    return [i for i in items if i]
+
+
+def asked_by_me(user, limit=100):
+    """Questions this user put to others that nobody has answered yet —
+    what is outstanding, without hunting through documents."""
+    rows = (Comment.objects.filter(author=user, kind="FOLLOWUP",
+                                   recipients__answered_at__isnull=True)
+            .distinct().select_related("author", "document__site")
+            .prefetch_related("recipients__user")
+            .order_by("-created_at")[:limit])
+    items = [_item(c) for c in rows]
+    return [i for i in items if i]
 
 
 def counts_for_documents(doc_ids):

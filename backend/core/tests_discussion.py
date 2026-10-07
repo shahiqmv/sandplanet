@@ -129,6 +129,24 @@ class DiscussionTests(TestCase):
         self.assertEqual(self.c.get("/api/v1/discussion/ref:NOPE-1")
                          .status_code, 404)
 
+    def test_the_badge_shows_what_waits_on_me_and_what_i_am_waiting_for(self):
+        # a new question put to others answers only what was put to its
+        # author, so the PM's question to the Director leaves the site
+        # admin's question to the PM open
+        self.post(self.pm, "Director, can we release?", to=[self.pd.id])
+        self.post(self.sa, "PM, which villa?", to=[self.pm.id])
+        self.c.force_authenticate(self.pm)
+        d = self.c.get("/api/v1/discussion/mine").data
+        self.assertEqual(d["count"], 1)
+        self.assertEqual(d["items"][0]["asked_by"], self.sa.full_name)
+        self.assertEqual(d["asked_count"], 1)
+        self.assertEqual(d["asked"][0]["to"], [self.pd.full_name])
+        self.assertEqual(d["oldest_days"], 0)
+        # the Director answers; the PM's outstanding list empties
+        self.post(self.pd, "Released.")
+        d = self.c.get("/api/v1/discussion/mine").data
+        self.assertEqual((d["count"], d["asked_count"]), (0, 0))
+
     def test_a_payroll_run_has_a_thread_too(self):
         from .models import PayrollRun
         hr = make_user("d_hr", User.Role.HO_HR)

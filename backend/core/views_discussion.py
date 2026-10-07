@@ -56,6 +56,11 @@ def answered(request, pk):
 
 @api_view(["GET"])
 def mine(request):
-    """Follow-ups waiting on me — the My Tasks group, on its own."""
+    """Follow-ups waiting on me, and the ones I put to others that are still
+    open — what the corner badge shows (owner 2026-10-07)."""
     items = svc.open_followups(request.user)
-    return Response({"count": len(items), "items": items})
+    asked = svc.asked_by_me(request.user)
+    return Response({"count": len(items), "items": items,
+                     "asked_count": len(asked), "asked": asked,
+                     "oldest_days": max([i["days_open"] for i in items],
+                                        default=0)})
