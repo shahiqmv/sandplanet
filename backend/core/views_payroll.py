@@ -715,6 +715,75 @@ def payroll_report_pdf(request, pk):
                                f"{run.month:02d}.pdf")
 
 
+@api_view(["GET"])
+def payroll_handover_pdf(request, pk):
+    """The sheet each worker signs when his pay packet is handed to him.
+
+    Salaries are paid in cash (owner 2026-10-08), and a signature against the
+    amount is the only proof the money changed hands. One row per man with
+    something to receive: his number, name, the amount, a signature box and
+    the date. Where a run splits a man's pay between site and office, the
+    sheet shows what is handed over at the site — that is what he signs for
+    — and the office part beside it. Excluded men and empty packets are not
+    rows. A USD run is transferred, so there is nothing to sign for.
+    """
+    try:
+        run = PayrollRun.objects.select_related("site").get(pk=pk)
+    except PayrollRun.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, run):
+        return Response({"detail": "Not permitted."}, status=403)
+    if run.currency != "MVR":
+        return Response({"detail": "A USD run is paid by transfer; there is "
+                                   "no cash to sign for."}, status=400)
+    from collections import OrderedDict
+
+    from django.template.loader import render_to_string
+
+    from .pdf import company_info, logo_src
+
+    fri = payroll.friday_ot_hours()
+    groups = OrderedDict()
+    has_office = False
+    for ln in run.lines.select_related("employee", "site").order_by(
+            "site__code", "pay_no", "employee__emp_no"):
+        if ln.excluded:
+            continue
+        net = payroll.compute_line(ln, fri)["net"]
+        at_site, at_office = payroll._packets(ln, net)
+        if at_site <= 0 and at_office <= 0:
+            continue
+        has_office = has_office or at_office > 0
+        groups.setdefault(ln.site.code if ln.site_id else "—", []).append({
+            "emp_no": ln.employee.emp_no, "full_name": ln.employee.full_name,
+            "nationality": ln.employee.nationality,
+            "at_site": at_site, "at_office": at_office, "net": net,
+            "f_at_site": _money(at_site) if at_site > 0 else "",
+            "f_at_office": _money(at_office) if at_office > 0 else "",
+            "f_net": _money(net)})
+    group_list = []
+    for site_code, rows in groups.items():
+        for i, r in enumerate(rows, 1):
+            r["no"] = i
+        group_list.append({
+            "site_code": site_code, "rows": rows, "count": len(rows),
+            "total_site": _money(sum(r["at_site"] for r in rows)),
+            "total_office": _money(sum(r["at_office"] for r in rows)),
+            "total_net": _money(sum(r["net"] for r in rows))})
+    all_rows = [r for g in group_list for r in g["rows"]]
+    html = render_to_string("pdf/payroll_handover.html", {
+        "run": run, "currency": run.currency,
+        "period": f"{_month_name(run.month)} {run.year}",
+        "groups": group_list, "multi_site": run.site_id is None,
+        "has_office": has_office, "count": len(all_rows),
+        "grand_site": _money(sum(r["at_site"] for r in all_rows)),
+        "grand_office": _money(sum(r["at_office"] for r in all_rows)),
+        "grand_net": _money(sum(r["net"] for r in all_rows)),
+        "logo_src": logo_src(), "co": company_info(),
+    })
+    return _pdf_response(html, f"salary-handover-{run.ref}.pdf")
+
+
 def _slip_context(line, register=None):
     """Everything a salary slip needs, in either format. `register` is passed in
     when slipping a whole run so the summary is computed once, not per worker."""

@@ -3216,6 +3216,44 @@ class CashDenominationTests(PayrollRunTests):
         self.assertIn("VKR", text)
         self.assertIn("6,200.00", text)
 
+    def test_the_handover_sheet_lists_each_packet_to_sign_for(self):
+        """Salaries are handed over in cash; the worker signs against the
+        amount (owner 2026-10-08). An excluded man has no row, a split pay
+        shows the site part he signs for, a USD run has nothing to sign."""
+        import fitz
+        from .models import PayrollRun
+        emp2 = self._second_worker()
+        run = self._run()
+        line = run.lines.get(employee=self.emp)
+        line.amount_to_site = Decimal("4000")
+        line.amount_to_office = Decimal("2200")
+        line.save()
+        gone = run.lines.get(employee=emp2)
+        gone.excluded = True
+        gone.save()
+        r = self.client.get(f"/api/v1/payroll/runs/{run.id}/handover.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("salary-handover-", r["Content-Disposition"])
+        doc = fitz.open("pdf", r.content)
+        text = "".join(p.get_text() for p in doc)
+        doc.close()
+        self.assertIn("SALARY HANDOVER SHEET", text)
+        self.assertIn(self.emp.full_name, text)
+        self.assertNotIn("Rahim", text)
+        self.assertIn("4,000.00", text)
+        self.assertIn("2,200.00", text)
+        self.assertIn("Via office", text)
+        self.assertIn("WITNESSED BY (SITE PM)", text)
+        # the site PM prints it on pay day
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get(
+            f"/api/v1/payroll/runs/{run.id}/handover.pdf").status_code, 200)
+        usd = PayrollRun.objects.create(currency="USD", year=2026, month=5,
+                                        working_days=31, created_by=self.hr)
+        self.client.force_authenticate(self.hr)
+        self.assertEqual(self.client.get(
+            f"/api/v1/payroll/runs/{usd.id}/handover.pdf").status_code, 400)
+
     def test_the_month_sheet_is_not_for_site_roles(self):
         self.client.force_authenticate(self.pm)
         r = self.client.get("/api/v1/payroll/cash.pdf?year=2026&month=5")

@@ -636,6 +636,13 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
+          {run.currency === "MVR" && (
+            <a href={`/api/v1/payroll/runs/${runId}/handover.pdf`}
+               target="_blank" rel="noreferrer"
+               title="One row per pay packet with a signature box — the worker signs for his cash"
+               style={{ ...ghostButton, textDecoration: "none" }}>
+              ✍ Handover sheet</a>
+          )}
           {!locked && isHR && ["DRAFT", "RETURNED"].includes(run.status) && (
             <button onClick={refresh} style={ghostButton}
               title="Re-pull attendance, OT rates and pay policy — keeps your allowance entries, re-reads approved fines">

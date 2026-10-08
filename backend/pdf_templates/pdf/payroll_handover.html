@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  /* Salaries are handed over in cash; the worker signs against the amount
+     (owner 2026-10-08). Portrait, a tall row per man so a signature fits. */
+  table.hand td { height: 24px; vertical-align: middle; }
+  table.hand th { font-size: 8pt; }
+  .num { text-align: right; }
+  .ctr { text-align: center; }
+  .mono { font-family: monospace; white-space: nowrap; }
+  .sub td { font-weight: 700; background: #eef2f5; height: 13px; }
+  .grand td { font-weight: 700; background: #dbe4ea;
+              border-top: 1.2px solid #1f3a52; height: 13px; }
+  .sect { font-weight: 700; color: #1f3a52; font-size: 9pt;
+          margin: 10px 0 3px; }
+  tr { page-break-inside: avoid; }
+  .kv .k { width: 10%; }
+  .kv td { white-space: nowrap; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="SALARY HANDOVER" %}
+{% include "pdf/_letterhead.html" with title="SALARY HANDOVER SHEET" subline=period %}
+
+<table class="kv">
+  <tr><td class="k">Payroll ref</td><td><b>{{ run.ref }}</b></td>
+      <td class="k">Period</td><td>{{ period }}</td>
+      <td class="k">Site</td><td>{% if run.site_id %}{{ run.site.code }} — {{ run.site.name }}{% else %}All sites{% endif %}</td>
+      <td class="k">Currency</td><td>{{ currency }}</td></tr>
+</table>
+<div class="note">Each worker signs for the cash handed to him. {{ count }} pay packet{{ count|pluralize }} on this sheet.{% if has_office %} Where part of a man's pay goes through the office, he signs here for the amount handed over at site only.{% endif %}</div>
+
+{% for g in groups %}
+{% if multi_site %}<div class="sect">{{ g.site_code }}</div>{% endif %}
+<table class="hand">
+  <thead><tr>
+    <th style="width:5%">No.</th><th style="width:11%">Emp No</th><th>Name</th><th style="width:10%">Nat.</th>
+    {% if has_office %}
+    <th class="num" style="width:12%">At site ({{ currency }})</th><th class="num" style="width:11%">Via office</th>
+    {% else %}
+    <th class="num" style="width:14%">Amount ({{ currency }})</th>
+    {% endif %}
+    <th style="width:22%">Signature</th><th style="width:11%">Date</th>
+  </tr></thead>
+  {% for r in g.rows %}
+  <tr>
+    <td class="ctr">{{ r.no }}</td><td class="mono">{{ r.emp_no }}</td><td>{{ r.full_name }}</td>
+    <td>{{ r.nationality }}</td>
+    {% if has_office %}
+    <td class="num">{{ r.f_at_site }}</td><td class="num">{{ r.f_at_office }}</td>
+    {% else %}
+    <td class="num">{{ r.f_net }}</td>
+    {% endif %}
+    <td></td><td></td>
+  </tr>
+  {% endfor %}
+  <tr class="sub">
+    <td colspan="4">{% if multi_site %}Subtotal — {{ g.site_code }}{% else %}Total{% endif %} · {{ g.count }} packet{{ g.count|pluralize }}</td>
+    {% if has_office %}
+    <td class="num">{{ g.total_site }}</td><td class="num">{{ g.total_office }}</td>
+    {% else %}
+    <td class="num">{{ g.total_net }}</td>
+    {% endif %}
+    <td></td><td></td>
+  </tr>
+</table>
+{% endfor %}
+
+{% if multi_site %}
+<table style="width:60%">
+  <tr class="grand">
+    <td>GRAND TOTAL ({{ currency }}) · {{ count }} packets</td>
+    {% if has_office %}
+    <td class="num">{{ grand_site }}</td><td class="num">{{ grand_office }}</td>
+    {% else %}
+    <td class="num">{{ grand_net }}</td>
+    {% endif %}
+  </tr>
+</table>
+{% endif %}
+
+<!-- Who handed the cash over and who watched it done — signed by hand on the
+     day; the system does not know who was holding the packets. -->
+<table class="sig" style="margin-top:18px">
+  <tr><td class="t">PAID BY (CASHIER)</td><td class="t">WITNESSED BY (SITE PM)</td><td class="t">DATE OF PAYMENT</td></tr>
+  <tr><td></td><td></td><td></td></tr>
+</table>
+</body>
+</html>

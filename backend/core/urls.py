@@ -1039,6 +1039,8 @@ urlpatterns = [
          name="payroll-run-detail"),
     path("payroll/runs/<int:pk>/report.pdf", payroll_api.payroll_report_pdf,
          name="payroll-report-pdf"),
+    path("payroll/runs/<int:pk>/handover.pdf",
+         payroll_api.payroll_handover_pdf, name="payroll-handover-pdf"),
     path("payroll/lines/<int:pk>", payroll_api.payroll_line,
          name="payroll-line"),
     path("payroll/lines/<int:pk>/rest-day",
