@@ -2365,6 +2365,71 @@ class ThermalSlipTests(PayrollRunTests):
         for w, _h, _r in pages:
             self.assertAlmostEqual(w / 2.834645, 72, delta=0.5)
 
+    def test_a_run_renders_as_one_document_and_each_slip_still_cuts_to_fit(self):
+        """SJR's 230 slips, rendered a document each, overran the worker's
+        five minutes (2026-10-08). They are now pages of one document — and
+        each page must still be cropped to ITS slip, in the run's order."""
+        import fitz
+        from core import thermal
+        head = ("<!doctype html><html><head><style>@page { size: 72mm 400mm;"
+                " margin: 0 }</style></head><body>")
+        short = head + "<p>AAA</p></body></html>"
+        long_ = head + "<p>BBB</p>" + "<p>line</p>" * 25 + "</body></html>"
+        pdf = thermal.render_slips([short, long_, short])
+        d = fitz.open("pdf", pdf)
+        heights = [p.cropbox.height for p in d]
+        texts = [p.get_text()[:3] for p in d]
+        d.close()
+        self.assertEqual(len(heights), 3)
+        self.assertEqual(texts, ["AAA", "BBB", "AAA"])
+        self.assertGreater(heights[1], heights[0] * 2)
+        self.assertEqual(heights[0], heights[2])
+        # a slip that cannot be combined is still rendered on its own
+        pdf = thermal.render_slips([short, "<p>no body tag</p>"])
+        self.assertEqual(len(fitz.open("pdf", pdf)), 2)
+
+    def test_the_company_block_is_read_once_per_run_not_per_slip(self):
+        """Per slip, the company parameters, the logo look-up and the Friday
+        policy cost a quarter of a second a worker on the droplet."""
+        from datetime import date
+
+        from .models import Employee, EmployeeSiteAllocation
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        # April: one worker on the run. May: the same man and two more.
+        from .models import TimesheetMonth
+        self._mark_month(2026, 4, day_to=30)
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=4,
+                                      status="LOCKED")
+        april = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 4,
+            "currency": "MVR"}, format="json")
+        self.assertEqual(april.status_code, 201, april.data)
+        april = april.data
+        with CaptureQueriesContext(connection) as one:
+            r = self.client.get(
+                f"/api/v1/payroll/runs/{april['id']}/slips.escpos")
+        self.assertEqual(r["X-Slip-Count"], "1")
+        for n in (2, 3):
+            e = Employee.objects.create(
+                emp_no=f"EMP-000{n}", full_name=f"Worker {n}",
+                job_category=self.mason, basic_pay=Decimal("5000"),
+                currency="MVR")
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+            self._mark_month(2026, 5, emp=e)
+        run = self._run()
+        with CaptureQueriesContext(connection) as three:
+            r = self.client.get(
+                f"/api/v1/payroll/runs/{run['id']}/slips.escpos")
+        self.assertEqual(r["X-Slip-Count"], "3")
+        # two more workers may cost a couple of queries, not the whole
+        # company block over again
+        self.assertLessEqual(len(three.captured_queries)
+                             - len(one.captured_queries), 4,
+                             (len(one.captured_queries),
+                              len(three.captured_queries)))
+
     def test_a_longer_slip_gets_a_longer_cut(self):
         """The crop must track content, or it is just a fixed page again."""
         run = self._run()

@@ -42,31 +42,77 @@ def _content_bottom(page):
     return bottom
 
 
+SLIPS_PER_DOCUMENT = 40
+
+
+def _combine(htmls):
+    """Several slip documents -> one document, one slip per page.
+
+    WeasyPrint's cost is mostly per DOCUMENT — fonts, stylesheet, layout
+    set-up — not per page. Rendering SJR's 230 slips one document each took
+    0.7s a slip on the droplet, 170s before a byte was rasterised, and the
+    whole job overran the worker's five minutes (site, 2026-10-08). The same
+    slips as pages of one document render in a fifth of the time.
+
+    The slips come from one template, so the first document's head serves
+    them all; each body becomes a block that starts a new page.
+    """
+    head, tag, _ = htmls[0].partition("<body>")
+    if not tag:
+        return None
+    bodies = []
+    for h in htmls:
+        _, tag, rest = h.partition("<body>")
+        body, end, _ = rest.rpartition("</body>")
+        if not tag or not end:
+            return None
+        bodies.append(body)
+    return (head + "<style>.slip { page-break-before: always; }"
+            " .slip:first-child { page-break-before: auto; }</style><body>"
+            + "".join(f'<div class="slip">{b}</div>' for b in bodies)
+            + "</body></html>")
+
+
+def _crop_into(out, pdf):
+    import fitz
+
+    src = fitz.open("pdf", pdf)
+    for page in src:
+        bottom = _content_bottom(page)
+        height = max(bottom + FEED_MM * MM, MIN_H_MM * MM)
+        # Never grow the page — if the slip genuinely overflowed the render
+        # height, keep the full page rather than silently losing a line.
+        height = min(height, page.rect.height)
+        page.set_cropbox(fitz.Rect(0, 0, page.rect.width, height))
+        out.insert_pdf(src, from_page=page.number, to_page=page.number)
+    src.close()
+
+
 def render_slips(htmls):
     """One PDF, one page per slip, each cropped to its own length.
 
     A page per slip is what makes the autocut usable for a whole run: the
     printer cuts between workers, so the slips come off the roll already
-    separated and in order.
+    separated and in order. The slips are rendered a batch at a time as one
+    document each (see _combine); a slip that cannot be combined is rendered
+    on its own.
     """
     from django.conf import settings
     import fitz
     from weasyprint import HTML
 
+    def pdf_of(html):
+        return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+
     out = fitz.open()
-    for html in htmls:
-        pdf = HTML(string=html,
-                   base_url=str(settings.MEDIA_ROOT)).write_pdf()
-        src = fitz.open("pdf", pdf)
-        for page in src:
-            bottom = _content_bottom(page)
-            height = max(bottom + FEED_MM * MM, MIN_H_MM * MM)
-            # Never grow the page — if the slip genuinely overflowed the render
-            # height, keep the full page rather than silently losing a line.
-            height = min(height, page.rect.height)
-            page.set_cropbox(fitz.Rect(0, 0, page.rect.width, height))
-            out.insert_pdf(src, from_page=page.number, to_page=page.number)
-        src.close()
+    for i in range(0, len(htmls), SLIPS_PER_DOCUMENT):
+        batch = htmls[i:i + SLIPS_PER_DOCUMENT]
+        combined = _combine(batch)
+        if combined is not None:
+            _crop_into(out, pdf_of(combined))
+        else:
+            for html in batch:
+                _crop_into(out, pdf_of(html))
     data = out.tobytes()
     out.close()
     return data

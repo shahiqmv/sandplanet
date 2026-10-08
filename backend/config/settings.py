@@ -276,6 +276,11 @@ LOGGING = {
         "core": {"handlers": ["console", "mail_admins"], "level": "INFO",
                  "propagate": False},
         "django.db.backends": {"level": "WARNING"},
+        # WeasyPrint narrates every render step and fontTools every glyph it
+        # subsets — thousands of INFO lines per salary-slip job, all written
+        # to the container log while the worker is racing its timeout.
+        "weasyprint": {"level": "WARNING"},
+        "fontTools": {"level": "WARNING"},
     },
 }
 

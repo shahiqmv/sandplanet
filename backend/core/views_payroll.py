@@ -784,16 +784,28 @@ def payroll_handover_pdf(request, pk):
     return _pdf_response(html, f"salary-handover-{run.ref}.pdf")
 
 
-def _slip_context(line, register=None):
-    """Everything a salary slip needs, in either format. `register` is passed in
-    when slipping a whole run so the summary is computed once, not per worker."""
-    from django.utils import timezone
-
+def _slip_shared():
+    """What every slip on a run has in common, read once: the company block
+    (nine parameters), the logo (two storage look-ups — HEAD requests against
+    Spaces in production) and the Friday policy. Read per slip, these were a
+    quarter of a second a worker — a minute of SJR's 230-slip job before any
+    rendering (2026-10-08)."""
     from .pdf import company_info, logo_src
     from .payroll import friday_ot_hours
 
+    return {"co": company_info(), "logo_src": logo_src(),
+            "fri": friday_ot_hours()}
+
+
+def _slip_context(line, register=None, shared=None):
+    """Everything a salary slip needs, in either format. `register` and
+    `shared` are passed in when slipping a whole run so the summary and the
+    company block are computed once, not per worker."""
+    from django.utils import timezone
+
+    shared = shared or _slip_shared()
     info = _line_info(line, register if register is not None
-                      else payroll.register_summary(line.run))
+                      else payroll.register_summary(line.run), shared["fri"])
     for k in ("basic_pay", "daily_rate", "earned_basic", "friday_pay",
               "ot_pay", "allowance", "gross", "advance", "penalty", "loan",
               "deductions", "rounding", "net", "amount_to_site",
@@ -804,8 +816,8 @@ def _slip_context(line, register=None):
     return {
         "line": line, "run": run, "i": info, "currency": run.currency,
         "period": f"{_month_name(run.month)} {run.year}",
-        "friday_ot_hours": friday_ot_hours().normalize(),
-        "logo_src": logo_src(), "co": company_info(),
+        "friday_ot_hours": shared["fri"].normalize(),
+        "logo_src": shared["logo_src"], "co": shared["co"],
         "run_ref": run.ref or (f"{run.site.code if run.site_id else 'USD'} "
                                f"{run.year}-{run.month:02d}"),
         "printed_at": timezone.localtime().strftime("%d %b %Y %H:%M"),
@@ -822,8 +834,10 @@ def _thermal_response(lines, filename):
     if not lines:
         return R({"detail": "No payable lines on this run."}, status=400)
     register = payroll.register_summary(lines[0].run)
+    shared = _slip_shared()
     htmls = [render_to_string("pdf/payslip_thermal.html",
-                              _slip_context(ln, register)) for ln in lines]
+                              _slip_context(ln, register, shared))
+             for ln in lines]
     try:
         # Flattened to images: a POS driver renders a PDF by extracting its text
         # and re-typing it, which collapses the amount column and merges
@@ -849,8 +863,10 @@ def _escpos_response(lines, filename):
     if not lines:
         return R({"detail": "No payable lines on this run."}, status=400)
     register = payroll.register_summary(lines[0].run)
+    shared = _slip_shared()
     htmls = [render_to_string("pdf/payslip_thermal.html",
-                              _slip_context(ln, register)) for ln in lines]
+                              _slip_context(ln, register, shared))
+             for ln in lines]
     try:
         pdf = thermal.render_slips(htmls)
         job, count = thermal.escpos_bytes(pdf)
