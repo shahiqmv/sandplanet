@@ -991,6 +991,15 @@ def attendance_bulk(request):
     # uncounted (audit 2026-08-28). Payroll evidence needs names.
     changes = []
     for row in request.data.get("rows", []):
+        # Six people save one site's whole day, each from their own screen,
+        # and every save wrote every man's OT request — so a grid opened
+        # before a colleague's edit or the PM's approval put the old figure
+        # back and withdrew the approval: 4,561 withdrawals at SJR in five
+        # weeks, 2,961 approved again (owner 2026-10-08, "it goes back to
+        # old records"). A row the person did not touch is left alone. An
+        # older client sends no flag and is treated as before.
+        if "edited" in row and not row.get("edited"):
+            continue
         try:
             employee = Employee.objects.get(pk=row.get("employee_id"))
         except Employee.DoesNotExist:

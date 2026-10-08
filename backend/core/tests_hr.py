@@ -985,6 +985,35 @@ class OtRevisionAndReviewTests(HrBase):
         self.assertEqual(log.detail["ot_approval_withdrawn"],
                          [self.mason.emp_no])
 
+    def test_a_row_the_clerk_did_not_touch_is_left_alone(self):
+        """Six people save SJR's whole day from their own screens; a grid
+        opened before a colleague's edit put the old figure back and
+        withdrew the PM's approval (owner 2026-10-08). A row flagged as
+        not edited is not written, whatever stale figure it carries."""
+        day = working_day(self.site, 2)
+        self.save_attendance(day, ot=6)
+        att = Attendance.objects.get(employee=self.mason, day=day)
+        self._approve(att)
+        self.as_user(self.sa)
+        stale = {"employee_id": self.mason.id, "check_in": "07:00",
+                 "check_out": "18:00", "remark": "PRESENT", "ot_requested": 3}
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": day.isoformat(),
+            "rows": [{**stale, "edited": False}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["ot_approval_withdrawn"], [])
+        att.refresh_from_db()
+        self.assertEqual((att.ot_requested, att.ot_approved),
+                         (Decimal("6"), Decimal("6")))
+        # the same row, actually edited, is written and goes back to the PM
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": day.isoformat(),
+            "rows": [{**stale, "edited": True}]}, format="json")
+        self.assertEqual(r.data["ot_approval_withdrawn"], [self.mason.emp_no])
+        att.refresh_from_db()
+        self.assertEqual((att.ot_requested, att.ot_approved),
+                         (Decimal("3"), None))
+
     def test_an_unchanged_ot_keeps_its_approval(self):
         """Fixing the check-out time is not a new OT request."""
         day = working_day(self.site, 2)

@@ -88,8 +88,12 @@ export default function AttendancePage({ site, me, onClose,
 
   useEffect(() => { if (mode === "day") load(); }, [load, mode]);
 
+  // A row the clerk touches is marked so the save writes THAT row and
+  // leaves the rest alone — six people save SJR's day from their own
+  // screens, and whole-day saves were putting colleagues' OT figures back
+  // and withdrawing the PM's approvals (owner 2026-10-08).
   const setRow = (i, patch) =>
-    setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+    setRows(rows.map((r, j) => (j === i ? { ...r, ...patch, _dirty: true } : r)));
 
   const hasShifts = (grid?.shifts || []).length > 0;
   // Moving a man between shifts is an assignment from this day on (history
@@ -111,7 +115,11 @@ export default function AttendancePage({ site, me, onClose,
     try {
       const result = await api("/attendance/bulk", {
         method: "PUT",
-        body: { site: site.id, date: day, rows },
+        body: { site: site.id, date: day,
+                // unsaved rows and gate-filled rows must be written; a saved
+                // row is written only if this person changed it
+                rows: rows.map((r) => ({ ...r,
+                  edited: !r.saved || !!r._dirty || !!r._fromGate })) },
       });
       // load() clears the notice, so say it AFTER reloading or the
       // confirmation never reaches the screen.
