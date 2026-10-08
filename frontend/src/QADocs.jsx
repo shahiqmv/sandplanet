@@ -283,10 +283,17 @@ export function QAForm({ docType, site, project, projects = [], existing,
                          prefill, onSaved, onCancel }) {
   // TWS is SITE-WIDE (R8): planned rows are tagged per project; IR/MAR
   // remain project documents.
-  const activeProjects = projects.filter((pr) => pr.status === "ACTIVE");
-  // Every submittal belongs to a project; a TWS is site-wide. The backend
-  // only demands one when the site actually has an active project, so the
-  // form asks on exactly the same condition.
+  // A submittal is pre-construction paperwork: shop drawings, method
+  // statements and bar schedules go to the client BEFORE the job starts, so
+  // an awarded-not-started project must be offered, not only the active
+  // ones. SFR's 19 VILLAS and 190&225 KLD were awarded and invisible here
+  // (owner 2026-10-08). A project on hold still answers resubmissions.
+  // Potential and closed stay out; the server refuses closed anyway.
+  const OFFERED = { ACTIVE: "", AWARDED: " (awarded — not started)",
+                    ON_HOLD: " (on hold)" };
+  const activeProjects = projects.filter((pr) => pr.status in OFFERED);
+  // Every submittal belongs to a project; a TWS is site-wide. The form asks
+  // whenever the site has a project it could belong to.
   const needsProject = docType !== "TWS" && activeProjects.length > 0;
   const [payload, setPayload] = useState(existing?.payload ||
                                          prefill?.payload || {});
@@ -434,7 +441,7 @@ export function QAForm({ docType, site, project, projects = [], existing,
               <option value="">— select the project —</option>
               {activeProjects.map((pr) => (
                 <option key={pr.id} value={pr.id}>
-                  {pr.code} — {pr.title}
+                  {pr.code} — {pr.title}{OFFERED[pr.status]}
                 </option>
               ))}
             </select>
