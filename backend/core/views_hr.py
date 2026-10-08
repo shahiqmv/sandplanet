@@ -904,8 +904,11 @@ def attendance_register(request):
             req = (a.sub_extra_hours if is_sub else a.ot_requested) or Decimal("0")
             appr = a.sub_extra_approved if is_sub else a.ot_approved
             if req or appr:
-                ot_days[str(d)] = {"a": str(appr.normalize()) if appr is not None else None,
-                                   "r": str(req.normalize())}
+                # plain digits: str(Decimal("10.00").normalize()) is "1E+1",
+                # which is what the register printed for ten hours
+                # (owner 2026-10-08)
+                ot_days[str(d)] = {"a": f"{appr.normalize():f}" if appr is not None else None,
+                                   "r": f"{req.normalize():f}"}
                 if appr is None and req > 0:
                     t["ot_pending"] += req
                     t["ot_pending_days"] += 1
