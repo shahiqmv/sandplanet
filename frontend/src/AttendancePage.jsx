@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { RepeatChip } from "./HealthPage.jsx";
 import { api } from "./api.js";
 import ShiftAllocation from "./ShiftAllocation.jsx";
 import { DayPicker, buttonStyle, card, ghostButton, inputStyle, td, th }
@@ -8,6 +9,10 @@ import Discussion from "./Discussion.jsx";
 
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
 const REST_REMARKS = ["OFF", "PRESENT", "HALF_DAY"];
+// An ABSENT mark carries one of these, mandatory (owner 2026-10-10).
+const ABSENCE_REASONS = [["NO_SHOW", "No show / not in camp"],
+                         ["PERSONAL", "Personal / family"],
+                         ["TRAVEL", "Travelling"], ["OTHER", "Other"]];
 const hhmm = (value) => (value ? String(value).slice(0, 5) : "");
 // Compact grid cells — the roster should show as many men as the screen
 // allows (owner 2026-08-26).
@@ -74,6 +79,10 @@ export default function AttendancePage({ site, me, onClose,
           row.check_in = p.check_in || row.check_in;
           row.check_out = p.check_out || row.check_out;
           row.remark = p.remark || row.remark;
+          // no punch all day is a no-show until the clerk says otherwise
+          if (row.remark === "ABSENT" && !row.absence_reason) {
+            row.absence_reason = "NO_SHOW";
+          }
           const ot = parseFloat(p.ot_requested) || 0;
           if (ot > 0) {
             if (r.is_subcontract) row.sub_extra_hours = p.ot_requested;
@@ -112,6 +121,15 @@ export default function AttendancePage({ site, me, onClose,
   async function save() {
     setBusy(true);
     setError(null);
+    // an absence without a reason is refused by the server row by row;
+    // say it here first, with the names, so the clerk fixes them in one go
+    const noReason = rows.filter((r) => r.remark === "ABSENT" && !r.absence_reason
+                                        && (!r.saved || r._dirty || r._fromGate));
+    if (noReason.length) {
+      setError(`Give the reason for the absence: ${noReason.map((r) => r.emp_no).join(", ")}`);
+      setBusy(false);
+      return;
+    }
     try {
       const result = await api("/attendance/bulk", {
         method: "PUT",
@@ -126,6 +144,10 @@ export default function AttendancePage({ site, me, onClose,
       load();
       setNotice(`Saved ${result.saved} row(s)` +
                 (result.late_edit ? " (late edit — audited)." : ".") +
+                (result.health_cases_opened?.length
+                  ? ` Health case opened for ${result.health_cases_opened
+                      .map((h) => `${h.full_name} (${h.ref})`).join(", ")} — record what was done on the Health page today.`
+                  : "") +
                 (result.ot_approval_withdrawn?.length
                   ? ` OT changed on ${result.ot_approval_withdrawn.length} ` +
                     "row(s) — the earlier approval is withdrawn and the PM " +
@@ -448,6 +470,15 @@ export default function AttendancePage({ site, me, onClose,
                           title="No photo — add one on the Workforce page">
                       👤</span>}
                 {row.full_name}
+                <RepeatChip n={row.repeat_sick} />
+                {row.open_health_case && (
+                  <span title="He has an open health case — see the Health page"
+                        style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700,
+                                 color: "#16527E", background: "#eef4fb",
+                                 borderRadius: 999, padding: "1px 7px",
+                                 whiteSpace: "nowrap" }}>
+                    🩺 case open</span>
+                )}
                 {/* Not on this site's roster for the day — he is listed only
                     because he carries a mark. Mark him OFF to take it back
                     (owner 2026-09-02). */}
@@ -519,6 +550,26 @@ export default function AttendancePage({ site, me, onClose,
                     ? ["PAID_LEAVE", ...remarkOptions]
                     : remarkOptions).map((r) => <option key={r}>{r}</option>)}
                 </select>
+                {/* An absence carries a reason, mandatory (owner 2026-10-10):
+                    a man absent and not on leave is checked on in camp the
+                    same morning (SOP-HR-04). A SICK mark opens his health
+                    case by itself. */}
+                {row.remark === "ABSENT" && (
+                  <div style={{ display: "grid", gap: 3, marginTop: 3 }}>
+                    <select value={row.absence_reason || ""}
+                            disabled={grid?.locked || !canEnter}
+                            onChange={(e) => setRow(i, { absence_reason: e.target.value })}
+                            style={{ ...inputStyle, ...gin, width: 110,
+                                     borderColor: row.absence_reason ? undefined : "#a3271b" }}>
+                      <option value="">reason…</option>
+                      {ABSENCE_REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                    <input value={row.absence_note || ""} placeholder="note"
+                           disabled={grid?.locked || !canEnter}
+                           onChange={(e) => setRow(i, { absence_note: e.target.value })}
+                           style={{ ...inputStyle, ...gin, width: 110 }} />
+                  </div>
+                )}
               </td>
               {grid?.has_devices && (
                 <td style={{ padding: "3px 6px", fontSize: 11.5,

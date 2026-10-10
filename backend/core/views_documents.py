@@ -1270,6 +1270,13 @@ def pending_groups(user):
     if asks:
         groups.append({"title": "To answer — questions put to you",
                        "items": asks})
+    # Sickness reports nobody has attended to yet (SOP-HR-04: every
+    # complaint acted on the same day). Not a document; opens the case.
+    from .health import to_attend_items
+    sick = to_attend_items(user)
+    if sick:
+        groups.append({"title": "Health — sickness reports to attend",
+                       "items": sick})
     for g in groups:
         for it in g["items"]:
             if it.get("doc_type") in MONEY_TYPES and "amount" not in it:
@@ -2392,6 +2399,14 @@ def register_dpr_tws(request):
     return Response({"site": site.code, "rows": rows})
 
 
+def _health_block(site):
+    from . import health
+    s = health.summary([site.id])
+    return {"open": s["open"], "unattended": s["unattended"],
+            "overdue": s["overdue"], "referred_out": s["referred_out"],
+            "repeat": s["repeat"], "alerts": s["alerts"]}
+
+
 @api_view(["GET"])
 def dashboard_site(request, site_id):
     try:
@@ -2533,6 +2548,7 @@ def dashboard_site(request, site_id):
         "manpower": manpower,
         # OT waiting on the PM — surfaced here, not found by opening days.
         "ot_pending": ot_pending_summary(site),
+        "health": _health_block(site),
         "site": site.code,
         "dpr_today": {"ref": dpr_today.ref, "status": dpr_today.status}
         if dpr_today else None,

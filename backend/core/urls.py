@@ -9,7 +9,7 @@ from . import version as version_api, \
     views_tenders as tenders_api, \
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
-    views_hse as hse_api, \
+    views_hse as hse_api, views_health as health_api, \
     views_contract as contract_api, \
     views_handover as handover_api, \
     views_lab as lab_api, \
@@ -129,6 +129,27 @@ urlpatterns = [
          name="hse-action-verify"),
     path("hse/toolbox-talks", hse_api.toolbox_talks, name="hse-toolbox"),
     path("hse/present", hse_api.present_today, name="hse-present"),
+    # Worker health log (SOP-HR-04)
+    path("health/summary", health_api.summary, name="health-summary"),
+    path("health/cases", health_api.cases, name="health-cases"),
+    path("health/cases/<int:pk>", health_api.case_detail, name="health-case"),
+    path("health/cases/<int:pk>/events", health_api.case_events,
+         name="health-case-events"),
+    path("health/cases/<int:pk>/close", health_api.case_close,
+         name="health-case-close"),
+    path("health/cases/<int:pk>/reopen", health_api.case_reopen,
+         name="health-case-reopen"),
+    path("health/cases/<int:pk>/files", health_api.case_files,
+         name="health-case-files"),
+    path("health/cases/<int:pk>/files/<int:fid>", health_api.case_file,
+         name="health-case-file"),
+    path("health/repeat", health_api.repeat, name="health-repeat"),
+    path("health/follow-ups", health_api.follow_ups, name="health-follow-ups"),
+    path("health/workers", health_api.workers, name="health-workers"),
+    path("health/employees/<int:pk>", health_api.employee_health,
+         name="health-employee"),
+    path("health/plan/<int:site_id>", health_api.plan, name="health-plan"),
+    path("health/log.pdf", health_api.log_pdf, name="health-log-pdf"),
     path("hse/inductions", hse_api.inductions, name="hse-inductions"),
     path("hse/training", hse_api.training, name="hse-training"),
     path("hse/ppe", hse_api.ppe, name="hse-ppe"),

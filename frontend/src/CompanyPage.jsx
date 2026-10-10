@@ -35,6 +35,13 @@ const SETTINGS = [
   // paid (owner 2026-08-13).
   ["rest_day_absence_limit",
    "Rest day forfeited above this many absences in a week", "3"],
+  // Worker health log (SOP-HR-04, owner 2026-10-10): who counts as sick
+  // again and again, and when a cluster is an outbreak.
+  ["health_repeat_cases", "Health — repeat sickness: cases within the window", "3"],
+  ["health_repeat_days", "Health — repeat sickness window (days)", "90"],
+  ["health_outbreak_cases", "Health — outbreak: same complaint, cases in the window", "5"],
+  ["health_outbreak_days", "Health — outbreak window (days)", "7"],
+  ["health_outbreak_quiet_days", "Health — outbreak closes after this many days with no new case", "14"],
 ];
 const ALL = [...IDENTITY, ...SIGNEE, ...SETTINGS];
 

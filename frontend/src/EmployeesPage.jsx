@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { EmployeeHealth } from "./HealthPage.jsx";
 import HireForm from "./HireWorkerForm.jsx";
 import { api, apiUpload } from "./api.js";
 import { shrinkPhoto } from "./imageResize.js";
@@ -789,6 +790,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
         </div>
         {costReport && <StaffCostReport employee={employee}
                                         onClose={() => setCostReport(false)} />}
+        {!creating && <EmployeeHealth employeeId={employee.id} />}
 
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

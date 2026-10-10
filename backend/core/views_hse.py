@@ -232,6 +232,7 @@ def incident_people(request, ref):
     if incident.document.status == "CLOSED":
         return Response({"detail": "This incident is closed."}, status=400)
     person = hse.add_person(incident, request.data)
+    hse._health_case(incident, person, request.user)
     audit("document", incident.document_id, "INCIDENT_PERSON_ADDED",
           actor=request.user, detail={"who": person.display_name()})
     return Response(IncidentSerializer(incident).data, status=201)

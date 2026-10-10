@@ -33,7 +33,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onCreateGrn, onNewPmr, onOpenDoc,
                                         onSubmittals,
                                         onWorkforce, onVessels, onUnits,
-                                        onTesting, refresh }) {
+                                        onTesting, onHealth, refresh }) {
   const [dash, setDash] = useState(null);
   const [showShifts, setShowShifts] = useState(false);
   const [register, setRegister] = useState(null);
@@ -375,6 +375,34 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               Full breakdown →
             </a>
           </div>
+          {/* Worker health (SOP-HR-04): what is open, what nobody has
+              attended to, and any outbreak — on the page the PM lives on. */}
+          {dash?.health && (dash.health.open > 0 || dash.health.alerts?.length > 0
+                            || dash.health.repeat > 0) && (
+            <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6,
+                          background: dash.health.alerts?.length || dash.health.overdue
+                            ? "#fbeae8" : "#eef4fb",
+                          border: `1px solid ${dash.health.alerts?.length || dash.health.overdue
+                            ? "#e4b4ae" : "#bcd3e8"}`,
+                          fontSize: 13, display: "flex", gap: 10,
+                          alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ color: dash.health.alerts?.length || dash.health.overdue
+                            ? "#a3271b" : "#16527E" }}>
+                🩺 {dash.health.open} health case(s) open
+              </b>
+              <span style={{ color: "#5a6b78" }}>
+                {dash.health.unattended > 0 && `${dash.health.unattended} not yet attended`}
+                {dash.health.overdue > 0 && ` (${dash.health.overdue} over 24 h)`}
+                {dash.health.referred_out > 0 && ` · ${dash.health.referred_out} with a doctor`}
+                {dash.health.repeat > 0 && ` · ${dash.health.repeat} repeat sickness`}
+                {dash.health.alerts?.length > 0 && ` · OUTBREAK: ${dash.health.alerts.map((a) => a.label).join(", ")}`}
+              </span>
+              {onHealth && (
+                <Btn variant="primary" style={{ marginLeft: "auto" }} onClick={onHealth}>
+                  Health log</Btn>
+              )}
+            </div>
+          )}
           {/* OT waiting on the PM, with what it costs — the PM used to find
               out only by opening the right day (owner 2026-09-03). */}
           {dash?.ot_pending?.rows > 0 && (

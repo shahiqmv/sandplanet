@@ -14,6 +14,7 @@ Two rules carry most of the weight here:
 Both are enforced server-side. A safety system whose closure rules live only
 in the interface is a safety system that closes itself.
 """
+import logging
 from datetime import timedelta
 
 from django.db import transaction
@@ -25,6 +26,8 @@ from .models import (CorrectiveAction, Document, DocumentRevision,
                      IncidentPerson, SafetyIncident, Site, User)
 from .notify import notify_user
 from .numbering import next_ref
+
+log = logging.getLogger(__name__)
 
 # Who hears about an incident the moment it is reported, on top of the site's
 # PMs. Severity decides how far up it goes: everything reaches the PM, the
@@ -98,7 +101,8 @@ def create_incident(*, site, data, user, project=None):
         is_reportable=bool(data.get("is_reportable")),
         reported_by=user)
     for row in data.get("people") or []:
-        add_person(incident, row)
+        person = add_person(incident, row)
+        _health_case(incident, person, user)
 
     audit("document", doc.id, "INCIDENT_REPORTED", actor=user,
           to_state="REPORTED",
@@ -107,6 +111,16 @@ def create_incident(*, site, data, user, project=None):
                   "occurred_at": str(occurred_at)})
     _notify_reported(incident, user)
     return incident, None
+
+
+def _health_case(incident, person, user):
+    """An injured employee's treatment and return to work are followed on
+    the health log (SOP-HR-04 §2); the incident record stays the HSE one."""
+    from . import health
+    try:
+        health.case_from_incident(incident, person, user)
+    except Exception:                      # pragma: no cover - never blocks
+        log.exception("health case from incident %s", incident.document_id)
 
 
 def add_person(incident, row):

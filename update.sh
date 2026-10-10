@@ -121,6 +121,9 @@ ensure_crons() {
     "$C training_expiry >> /var/log/training_expiry.log 2>&1" \
     "training/competency expiry reminders"
 
+  add_cron "# planet-health-daily" "30 17 * * *" \
+    "$C health_daily >> /var/log/health_daily.log 2>&1" \
+    "the daily worker-health summary to PMs, HR and the Director (17:30)"
   add_cron "# planet-bonds-expiry" "30 6 * * *" \
     "$C bonds_expiry >> /var/log/bonds_expiry.log 2>&1" \
     "bond and insurance expiry alerts"

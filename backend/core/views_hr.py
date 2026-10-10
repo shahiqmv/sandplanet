@@ -759,6 +759,13 @@ def attendance_grid(request):
     smap = (shifts_map(site, day, [e.id for e in roster])
             if shifts else {})
     rows = []
+    # Repeat-sickness chip beside the name (SOP-HR-04): the clerk marking
+    # him sick again should know this is his third time this quarter.
+    from . import health as _health
+    sick_flags = _health.repeat_flags([e.id for e in roster])
+    open_cases = dict(_health.HealthCase.objects.filter(
+        employee_id__in=[e.id for e in roster], status="OPEN")
+        .values_list("employee_id", "id"))
     for employee in roster:
         att = existing.get(employee.id)
         shift = smap.get(employee.id)
@@ -790,6 +797,10 @@ def attendance_grid(request):
             "ot_approved": att.ot_approved if att else None,
             "sub_extra_hours": att.sub_extra_hours if att else 0,
             "remark": att.remark if att else default_remark,
+            "absence_reason": att.absence_reason if att else "",
+            "absence_note": att.absence_note if att else "",
+            "repeat_sick": sick_flags.get(employee.id, 0),
+            "open_health_case": open_cases.get(employee.id),
             "saved": att is not None,
             # Here only because he carries a mark — no longer on the site's
             # roster for this day. Mark him OFF to take the record back.
@@ -985,6 +996,7 @@ def attendance_bulk(request):
     saved = 0
     refused = []
     withdrawn = []
+    health_opened = []
     # Per-employee change record. The audit used to say only "this site,
     # this date, N rows" — you could prove someone edited the day but not
     # whose, from what, to what; and an OFF mark DELETED a record silently,
@@ -1044,6 +1056,18 @@ def attendance_bulk(request):
                     f"here")
                 continue
         remark = row.get("remark") or "PRESENT"
+        # An unexplained absence is the one that must be surfaced — a man
+        # absent and not on leave is checked on in camp the same morning
+        # (SOP-HR-04 §B.18). So ABSENT carries a reason, mandatory (owner
+        # 2026-10-10). Refused out loud, like the other rules here.
+        absence_reason = (row.get("absence_reason") or "").strip().upper()
+        if remark == "ABSENT":
+            if absence_reason not in dict(Attendance.ABSENCE_REASONS):
+                refused.append(f"{employee.emp_no}: give the reason for the "
+                               f"absence")
+                continue
+        else:
+            absence_reason = ""
         if remark == "OFF":
             # Rest day, not worked — clear any existing record, create none.
             # A deletion is a change to the pay record and is recorded as one.
@@ -1065,6 +1089,9 @@ def attendance_bulk(request):
         defaults = {
             "site": site, "check_in": check_in, "check_out": check_out,
             "remark": remark, "entered_by": request.user,
+            "absence_reason": absence_reason,
+            "absence_note": ((row.get("absence_note") or "")[:200]
+                             if remark == "ABSENT" else ""),
         }
         if is_sub:
             defaults["sub_extra_hours"] = Decimal(
@@ -1114,6 +1141,16 @@ def attendance_bulk(request):
                        "sub_extra_approved_at"]
             withdrawn.append(employee.emp_no)
         record.save(update_fields=fields)
+        # A SICK mark opens the man's health case (or joins the one already
+        # open), so the morning register stays quick and the follow-up
+        # cannot be forgotten (owner 2026-10-10).
+        if remark == "SICK":
+            from . import health
+            opened = health.case_from_attendance(record, request.user)
+            if opened is not None:
+                health_opened.append({"ref": opened.ref, "id": opened.id,
+                                      "emp_no": employee.emp_no,
+                                      "full_name": employee.full_name})
         now = _mark_snapshot(record)
         if was != now:
             changes.append({"emp": employee.emp_no,
@@ -1128,7 +1165,8 @@ def attendance_bulk(request):
                   "changed": len(changes), "changes": changes,
                   "ot_approval_withdrawn": withdrawn})
     return Response({"saved": saved, "late_edit": late_edit,
-                     "refused": refused, "ot_approval_withdrawn": withdrawn})
+                     "refused": refused, "ot_approval_withdrawn": withdrawn,
+                     "health_cases_opened": health_opened})
 
 
 @api_view(["GET", "POST"])

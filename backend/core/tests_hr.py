@@ -69,7 +69,9 @@ class HrBase(TestCase):
             "site": self.site.id, "date": day.isoformat(),
             "rows": [{"employee_id": self.mason.id, "check_in": "07:00",
                       "check_out": check_out, "ot_requested": ot,
-                      "remark": remark}],
+                      "remark": remark,
+                      # an absence carries a reason (owner 2026-10-10)
+                      "absence_reason": "NO_SHOW"}],
         }, format="json")
 
 
@@ -929,7 +931,9 @@ class DeactivatedWorkerAttendanceTests(HrBase):
         return self.client.put("/api/v1/attendance/bulk", {
             "site": self.site.id, "date": self.day.isoformat(),
             "rows": [{"employee_id": self.mason.id, "check_in": "07:00",
-                      "check_out": "18:00", "remark": remark}],
+                      "check_out": "18:00", "remark": remark,
+                      # an absence carries a reason (owner 2026-10-10)
+                      "absence_reason": "NO_SHOW"}],
         }, format="json")
 
     def test_his_existing_mark_can_still_be_cleared(self):

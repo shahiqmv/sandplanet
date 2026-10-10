@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  @page { size: A4 landscape; }
+  table { font-size: 7.5pt; }
+  th, td { padding: 2px 4px; vertical-align: top; }
+  .ctr { text-align: center; }
+  .sect { font-weight: 700; color: #1f3a52; font-size: 9pt; margin: 10px 0 3px; }
+  .flag { color: #b42318; font-weight: 700; }
+  .kv .k { width: 11%; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="HEALTH LOG" %}
+{% include "pdf/_letterhead.html" with title="WORKER HEALTH LOG" subline=period %}
+
+<table class="kv">
+  <tr><td class="k">Site</td><td>{{ site.code }} — {{ site.name }}</td>
+      <td class="k">Period</td><td>{{ period }}</td>
+      <td class="k">Health Focal Point</td><td>{% if plan and plan.focal_point %}{{ plan.focal_point.full_name }}{% else %}—{% endif %}</td>
+      <td class="k">Hotline</td><td>{{ plan.hotline|default:"—" }}</td></tr>
+  <tr><td class="k">Nearest health centre</td><td colspan="3">{{ plan.nearest_health_centre|default:"—" }}{% if plan.travel_time %} · {{ plan.travel_time }}{% endif %}</td>
+      <td class="k">Malé hospital</td><td colspan="3">{{ plan.male_hospitals|default:"—" }}</td></tr>
+</table>
+
+{% if alerts %}
+<div class="sect flag">Outbreak alerts open</div>
+<table style="width:60%">
+  <thead><tr><th>Complaint</th><th>Cases</th><th>From</th><th>Last case</th></tr></thead>
+  {% for a in alerts %}<tr><td>{{ a.complaint }}</td><td class="ctr">{{ a.count }}</td><td>{{ a.window_start }}</td><td>{{ a.window_end }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+
+<div class="sect">Cases reported in {{ period }} — {{ rows|length }}</div>
+<table>
+  <thead><tr>
+    <th style="width:4%">No.</th><th style="width:8%">Ref</th><th style="width:7%">Reported</th>
+    <th style="width:7%">Emp No</th><th>Name</th><th style="width:11%">Complaint</th>
+    <th style="width:4%">Temp</th><th>Symptoms</th><th>Steps taken</th>
+    <th style="width:5%">Sick days</th><th style="width:7%">Fit on</th><th style="width:5%">Repeat</th>
+  </tr></thead>
+  {% for r in rows %}
+  <tr>
+    <td class="ctr">{{ forloop.counter }}</td>
+    <td style="font-family:monospace">{{ r.c.ref }}</td>
+    <td>{{ r.c.reported_on|date:"d M" }}</td>
+    <td style="font-family:monospace">{{ r.c.employee.emp_no }}</td>
+    <td>{{ r.c.employee.full_name }}{% if r.c.red_flag %} <span class="flag">RED FLAG</span>{% endif %}</td>
+    <td>{{ r.c.get_complaint_display }}</td>
+    <td class="ctr">{% if r.c.temperature %}{{ r.c.temperature }}{% endif %}</td>
+    <td>{{ r.c.symptoms|truncatechars:90 }}</td>
+    <td>{{ r.steps|default:"— not attended —" }}</td>
+    <td class="ctr">{{ r.days_sick }}</td>
+    <td>{% if r.c.fit_on %}{{ r.c.fit_on|date:"d M" }}{% elif r.c.status == "OPEN" %}<i>open</i>{% endif %}</td>
+    <td class="ctr">{% if r.repeat > 1 %}{{ r.repeat }}{% endif %}</td>
+  </tr>
+  {% empty %}
+  <tr><td colspan="12"><i>No cases reported this month.</i></td></tr>
+  {% endfor %}
+</table>
+
+{% if repeat %}
+<div class="sect">Repeat sickness — {{ repeat|length }} worker{{ repeat|length|pluralize }} with {{ repeat.0.cases }}+ cases in {{ repeat.0.days }} days</div>
+<table style="width:70%">
+  <thead><tr><th>Emp No</th><th>Name</th><th>Cases</th><th>Complaints</th><th>Last</th></tr></thead>
+  {% for r in repeat %}<tr><td style="font-family:monospace">{{ r.emp_no }}</td><td>{{ r.full_name }}</td><td class="ctr">{{ r.cases }}</td><td>{{ r.complaints|join:", " }}</td><td>{{ r.last_on }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+
+<table class="sig" style="margin-top:18px">
+  <tr><td class="t">HEALTH FOCAL POINT</td><td class="t">SITE PM</td><td class="t">REVIEWED BY (DIRECTOR, PROJECTS)</td></tr>
+  <tr><td></td><td></td><td></td></tr>
+</table>
+<div class="note">Printed {{ printed_at|date:"d M Y H:i" }} · Medical detail on this log is confidential to the site team, HR and the Director.</div>
+</body>
+</html>

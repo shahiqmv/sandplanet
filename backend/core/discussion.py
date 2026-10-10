@@ -67,7 +67,7 @@ def parse_key(key):
         ident = int(ident)
     except ValueError:
         return None
-    if kind not in ("doc", "claim", "payroll"):
+    if kind not in ("doc", "claim", "payroll", "health"):
         return None
     return kind, ident
 
@@ -88,6 +88,10 @@ def target(key):
     if kind == "claim":
         from .models import ProgressClaim
         return ProgressClaim.objects.select_related("project__site").filter(
+            pk=ident).first()
+    if kind == "health":
+        from .models import HealthCase
+        return HealthCase.objects.select_related("site", "employee").filter(
             pk=ident).first()
     from .models import PayrollRun
     return PayrollRun.objects.select_related("site").filter(pk=ident).first()
@@ -111,6 +115,10 @@ def describe(key, obj):
                 or (created.date() if created else timezone.localdate()),
                 "status": obj.status, "site_id": obj.project.site_id,
                 "project_id": obj.project_id}
+    if kind == "health":
+        return {"ref": obj.ref, "doc_type": "HLT", "doc_date": obj.reported_on,
+                "status": obj.status, "site_id": obj.site_id,
+                "site_code": obj.site.code, "case_id": obj.id}
     # "PAY" is what My Tasks already uses to open a payroll run
     return {"ref": obj.ref or f"PRL {obj.year}-{obj.month:02d}",
             "doc_type": "PAY", "doc_date": obj.created_at.date(),
@@ -140,6 +148,12 @@ def can_see(user, key, obj):
     if kind == "claim":
         from .views_commercial import _can_view_value
         return _can_view_value(user, obj.project)
+    if kind == "health":
+        from .health import HO_READ_ROLES
+        if user.role in HO_READ_ROLES:
+            return True
+        ids = scoped_site_ids(user)
+        return ids is None or obj.site_id in ids
     from .views_payroll import _can_see_run
 
     class _R:                              # the helper reads request.user
@@ -192,6 +206,16 @@ def _chain(key, obj):
             people.append(obj.project.qs)
         people += list(obj.project.site.current_pms())
         roles += ["QS", "DIRECTOR", "FINANCE", "SIGNATORY"]
+    elif kind == "health":
+        if obj.reported_by_id:
+            people.append(obj.reported_by)
+        people += list(obj.site.current_pms())
+        for u in User.objects.filter(
+                is_active=True, role__in=("SITE_ADMIN", "SITE_ENGINEER"),
+                site_allocations__site=obj.site,
+                site_allocations__to_date__isnull=True).distinct():
+            people.append(u)
+        roles += ["HO_HR", "DIRECTOR"]
     else:
         if obj.site_id:
             people += list(obj.site.current_pms())

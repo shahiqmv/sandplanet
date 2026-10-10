@@ -22,6 +22,7 @@ import ShipmentsPage from "./ShipmentsPage.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import HsePage from "./HsePage.jsx";
+import HealthPage from "./HealthPage.jsx";
 import QualityPage from "./QualityPage.jsx";
 import ContractPage from "./ContractPage.jsx";
 import TestingTab from "./TestingTab.jsx";
@@ -128,6 +129,9 @@ const NAV_GROUPS = [
     // The backend scopes what each person sees to their own sites.
     subs: [["sites", "Sites", null],
            ["hse", "Safety", null],
+           // Worker health log (SOP-HR-04): open to every role for the same
+           // reason — reporting a sick man must never be gated.
+           ["health", "Health", null],
            ["quality", "Quality", null],
            // Contract & time: correspondence, delay and entitlement. Site
            // teams log the evidence; only PM/QS/Director decide whose risk
@@ -514,6 +518,8 @@ export default function App() {
   // one run that is waiting on them (owner 2026-08-12).
   const [payrollRunId, setPayrollRunId] = useState(null);
   const [fineId, setFineId] = useState(null);   // a fine opened from My Tasks
+  const [healthCaseId, setHealthCaseId] = useState(null);  // a case from My Tasks
+  const [healthSite, setHealthSite] = useState(null);      // from a site dashboard
   // Set when a voucher is opened straight from My Tasks, so the vouchers page
   // expands it instead of showing the list.
   const [voucherRef, setVoucherRef] = useState(null);
@@ -900,6 +906,15 @@ export default function App() {
       if (site) { setOpenSite(site);
                   setDocView({ mode: "attendance", tab: "ot",
                                day: item.oldest_day || undefined }); }
+      return;
+    }
+    // A sickness report is not a Document: it opens on the Health page.
+    if (item.doc_type === "HLT") {
+      setDocView(null);
+      setOpenSite(null);
+      setHealthSite(null);
+      setHealthCaseId(item.case_id);
+      setHoPage("health");
       return;
     }
     // A payroll run is not a Document — sending its label to the document
@@ -1418,6 +1433,8 @@ export default function App() {
                 onAttendance={(tab, day) => setDocView({ mode: "attendance",
                   tab: typeof tab === "string" ? tab : "day",
                   day: typeof day === "string" ? day : undefined })}
+                onHealth={() => { setHealthSite(openSite); setOpenSite(null);
+                                  setDocView(null); setHoPage("health"); }}
                 onWorkforce={(tab) => setDocView({ mode: "workforce",
                   tab: typeof tab === "string" ? tab : undefined })}
                 onUnits={() => setDocView({ mode: "units" })}
@@ -1477,6 +1494,11 @@ export default function App() {
               gated. The API scopes the register to the user's own sites. */}
           {!docView && !openSite && hoPage === "hse" && (
             <HsePage me={me} sites={sites} />
+          )}
+          {!docView && !openSite && hoPage === "health" && (
+            <HealthPage me={me} sites={sites} key={healthSite?.id || "all"}
+                        site={healthSite} openCaseId={healthCaseId}
+                        onOpened={() => setHealthCaseId(null)} />
           )}
           {!docView && !openSite && hoPage === "quality" && (
             <QualityPage me={me} sites={sites} />

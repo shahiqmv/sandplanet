@@ -2549,6 +2549,13 @@ class Employee(models.Model):
     medical_expiry = models.DateField(null=True, blank=True)
     insurance_expiry = models.DateField(null=True, blank=True)
     emergency_contact = models.TextField(blank=True)
+    # Health profile (SOP-HR-04, owner 2026-10-10). Read and written only
+    # through the health log — HR, the Director, Admin and the site's own PM —
+    # never on the employee serializer, the portal or audit detail.
+    blood_group = models.CharField(max_length=5, blank=True)
+    medical_conditions = models.TextField(blank=True)
+    allergies = models.TextField(blank=True)
+    medication = models.TextField(blank=True)
     # Where the money goes. USD salaries are transferred to each person's own
     # account rather than paid out as one lump, so Finance needs the account
     # per employee to raise the transfer (owner 2026-09-10). Visible to the
@@ -3673,6 +3680,17 @@ class Attendance(models.Model):
         related_name="+")
     sub_extra_approved_at = models.DateTimeField(null=True, blank=True)
     remark = models.CharField(max_length=12, choices=REMARKS, default="PRESENT")
+    # An unexplained absence is exactly the one that must be surfaced: a man
+    # absent and not on leave is checked on in person the same morning
+    # (SOP-HR-04 §B.18). So an ABSENT mark carries a reason, mandatory
+    # (owner 2026-10-10). A SICK mark opens a health case instead.
+    ABSENCE_REASONS = [("NO_SHOW", "No show — not in camp / not found"),
+                       ("PERSONAL", "Personal or family matter"),
+                       ("TRAVEL", "Travelling"),
+                       ("OTHER", "Other")]
+    absence_reason = models.CharField(max_length=10, choices=ABSENCE_REASONS,
+                                      blank=True)
+    absence_note = models.CharField(max_length=200, blank=True)
     entered_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    null=True, blank=True, related_name="+")
     updated_at = models.DateTimeField(auto_now=True)
@@ -9611,3 +9629,161 @@ class CommentRecipient(models.Model):
             models.UniqueConstraint(fields=["comment", "user"],
                                     name="uniq_comment_recipient"),
         ]
+
+
+# ---- Worker health log (SOP-HR-04, owner 2026-10-10) -------------------------
+#
+# Sites are on islands with limited or no medical facilities, so delay can cost
+# a life. Every complaint is a case; every action on it is a dated step; the
+# ladder (first aid → doctor → Malé → evacuation) is spelt out on the case so
+# the Health Focal Point knows what is due. Repeat complaints and clusters of
+# the same complaint are computed, not noticed.
+
+def health_file_path(instance, filename):
+    import uuid
+    return f"health/{instance.case_id}/{uuid.uuid4().hex[:8]}-{filename}"
+
+
+class SiteMedicalPlan(models.Model):
+    """What a site has agreed BEFORE anyone falls ill (SOP-HR-04 §A): who
+    holds the sickness hotline, where the nearest doctor is and how long the
+    boat takes, which Malé hospital, how a night boat is arranged."""
+    site = models.OneToOneField(Site, on_delete=models.CASCADE,
+                                related_name="medical_plan")
+    focal_point = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    focal_point_backup = models.CharField(max_length=120, blank=True)
+    hotline = models.CharField(max_length=40, blank=True)
+    hse_lead = models.CharField(max_length=120, blank=True)
+    first_aiders = models.TextField(blank=True)
+    nearest_health_centre = models.TextField(blank=True)
+    travel_time = models.CharField(max_length=80, blank=True)
+    resort_clinic = models.TextField(blank=True)
+    male_hospitals = models.TextField(blank=True)
+    boat_arrangement = models.TextField(blank=True)
+    sick_bay = models.TextField(blank=True)
+    emergency_contacts = models.TextField(blank=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class HealthCase(models.Model):
+    class Complaint(models.TextChoices):
+        UNKNOWN = "UNKNOWN", "Not yet recorded"
+        FEVER = "FEVER", "Fever / flu-like"
+        DENGUE = "DENGUE", "Suspected dengue"
+        RESPIRATORY = "RESPIRATORY", "Cough / respiratory"
+        STOMACH = "STOMACH", "Diarrhoea / vomiting / stomach"
+        SKIN = "SKIN", "Skin / rash"
+        HEAT = "HEAT", "Heat illness"
+        INJURY = "INJURY", "Injury"
+        PAIN = "PAIN", "Pain (back, joint, tooth, head)"
+        OTHER = "OTHER", "Other"
+
+    class Source(models.TextChoices):
+        REPORT = "REPORT", "Reported on site"
+        ATTENDANCE = "ATTENDANCE", "Marked sick on attendance"
+        INCIDENT = "INCIDENT", "From an HSE incident"
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        CLOSED = "CLOSED", "Closed"
+
+    ref = models.CharField(max_length=24, unique=True, blank=True)
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="health_cases")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="health_cases")
+    reported_on = models.DateField()
+    reported_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    complaint = models.CharField(max_length=12, choices=Complaint.choices,
+                                 default=Complaint.UNKNOWN)
+    symptoms = models.TextField(blank=True)
+    started_on = models.DateField(null=True, blank=True)
+    temperature = models.DecimalField(max_digits=4, decimal_places=1,
+                                      null=True, blank=True)
+    red_flag = models.BooleanField(default=False)
+    source = models.CharField(max_length=10, choices=Source.choices,
+                              default=Source.REPORT)
+    incident = models.ForeignKey("SafetyIncident", on_delete=models.SET_NULL,
+                                 null=True, blank=True,
+                                 related_name="health_cases")
+    status = models.CharField(max_length=6, choices=Status.choices,
+                              default=Status.OPEN)
+    # the doctor's clearance to work; set by the CLEARED step
+    fit_on = models.DateField(null=True, blank=True)
+    light_duties = models.BooleanField(default=False)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                  blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-reported_on", "-id"]
+        indexes = [models.Index(fields=["site", "reported_on"]),
+                   models.Index(fields=["employee", "reported_on"])]
+
+    def __str__(self):
+        return self.ref
+
+
+class HealthEvent(models.Model):
+    """One step on a case — the referral ladder of SOP-HR-04 §C–F."""
+    class Kind(models.TextChoices):
+        FIRST_AID = "FIRST_AID", "First aid / OTC medicine on site"
+        RESTED = "RESTED", "Rested in camp / sick bay"
+        RECHECK = "RECHECK", "Checked again (evening / next morning)"
+        DOCTOR = "DOCTOR", "Seen resort doctor / nearest health centre"
+        MALE = "MALE", "Referred to Malé"
+        EVACUATED = "EVACUATED", "Emergency evacuation"
+        ADMITTED = "ADMITTED", "Admitted"
+        REPORT = "REPORT", "Doctor's report / prescription / certificate"
+        CLEARED = "CLEARED", "Cleared by doctor to return"
+        FOLLOW_UP = "FOLLOW_UP", "Follow-up check after return"
+        NOTE = "NOTE", "Note"
+
+    # steps that mean the man has been attended to, not merely logged
+    ATTENDED = {"FIRST_AID", "RESTED", "DOCTOR", "MALE", "EVACUATED",
+                "ADMITTED"}
+    REFERRALS = {"DOCTOR", "MALE", "EVACUATED"}
+
+    case = models.ForeignKey(HealthCase, on_delete=models.CASCADE,
+                             related_name="events")
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    at = models.DateTimeField()
+    detail = models.TextField(blank=True)
+    facility = models.CharField(max_length=160, blank=True)
+    escort = models.CharField(max_length=120, blank=True)
+    by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                           blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["at", "id"]
+
+
+class HealthFile(models.Model):
+    """A doctor's report, prescription or medical certificate on a case."""
+    case = models.ForeignKey(HealthCase, on_delete=models.CASCADE,
+                             related_name="files")
+    file = models.FileField(upload_to=health_file_path)
+    file_name = models.CharField(max_length=200)
+    label = models.CharField(max_length=120, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class HealthAlert(models.Model):
+    """A cluster of the same complaint at a site: raised once per window so
+    the PM, HR and the Director are told of an outbreak, not nagged daily."""
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="health_alerts")
+    complaint = models.CharField(max_length=12)
+    window_start = models.DateField()
+    window_end = models.DateField()
+    count = models.IntegerField()
+    raised_at = models.DateTimeField(auto_now_add=True)
+    closed_on = models.DateField(null=True, blank=True)
