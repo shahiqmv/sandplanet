@@ -753,7 +753,11 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
       ...(mine.length ? [{ id: "none", code: "", title: "Ungrouped",
                            rows: mine }] : []),
     ] };
-  }).filter((b) => !onlyFocus || !focusProject || b.pr.id === focusProject);
+  }).filter((b) => !onlyFocus || !focusProject || b.pr.id === focusProject)
+    // a project with nothing planned stays off the register (owner
+    // 2026-10-11); it is still offered on the line form and shown when it
+    // is the project the reader came from
+    .filter((b) => !b.empty || b.pr.id === focusProject);
 
   return (
     <div>
