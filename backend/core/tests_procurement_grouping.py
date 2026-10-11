@@ -116,7 +116,7 @@ class GroupingIntegrationTests(TestCase):
         self.assertEqual(bundle["summary"]["count"], 2)
         self.assertEqual(len(bundle["members"]), 2)
         # client plan collapses the two timber lines to one summary row
-        sched = ProcurementSchedule.objects.get(project=self.project)
+        sched = ProcurementSchedule.objects.get(site=self.project.site)
         plan = procurement_client.client_plan(sched)
         descs = [r["description"] for sec in plan["sections"] for r in sec["rows"]]
         self.assertIn("Deck & Fence Timber", descs)

@@ -6643,8 +6643,21 @@ class ProcurementSchedule(models.Model):
     document = models.OneToOneField(Document, on_delete=models.CASCADE,
                                     primary_key=True,
                                     related_name="procurement_schedule")
-    project = models.OneToOneField(Project, on_delete=models.CASCADE,
-                                   related_name="procurement_schedule")
+    # ONE schedule per SITE, grouped project-wise (owner 2026-10-11): a PM
+    # opening one per project made the register, and the client's portal, a
+    # nuisance. `site` is the schedule's home; `project` is only the project
+    # it was first opened for (legacy, nullable). Lines and sections each
+    # carry their own project.
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, null=True,
+                             blank=True, related_name="procurement_schedules")
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True,
+                                blank=True,
+                                related_name="procurement_schedules")
+    # A per-project schedule folded into its site's schedule points here;
+    # its old client link keeps working by following the pointer.
+    merged_into = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                    null=True, blank=True,
+                                    related_name="merged_from")
     baseline_signed_at = models.DateTimeField(null=True, blank=True)
     baseline_signed_by = models.ForeignKey(User, on_delete=models.SET_NULL,
                                            null=True, blank=True,
@@ -6657,7 +6670,9 @@ class ProcurementSchedule(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.document.ref} — {self.project.code}"
+        home = self.site.code if self.site_id else (
+            self.project.code if self.project_id else "?")
+        return f"{self.document.ref} — {home}"
 
 
 class ScheduleSection(models.Model):
@@ -6666,6 +6681,9 @@ class ScheduleSection(models.Model):
 
     schedule = models.ForeignKey(ProcurementSchedule, on_delete=models.CASCADE,
                                  related_name="sections")
+    # the project this section's items belong to (site schedule, 2026-10-11)
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="schedule_sections")
     code = models.CharField(max_length=8)          # "A", "B"
     title = models.CharField(max_length=160)        # "Villa Upgrades"
     sort_order = models.IntegerField(default=100)
@@ -6699,6 +6717,9 @@ class ScheduleLine(models.Model):
 
     schedule = models.ForeignKey(ProcurementSchedule, on_delete=models.CASCADE,
                                  related_name="lines")
+    # the award this item is for — the client reads the plan project-wise
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="schedule_lines")
     section = models.ForeignKey(ScheduleSection, on_delete=models.PROTECT,
                                 null=True, blank=True, related_name="lines")
     s_no = models.PositiveIntegerField(default=0)   # auto per section

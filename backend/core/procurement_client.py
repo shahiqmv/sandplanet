@@ -195,35 +195,62 @@ def client_plan(sched, updated_by=""):
     from .pdf import company_info
     from .procurement_grouping import group_rows
     doc = sched.document
-    project = sched.project
-    site = doc.site
+    site = sched.site or doc.site
     co = company_info()
     client_name = getattr(site, "client_name", "") or site.name
 
-    lines = list(sched.lines.select_related("section", "item")
+    lines = list(sched.lines.select_related("section", "item", "project")
                  .prefetch_related("quotes").exclude(state="CANCELLED"))
+    # One schedule per site, read project-wise (owner 2026-10-11): the
+    # projects in code order, each with its own sections; a section title is
+    # tagged with the project code when the plan spans more than one.
     by_section = {}
     for ln in lines:
         by_section.setdefault(ln.section_id, []).append(ln)
-    ordered = [(s.code, s.title, s.id)
-               for s in sched.sections.order_by("sort_order", "id")]
-    if None in by_section:
-        ordered.append(("", "Unsectioned", None))
-
+    projects = {}
+    for ln in lines:
+        if ln.project_id:
+            projects[ln.project_id] = ln.project
+    order = [p for p in sorted(projects.values(), key=lambda p: p.code)]
+    multi = len(order) > 1
+    secs = list(sched.sections.select_related("project")
+                .order_by("sort_order", "id"))
     sections = []
-    for code, title, sid in ordered:
+
+    def emit(code, title, sid, proj):
         rows = sorted(by_section.get(sid, []),
                       key=lambda x: (x.s_no or 0, x.id))
         if not rows:
-            continue
+            return
         grouped = group_rows([_grouping_dict(ln) for ln in rows], values=False)
         crows = [client_row(r["line"]["_line"]) if r["kind"] == "line"
                  else _bundle_client_row(r["summary"], r["members"])
                  for r in grouped]
-        sections.append({"code": code, "title": title, "rows": crows})
+        label = title or "Items"
+        sections.append({
+            "code": code, "project": proj.code if proj else "",
+            "project_title": proj.title if proj else "",
+            "title": f"{proj.code} · {label}" if (multi and proj) else label,
+            "rows": crows})
 
+    for proj in order + [None]:
+        for s in secs:
+            if (s.project_id or None) == (proj.id if proj else None):
+                emit(s.code, s.title, s.id, proj)
+        # lines of this project with no section
+        loose = [ln for ln in by_section.get(None, [])
+                 if (ln.project_id or None) == (proj.id if proj else None)]
+        if loose:
+            by_section[("loose", proj.id if proj else None)] = loose
+            emit("", "Unsectioned", ("loose", proj.id if proj else None),
+                 proj)
+
+    first = order[0] if order else sched.project
     return {
-        "project_title": project.title, "project_code": project.code,
+        "project_title": (site.name if multi or not first else first.title),
+        "project_code": (site.code if multi or not first else first.code),
+        "projects": [{"code": p.code, "title": p.title} for p in order],
+        "site_code": site.code, "site_name": site.name,
         "contractor": co["legal_name"], "client": client_name,
         "last_update": _last_update(sched).date(),
         "updated_by": updated_by,
@@ -245,31 +272,18 @@ def client_site_plan(site, updated_by=""):
             "contractor": co["legal_name"], "client": client_name,
             "updated_by": updated_by, "last_update": None, "sections": []}
 
-    scheds = []
-    for p in site.projects.exclude(
-            status__in=("POTENTIAL", "CLOSED")).order_by("code"):
-        s = (ProcurementSchedule.objects
-             .filter(project=p, document__is_void=False)
-             .select_related("document", "project")
-             .order_by("-document__doc_date").first())
-        if s:
-            scheds.append((p, s))
-    if not scheds:
+    # One schedule per site now (owner 2026-10-11): the site's live plan,
+    # already grouped project-wise by client_plan.
+    sched = (ProcurementSchedule.objects
+             .filter(site=site, merged_into__isnull=True,
+                     document__is_void=False)
+             .select_related("document", "site")
+             .order_by("document__doc_date", "document_id").first())
+    if sched is None:
         return {**base, "available": False}
-
-    multi = len(scheds) > 1
-    sections, last = [], None
-    for p, s in scheds:
-        plan = client_plan(s, updated_by=updated_by)
-        if last is None or (plan["last_update"] and plan["last_update"] > last):
-            last = plan["last_update"]
-        for sec in plan["sections"]:
-            title = sec["title"] or "Items"
-            sections.append({"code": sec["code"], "project": p.code,
-                             "title": f"{p.code} · {title}" if multi else title,
-                             "rows": sec["rows"]})
-    return {**base, "available": True, "last_update": last,
-            "sections": sections}
+    plan = client_plan(sched, updated_by=updated_by)
+    return {**base, **plan, "project_title": site.name,
+            "project_code": site.code, "available": True}
 
 
 # ---- share token (the live client link) ----------------------------------

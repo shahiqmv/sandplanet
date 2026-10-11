@@ -464,19 +464,38 @@ def _operational_lines():
     return (ScheduleLine.objects
             .filter(schedule__baseline_signed_at__isnull=False,
                     state="SIGNED_OFF")
-            .select_related("schedule__project__site", "schedule__document",
-                            "grn", "ipr", "shipment"))
+            .select_related("schedule__site", "schedule__project__site",
+                            "schedule__document", "project", "grn", "ipr",
+                            "shipment"))
 
 
-def _line_recipients(notify, sched, escalate):
+def _site_of(sched):
+    return sched.site or (sched.project.site if sched.project_id else None)
+
+
+def _project_of(line):
+    """The project a line is for — its own, else the schedule's (legacy)."""
+    return line.project if line.project_id else line.schedule.project
+
+
+def _tag(line):
+    """'DTE 2.0 · PSC-SJR-004' — the project first, since the schedule is
+    the site's and the project is what tells people which job."""
+    proj = _project_of(line)
+    site = _site_of(line.schedule)
+    return f"{proj.code if proj else (site.code if site else '')}"
+
+
+def _line_recipients(notify, sched, escalate, line=None):
     recips = set(notify._role_users("HO_PURCHASING"))
-    proj = sched.project
+    proj = _project_of(line) if line is not None else sched.project
+    site = _site_of(sched)
     # Every current PM, not just the earliest-assigned: co-PMs share the
     # site's alerts, and a co-PM was never told (owner 2026-09-08).
-    if proj.pm:
+    if proj is not None and proj.pm_id:
         recips.add(proj.pm)
-    elif proj.site_id:
-        recips |= set(proj.site.current_pms())
+    elif site is not None:
+        recips |= set(site.current_pms())
     if escalate:
         recips |= set(notify._role_users("DIRECTOR"))
     return recips
@@ -488,9 +507,9 @@ def _alert_line(notify, line, risk):
     unord = " — not yet ordered" if risk.get("unordered") else ""
     what = (line.description or "item")[:60]
     title = f"Procurement {tag}: {what}"
-    body = (f"{sched.project.code} · {sched.document.ref} · {what}{unord}. "
+    body = (f"{_tag(line)} · {sched.document.ref} · {what}{unord}. "
             f"{risk['reason']}. Required {line.required_date}.")[:300]
-    for u in _line_recipients(notify, sched, risk["level"] == "LATE"):
+    for u in _line_recipients(notify, sched, risk["level"] == "LATE", line):
         notify.notify_user(u, title, body=body, doc=sched.document,
                            category="alert")
 
@@ -539,7 +558,7 @@ def send_pd_digest(today=None):
     late = sum(1 for _, r in at_risk if r["level"] == "LATE")
     risky = len(at_risk) - late
     title = f"Procurement digest: {late} late, {risky} at risk"
-    parts = [f"{ln.schedule.project.code}: {(ln.description or 'item')[:24]}"
+    parts = [f"{_tag(ln)}: {(ln.description or 'item')[:24]}"
              f" ({r['level'].replace('_', ' ').lower()})"
              for ln, r in at_risk[:8]]
     body = "; ".join(parts)
@@ -559,16 +578,17 @@ def send_pd_digest(today=None):
 
 def _chase_client(notify, line):
     sched = line.schedule
-    proj = sched.project
+    proj = _project_of(line)
+    site = _site_of(sched)
     what = (line.description or "item")[:60]
     title = f"Chase client update — {what}"
-    body = (f"{proj.code} · {sched.document.ref} · client-supplied {what}: "
+    body = (f"{_tag(line)} · {sched.document.ref} · client-supplied {what}: "
             f"no update in {CLIENT_STALE_DAYS}+ days. "
             f"Required {line.required_date or '—'}.")[:300]
-    if proj.pm:
+    if proj is not None and proj.pm_id:
         recips = {proj.pm}
     else:
-        recips = (set(proj.site.current_pms()) if proj.site_id
+        recips = (set(site.current_pms()) if site is not None
                   else set()) or set(notify._role_users("HO_PURCHASING"))
     for u in recips:
         notify.notify_user(u, title, body=body, doc=sched.document,
@@ -585,7 +605,8 @@ def sweep_client_staleness(today=None):
              .filter(schedule__baseline_signed_at__isnull=False,
                      state="SIGNED_OFF", supply_by="CLIENT",
                      client_delivered_on__isnull=True)
-             .select_related("schedule__project__site", "schedule__document"))
+             .select_related("schedule__site", "schedule__project__site",
+                             "schedule__document", "project"))
     for line in lines:
         if not client_is_stale(line, today):
             continue
@@ -916,7 +937,8 @@ def create_ipr_from_line(line, actor):
             "unit": line.uom or "", "spec": line.specification or "",
             "order_qty": str(qty), "unit_price": str(unit_price),
             "cost_head_id": cost_head.id,
-            "allocations": [{"project_id": line.schedule.project_id,
+            "allocations": [{"project_id": (line.project_id
+                                            or line.schedule.project_id),
                              "qty": str(qty)}],
         }],
         "pmr_refs": [],
@@ -974,7 +996,7 @@ def _cand(doc, note=""):
 def link_candidates(line, slot):
     """Execution docs that plausibly fulfil this line — matched on project, and
     on item where the doc type carries typed line items."""
-    proj_id = line.schedule.project_id
+    proj_id = line.project_id or line.schedule.project_id
     site_id = line.schedule.document.site_id
     item_id = line.item_id
     if slot == "mar":

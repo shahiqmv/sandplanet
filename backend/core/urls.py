@@ -987,6 +987,8 @@ urlpatterns = [
          name="psched-list"),
     path("projects/<int:project_id>/procurement-schedule",
          psched_api.project_schedule, name="psched-project"),
+    path("sites/<int:site_id>/procurement-schedule",
+         psched_api.site_schedule, name="psched-site"),
     path("procurement-schedules/<int:pk>", psched_api.schedule_detail,
          name="psched-detail"),
     path("procurement-schedules/<int:pk>/seed-bom",

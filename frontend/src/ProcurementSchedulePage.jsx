@@ -458,8 +458,10 @@ function BundleRow({ group, c, open, onToggle }) {
   );
 }
 
-// Per-project procurement schedule: PM proposes lines, Purchasing confirms the
-// commercial fields, the Director signs off the baseline.
+// ONE procurement schedule per site, grouped project-wise (owner 2026-10-11 —
+// a schedule per project made the register and the client's portal a
+// nuisance). PM proposes lines, Purchasing confirms the commercial fields,
+// the Director signs off the baseline.
 export default function ProcurementSchedulePage({ me, sites, onOpenDoc }) {
   const [list, setList] = useState(null);
   const [openId, setOpenId] = useState(null);
@@ -485,7 +487,7 @@ export default function ProcurementSchedulePage({ me, sites, onOpenDoc }) {
         marginBottom: 12 }}>
         <h2 style={{ margin: 0 }}>Procurement Schedule</h2>
         {canOpen && <Btn variant="primary"
-          onClick={() => setView("new")}>+ Open a project schedule</Btn>}
+          onClick={() => setView("new")}>+ Open a site schedule</Btn>}
       </div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       {list === null ? <div style={card}>Loading…</div>
@@ -494,7 +496,7 @@ export default function ProcurementSchedulePage({ me, sites, onOpenDoc }) {
           <table style={{ width: "100%", borderCollapse: "collapse",
             fontSize: 13 }}>
             <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
-              {["Ref", "Project", "Site", "Status", "Lines", "Risk"].map((h) =>
+              {["Ref", "Site", "Projects", "Status", "Lines", "Risk"].map((h) =>
                 <th key={h} style={{ padding: "8px 12px" }}>{h}</th>)}
             </tr></thead>
             <tbody>
@@ -503,9 +505,11 @@ export default function ProcurementSchedulePage({ me, sites, onOpenDoc }) {
                   cursor: "pointer" }} onClick={() => setOpenId(s.id)}>
                   <td style={{ padding: "8px 12px", fontFamily:
                     "var(--font-mono)" }}>{s.ref}</td>
-                  <td style={{ padding: "8px 12px" }}>{s.project_code} —{" "}
-                    {s.project_title}</td>
-                  <td style={{ padding: "8px 12px" }}>{s.site_code}</td>
+                  <td style={{ padding: "8px 12px" }}>{s.site_code}
+                    {s.site_name && <span style={{ color: "var(--muted)" }}>
+                      {" "}— {s.site_name}</span>}</td>
+                  <td style={{ padding: "8px 12px", color: "var(--muted)" }}>
+                    {(s.projects || []).join(", ") || "—"}</td>
                   <td style={{ padding: "8px 12px" }}>
                     <Chip tone={STATUS_TONE[s.status]}>
                       {s.status.replace(/_/g, " ")}</Chip>
@@ -558,33 +562,27 @@ export function ProjectScheduleTab({ project, me, onOpenDoc }) {
   if (state === "error") return <div style={card}>{error}</div>;
   if (state === "none") return (
     <div style={card}>
-      <p style={{ marginTop: 0 }}>No procurement schedule for this project yet.</p>
+      <p style={{ marginTop: 0 }}>No procurement schedule for this site yet —
+        one schedule covers every project on the site, grouped project-wise.</p>
       {PROPOSE.includes(me.role) && <Btn variant="primary" onClick={start}>
-        Start the procurement schedule</Btn>}
+        Start the site's procurement schedule</Btn>}
     </div>
   );
   return <ScheduleDetail id={id} me={me} onBack={null} onOpenDoc={onOpenDoc}
+    focusProject={project.id}
     onDeleted={() => { setId(null); setState("none"); }} />;
 }
 
 function NewSchedule({ sites, onCancel, onDone }) {
   const [siteId, setSiteId] = useState(sites?.[0]?.id || "");
-  const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (!siteId) { setProjects([]); return; }
-    api(`/sites/${siteId}/projects`).then((l) => { setProjects(l);
-      setProjectId(l?.[0]?.id || ""); }).catch(() => setProjects([]));
-  }, [siteId]);
-
   async function open() {
-    if (!projectId) { setError("Pick a project."); return; }
+    if (!siteId) { setError("Pick a site."); return; }
     setBusy(true); setError(null);
     try {
-      const d = await api(`/projects/${projectId}/procurement-schedule`,
+      const d = await api(`/sites/${siteId}/procurement-schedule`,
         { method: "POST" });
       onDone(d);
     } catch (e) { setError(e.message); setBusy(false); }
@@ -592,7 +590,7 @@ function NewSchedule({ sites, onCancel, onDone }) {
   return (
     <div style={{ ...card, maxWidth: 560 }}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <h2 style={{ margin: 0 }}>Open a project schedule</h2>
+        <h2 style={{ margin: 0 }}>Open a site schedule</h2>
         <button onClick={onCancel} style={{ border: "none",
           background: "none", cursor: "pointer", color: "var(--navy)" }}>
           Cancel</button>
@@ -604,13 +602,10 @@ function NewSchedule({ sites, onCancel, onDone }) {
           {(sites || []).map((s) => <option key={s.id} value={s.id}>
             {s.code} — {s.name}</option>)}
         </select></label>
-      <label style={{ ...fld, marginTop: 8 }}>Project
-        <select style={inputStyle} value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">Select…</option>
-          {projects.map((p) => <option key={p.id} value={p.id}>
-            {p.code} — {p.title}</option>)}
-        </select></label>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "8px 0 0" }}>
+        One schedule per site. Every line names the project it is for, and
+        the plan reads project-wise — for the team and on the client's
+        portal.</p>
       <div style={{ marginTop: 12 }}>
         <Btn variant="primary" disabled={busy} onClick={open}>
           Open schedule</Btn>
@@ -641,8 +636,13 @@ function Modal({ onClose, children }) {
   );
 }
 
-function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
+function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
+                          focusProject = null }) {
   const [briefRef, setBriefRef] = useState(null);
+  // Opened from a project's own tab: show that project's group alone until
+  // the reader asks for the whole site.
+  const [onlyFocus, setOnlyFocus] = useState(!!focusProject);
+  const [seedProject, setSeedProject] = useState(focusProject || "");
   // Everyone gets the status card on the planner (owner 2026-08-27) — the
   // full order page is a jump too far mid-schedule; HO reaches it from the
   // International Orders list when they need to act.
@@ -733,14 +733,27 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
     <div><button style={linkBtn} onClick={onBack}>← Back</button></div></div>;
   if (!c) return <div style={card}>Loading…</div>;
 
-  // Always show the ungrouped bucket when it has lines — even alongside real
-  // sections — so lines added before a section was created never vanish.
-  const hasUngrouped = (c.groups?.["0"] || []).length > 0;
-  const secList = [
-    ...c.sections,
-    ...(hasUngrouped || !c.sections.length
-      ? [{ id: "none", code: "", title: "Ungrouped" }] : []),
+  // The site's plan reads project-wise: one block per project, its sections
+  // inside. Lines with no section sit in an "Ungrouped" card of their own
+  // project, so a line added before a section was created never vanishes.
+  const rowProject = (row) => row.kind === "line"
+    ? row.line.project_id : (row.members?.[0]?.project_id ?? null);
+  const loose = c.groups?.["0"] || [];
+  const projectList = [
+    ...(c.projects || []),
+    ...((c.sections.some((x) => !x.project_id)
+         || loose.some((r) => !rowProject(r)))
+        ? [{ id: null, code: "", title: "General site works" }] : []),
   ];
+  const blocks = projectList.map((pr) => {
+    const secs = c.sections.filter((x) => (x.project_id ?? null) === pr.id);
+    const mine = loose.filter((r) => (rowProject(r) ?? null) === pr.id);
+    return { pr, empty: !secs.length && !mine.length, secs: [
+      ...secs,
+      ...(mine.length ? [{ id: "none", code: "", title: "Ungrouped",
+                           rows: mine }] : []),
+    ] };
+  }).filter((b) => !onlyFocus || !focusProject || b.pr.id === focusProject);
 
   return (
     <div>
@@ -754,8 +767,17 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
           {WHOSE_TURN[c.status] && <span style={{ fontSize: 12.5,
             color: "var(--muted)", fontStyle: "italic" }}>
             · {WHOSE_TURN[c.status]}</span>}
-          <span style={{ color: "var(--muted)" }}>{c.project_code} —{" "}
-            {c.project_title} · {c.site_code}</span>
+          <span style={{ color: "var(--muted)" }}>{c.site_code} —{" "}
+            {c.site_name}
+            {(c.projects || []).length > 0 && ` · ${c.projects.length} project${
+              c.projects.length > 1 ? "s" : ""}`}</span>
+          {focusProject && (
+            <label style={{ fontSize: 12.5, color: "var(--muted)",
+                            display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={onlyFocus}
+                     onChange={(e) => setOnlyFocus(e.target.checked)} />
+              only this project
+            </label>)}
           {c.baseline_signed_at && <span style={{ fontSize: 12,
             color: "var(--muted)" }}>baseline {fmt(c.baseline_signed_at)} ·{" "}
             {c.baseline_signed_by}</span>}
@@ -786,10 +808,19 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           {c.can_edit_plan && <Btn variant="secondary" disabled={busy}
             onClick={() => setAdding(true)}>+ Add line</Btn>}
+          {c.can_edit_plan && (c.projects || []).length > 1 && (
+            <select style={{ ...inputStyle, width: "auto" }} value={seedProject}
+              onChange={(e) => setSeedProject(e.target.value)}
+              title="The project whose BOM to seed from">
+              <option value="">BOM of project…</option>
+              {c.projects.map((p) => <option key={p.id} value={p.id}>
+                {p.code}</option>)}
+            </select>)}
           {c.can_edit_plan && <Btn variant="secondary" disabled={busy}
             title="The BOM is the planner's source document — adds any BOM items not already on the plan"
             onClick={() => run(() => api(
-              `/procurement-schedules/${id}/seed-bom`, { method: "POST" }))}>
+              `/procurement-schedules/${id}/seed-bom`,
+              { method: "POST", body: { project_id: seedProject || null } }))}>
             ⤵ Seed from BOM</Btn>}
           {c.can_submit &&
             <Btn variant="primary" disabled={busy}
@@ -834,14 +865,29 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
       </div>
 
       {adding && <Modal onClose={() => setAdding(false)}>
-        <LineForm mode="plan" c={c} me={me}
+        <LineForm mode="plan" c={c} me={me} focusProject={focusProject}
           onCancel={() => setAdding(false)}
           onSaved={() => { setAdding(false); load(); }} />
       </Modal>}
 
-      {secList.map((sec) => {
+      {blocks.map((blk) => (
+      <div key={blk.pr.id ?? "general"} style={{ marginTop: 18 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                      borderBottom: "2px solid var(--navy)", paddingBottom: 4 }}>
+          <h3 style={{ margin: 0, color: "var(--navy)" }}>
+            {blk.pr.code ? `${blk.pr.code} — ${blk.pr.title}` : blk.pr.title}
+          </h3>
+          {c.show_values && c.totals?.projects?.[blk.pr.id ?? 0] != null && (
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              estimated {money(c.totals.projects[blk.pr.id ?? 0], "USD")}</span>)}
+        </div>
+      {blk.empty && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "6px 0 0" }}>
+          Nothing planned for this project yet.</p>)}
+      {blk.secs.map((sec) => {
         const gkey = String(sec.id === "none" ? 0 : sec.id);
-        const grows = c.groups?.[gkey] || [];
+        const grows = sec.id === "none" ? (sec.rows || [])
+                      : (c.groups?.[gkey] || []);
         if (!grows.length && sec.id !== "none") return null;
         const on = { openRef,
                      edit: setEditId, track: setTrackId, quotes: setQuotesId,
@@ -898,6 +944,7 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
           </div>
         );
       })}
+      </div>))}
 
       {editId && <Modal onClose={() => setEditId(null)}>
         <LineForm mode={c.can_confirm ? "commercial"
@@ -1435,11 +1482,14 @@ function QuotesPanel({ line, canAward, onClose, onSaved, onOpenDoc }) {
 const UOMS = ["nos", "set", "lot", "pcs", "pair", "box", "m", "m²", "m³",
   "ft", "sqft", "kg", "ton", "litre", "bag", "drum", "roll", "sheet", "bundle"];
 
-function LineForm({ mode, c, me, line, onCancel, onSaved }) {
+function LineForm({ mode, c, me, line, onCancel, onSaved, focusProject }) {
   const isNew = !line;
   const [f, setF] = useState(() => line ? { ...line,
     section_code: line.section_code, section_title: line.section_title }
     : { supply_by: "CONTRACTOR", section_code: "", section_title: "",
+        // the project this item is for: the tab's own, else the only one
+        project_id: focusProject
+          || ((c.projects || []).length === 1 ? c.projects[0].id : ""),
         description: "", item_id: null, make_brand: "", specification: "",
         category: "", quantity: "", uom: "", required_date: "",
         tds_required: false });
@@ -1542,6 +1592,13 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
         </div>
       ) : !commercial ? (
         <div style={grid}>
+          <L k="Project *" wide>
+            <select style={inputStyle} value={f.project_id || ""}
+              onChange={set("project_id")}>
+              <option value="">Choose the project this item is for…</option>
+              {(c.projects || []).map((p) => <option key={p.id} value={p.id}>
+                {p.code} — {p.title}</option>)}
+            </select></L>
           <L k="Section code"><input style={inputStyle} value={f.section_code}
             onChange={set("section_code")} placeholder="A" /></L>
           <L k="Section title"><input style={inputStyle}

@@ -396,15 +396,17 @@ def _psc_mobile_payload(doc, request):
     sched = doc.procurement_schedule
     base = _base_header(doc, request)
     lines = list(sched.lines.exclude(state="CANCELLED")
-                 .select_related("section"))
+                 .select_related("section", "project"))
     per_section = {}
     for ln in lines:
         key = f"{ln.section.code} — {ln.section.title}" if ln.section_id \
             else "Ungrouped"
         per_section[key] = per_section.get(key, 0) + 1
+    projects = sorted({ln.project.code for ln in lines if ln.project_id})
     summary = [
-        {"k": "Project", "v": f"{sched.project.code} · {sched.project.title}"},
-        {"k": "Site", "v": doc.site.code},
+        {"k": "Site", "v": f"{doc.site.code} · {doc.site.name}"},
+        {"k": "Project" if len(projects) == 1 else "Projects",
+         "v": ", ".join(projects) or "—"},
         {"k": "Lines to sign off",
          "v": str(sum(1 for ln in lines if ln.state == "CONFIRMED"))},
         {"k": "Total lines", "v": str(len(lines))},

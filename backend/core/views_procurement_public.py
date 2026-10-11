@@ -18,10 +18,15 @@ def _resolve(token):
     if not token:
         raise Http404
     sched = (ProcurementSchedule.objects
-             .select_related("document__site", "project")
+             .select_related("document__site", "site", "project")
              .filter(share_token=token).first())
     if sched is None:
         raise Http404
+    # a per-project link minted before the site merge opens the site's plan
+    seen = 0
+    while sched.merged_into_id and seen < 5:
+        sched = sched.merged_into
+        seen += 1
     return sched
 
 
@@ -44,6 +49,7 @@ def client_plan_xlsx(request, token):
         content_type="application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet")
     resp["Content-Disposition"] = (
-        f'attachment; filename="{sched.project.code}-Procurement-Plan.xlsx"')
+        f'attachment; filename="{(sched.site or sched.document.site).code}'
+        f'-Procurement-Plan.xlsx"')
     wb.save(resp)
     return resp

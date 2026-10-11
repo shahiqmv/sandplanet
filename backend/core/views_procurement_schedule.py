@@ -1,4 +1,5 @@
-"""Procurement Schedule API — per-project planning layer (doc_type PSC).
+"""Procurement Schedule API — one schedule per site, grouped project-wise
+(doc_type PSC).
 
 Access: HO roles (Purchasing, PD/Directors, Signatory, Finance, QS, Admin) see
 all schedules; the PM and the site's SE/Site-Admin see their site's schedules
@@ -14,7 +15,7 @@ from rest_framework.response import Response
 from . import procurement_pipeline as pp
 from . import procurement_schedule as ps
 from .models import (Project, ProcurementSchedule, ScheduleLine,
-                     ScheduleLineQuote)
+                     ScheduleLineQuote, Site)
 from .permissions import scoped_site_ids
 
 
@@ -26,7 +27,7 @@ def _can_see(user, sched):
 def _get_sched(request, pk):
     try:
         sched = ProcurementSchedule.objects.select_related(
-            "document__site", "project__site").get(pk=pk)
+            "document__site", "site", "project").get(pk=pk)
     except ProcurementSchedule.DoesNotExist:
         return None, Response({"detail": "Not found."}, status=404)
     if not _can_see(request.user, sched):
@@ -36,8 +37,9 @@ def _get_sched(request, pk):
 
 def _get_line(request, line_id):
     line = (ScheduleLine.objects
-            .select_related("schedule__document__site", "schedule__project",
-                            "section").filter(pk=line_id).first())
+            .select_related("schedule__document__site", "schedule__site",
+                            "schedule__project", "section", "project")
+            .filter(pk=line_id).first())
     if line is None or not _can_see(request.user, line.schedule):
         return None, Response({"detail": "Not found."}, status=404)
     return line, None
@@ -46,27 +48,37 @@ def _get_line(request, line_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def schedule_list(request):
-    """Schedules the user can see, newest first. Filter by ?site_id / ?project_id."""
-    qs = ProcurementSchedule.objects.select_related(
-        "document__site", "project").order_by("-document__doc_date")
+    """The live schedule of every site the user can see (one per site),
+    newest first. Filter by ?site_id / ?project_id (a project's site)."""
+    qs = (ProcurementSchedule.objects
+          .filter(merged_into__isnull=True, document__is_void=False)
+          .select_related("document__site", "site", "project")
+          .order_by("-document__doc_date"))
     ids = scoped_site_ids(request.user)
     if ids is not None:
         qs = qs.filter(document__site_id__in=ids)
     if request.GET.get("site_id"):
         qs = qs.filter(document__site_id=request.GET["site_id"])
     if request.GET.get("project_id"):
-        qs = qs.filter(project_id=request.GET["project_id"])
+        qs = qs.filter(lines__project_id=request.GET["project_id"]).distinct()
     out = []
     for s in qs[:200]:
-        counts = {}
-        for st in s.lines.exclude(state="CANCELLED").values_list(
-                "state", flat=True):
+        counts, projects = {}, {}
+        for st, pid, pcode in s.lines.exclude(state="CANCELLED").values_list(
+                "state", "project_id", "project__code"):
             counts[st] = counts.get(st, 0) + 1
+            if pid:
+                projects[pid] = pcode
+        site = s.site or s.document.site
         out.append({"id": s.document_id, "ref": s.document.ref,
                     "status": s.document.status,
-                    "project_id": s.project_id, "project_code": s.project.code,
-                    "project_title": s.project.title,
-                    "site_code": s.document.site.code,
+                    "site_id": site.id, "site_code": site.code,
+                    "site_name": site.name,
+                    "projects": sorted(projects.values()),
+                    # older callers
+                    "project_id": s.project_id,
+                    "project_code": s.project.code if s.project_id else "",
+                    "project_title": s.project.title if s.project_id else "",
                     "line_counts": counts,
                     "risk_counts": pp.schedule_risk_counts(s)})
     return Response(out)
@@ -75,7 +87,9 @@ def schedule_list(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def project_schedule(request, project_id):
-    """Fetch (GET) or open (POST get-or-create) a project's schedule."""
+    """Fetch (GET) or open (POST get-or-create) the schedule a project plans
+    on — its SITE's one schedule (owner 2026-10-11). The reply names the
+    project so the project tab can focus on its own group."""
     try:
         project = Project.objects.select_related("site").get(pk=project_id)
     except Project.DoesNotExist:
@@ -84,11 +98,38 @@ def project_schedule(request, project_id):
     if ids is not None and project.site_id not in ids:
         return Response({"detail": "Not one of your sites."}, status=403)
     if request.method == "POST":
-        sched, msg = ps.get_or_create_schedule(project, request.user)
+        sched, msg = ps.get_or_create_schedule(project.site, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        d = ps.schedule_dict(sched, request.user)
+        d["focus_project_id"] = project.id
+        return Response(d, status=201)
+    sched = ps.live_schedule(project.site)
+    if sched is None:
+        return Response({"detail": "No schedule yet.", "exists": False},
+                        status=404)
+    d = ps.schedule_dict(sched, request.user)
+    d["focus_project_id"] = project.id
+    return Response(d)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def site_schedule(request, site_id):
+    """Fetch (GET) or open (POST get-or-create) a site's one schedule."""
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Unknown site."}, status=404)
+    ids = scoped_site_ids(request.user)
+    if ids is not None and site.id not in ids:
+        return Response({"detail": "Not one of your sites."}, status=403)
+    if request.method == "POST":
+        sched, msg = ps.get_or_create_schedule(site, request.user)
         if msg:
             return Response({"detail": msg}, status=400)
         return Response(ps.schedule_dict(sched, request.user), status=201)
-    sched = ProcurementSchedule.objects.filter(project=project).first()
+    sched = ps.live_schedule(site)
     if sched is None:
         return Response({"detail": "No schedule yet.", "exists": False},
                         status=404)
@@ -129,7 +170,7 @@ def schedule_seed_bom(request, pk):
     sched, err = _get_sched(request, pk)
     if err:
         return err
-    added, msg = ps.seed_from_bom(sched, request.user)
+    added, msg = ps.seed_from_bom(sched, request.user, request.data)
     if msg:
         return Response({"detail": msg}, status=400)
     data = ps.schedule_dict(sched, request.user)
@@ -270,7 +311,7 @@ def _quote_line(request, line_id):
 def _get_quote(request, quote_id):
     quote = (ScheduleLineQuote.objects
              .select_related("line__schedule__document__site",
-                             "line__schedule__project__site").filter(
+                             "line__schedule__site").filter(
                  pk=quote_id).first())
     if quote is None or not _can_see(request.user, quote.line.schedule):
         return None, Response({"detail": "Not found."}, status=404)
@@ -383,7 +424,7 @@ def schedule_export(request, pk):
     resp = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet")
-    fname = f"{sched.project.code}-Procurement-Plan.xlsx"
+    fname = f"{(sched.site or sched.document.site).code}-Procurement-Plan.xlsx"
     resp["Content-Disposition"] = f'attachment; filename="{fname}"'
     wb.save(resp)
     return resp

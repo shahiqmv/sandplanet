@@ -1,4 +1,4 @@
-"""Procurement Schedule service (per-project planning layer).
+"""Procurement Schedule service (one schedule per SITE, grouped project-wise).
 
 The schedule is a Document subtype (doc_type PSC) that WATCHES the execution
 documents rather than duplicating them. This module owns the spine: create the
@@ -14,7 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import audit
-from .models import (Approval, Document, DocumentRevision, Item,
+from .models import (Approval, Document, DocumentRevision, Item, Project,
                      ProcurementSchedule, ScheduleLine, ScheduleSection)
 from .numbering import next_ref
 
@@ -91,27 +91,69 @@ def _notify(doc, actor):
 
 # ---- create / fetch ------------------------------------------------------
 
-def get_or_create_schedule(project, actor):
-    """One schedule per project. Created lazily by the PM (or HO) on first use."""
-    sched = ProcurementSchedule.objects.filter(project=project).first()
+def live_schedule(site):
+    """The site's one live schedule — not voided, not folded into another."""
+    return (ProcurementSchedule.objects
+            .filter(site=site, merged_into__isnull=True,
+                    document__is_void=False)
+            .select_related("document", "site")
+            .order_by("document__doc_date", "document_id").first())
+
+
+def site_projects(site):
+    """The projects a line on this site's schedule can belong to."""
+    return list(site.projects.exclude(status__in=("POTENTIAL", "CLOSED"))
+                .order_by("code"))
+
+
+def get_or_create_schedule(site, actor):
+    """ONE schedule per site (owner 2026-10-11), grouped project-wise inside.
+    Created lazily by the PM (or HO) on first use. A Project is accepted too,
+    for the callers that still think per project: its site is used."""
+    if isinstance(site, Project):
+        site = site.site
+    sched = live_schedule(site)
     if sched:
         return sched, None
     if actor.role not in (*PROPOSE_ROLES, *VIEW_ROLES):
         return None, "Not permitted to open a schedule."
-    site = project.site
     with transaction.atomic():
         doc = Document.objects.create(
             doc_type="PSC", ref=next_ref("PSC", site), site=site,
-            project=project, doc_date=timezone.localdate(), status="DRAFT",
+            project=None, doc_date=timezone.localdate(), status="DRAFT",
             created_by=actor)
         rev = DocumentRevision.objects.create(
             document=doc, rev_label="R0", payload={}, created_by=actor)
         doc.current_revision = rev
         doc.save(update_fields=["current_revision"])
-        sched = ProcurementSchedule.objects.create(document=doc, project=project)
+        sched = ProcurementSchedule.objects.create(document=doc, site=site)
     audit("document", doc.id, "PSC_CREATED", actor=actor,
-          detail={"ref": doc.ref, "project": project.code})
+          detail={"ref": doc.ref, "site": site.code})
     return sched, None
+
+
+def _resolve_project(sched, data, fallback=None):
+    """The project a line belongs to: {project_id} on the request, else the
+    fallback (the line's current project), else the site's only project.
+    Returns (project, error)."""
+    site = sched.site or sched.document.site
+    pid = data.get("project_id")
+    if pid:
+        proj = Project.objects.filter(pk=pid, site_id=site.id).first()
+        if proj is None:
+            return None, "That project is not on this site."
+        return proj, None
+    if fallback is not None:
+        return fallback, None
+    if sched.project_id:                 # a legacy per-project schedule
+        return sched.project, None
+    projects = site_projects(site)
+    if len(projects) == 1:
+        return projects[0], None
+    if not projects:
+        return None, ("This site has no project to plan for — open the "
+                      "project first.")
+    return None, "Choose the project this item belongs to."
 
 
 def delete_schedule(sched, actor):
@@ -127,9 +169,9 @@ def delete_schedule(sched, actor):
     if doc.status != "DRAFT":
         return ("Only a draft schedule can be deleted — this one has already "
                 "been submitted or signed off. Cancel it instead.")
-    ref, project_code = doc.ref, sched.project.code
+    ref, site_code = doc.ref, (sched.site.code if sched.site_id else "")
     audit("document", doc.id, "PSC_DELETED", actor=actor,
-          detail={"ref": ref, "project": project_code})
+          detail={"ref": ref, "site": site_code})
     with transaction.atomic():
         # Unwind the protected references by hand. Lines PROTECT their section,
         # so lines (and their cascaded quotes) go first; the schedule's CASCADE
@@ -145,11 +187,13 @@ def delete_schedule(sched, actor):
     return None
 
 
-def _get_section(sched, data):
+def _get_section(sched, data, project=None):
     """Resolve or create the line's section from {section_id} or {section_code,
-    section_title}. A supplied section_title always renames the resolved section
-    — so editing the title on a line's Edit form updates its section header
-    (the edit form sends section_id, which used to skip the rename)."""
+    section_title} — within the line's PROJECT, since the site schedule is
+    grouped project-wise and two projects may both have a section "A". A
+    supplied section_title always renames the resolved section — so editing
+    the title on a line's Edit form updates its section header (the edit form
+    sends section_id, which used to skip the rename)."""
     title = (data.get("section_title") or "").strip()
 
     def _rename(sec):
@@ -160,16 +204,32 @@ def _get_section(sched, data):
 
     sid = data.get("section_id")
     if sid:
-        return _rename(sched.sections.filter(pk=sid).first())
+        sec = sched.sections.filter(pk=sid).first()
+        # a section belongs to one project; a line moved to another project
+        # takes the same code in that project instead
+        if sec and project is not None and sec.project_id \
+                and sec.project_id != project.id:
+            # that project's own section of the same code keeps ITS title;
+            # only a section created afresh takes the old one's
+            data = {**data, "section_code": sec.code}
+            title, keep = "", sec.title
+            sec = None
+        else:
+            return _rename(sec)
+    else:
+        keep = ""
     code = (data.get("section_code") or "").strip()
     if not code:
         return None
-    sec = sched.sections.filter(code__iexact=code).first()
+    pool = sched.sections.filter(code__iexact=code)
+    pool = pool.filter(project=project) if project is not None else pool
+    sec = pool.first()
     if sec:
         return _rename(sec)
     order = (sched.sections.count() + 1) * 10
-    return ScheduleSection.objects.create(schedule=sched, code=code.upper(),
-                                          title=title or code.upper(),
+    return ScheduleSection.objects.create(schedule=sched, project=project,
+                                          code=code.upper(),
+                                          title=title or keep or code.upper(),
                                           sort_order=order)
 
 
@@ -185,12 +245,15 @@ def add_line(sched, data, actor):
         return None, "The schedule is mid sign-off; wait for the current batch."
     if not (data.get("description") or "").strip():
         return None, "A line needs a description."
-    section = _get_section(sched, data)
+    project, err = _resolve_project(sched, data)
+    if err:
+        return None, err
+    section = _get_section(sched, data, project)
     with transaction.atomic():
         if doc.status == "SIGNED_OFF":       # reopen for a change batch
             _set_status(doc, "DRAFT", "REOPEN", actor,
                         comment="Change batch opened", notify=False)
-        line = ScheduleLine(schedule=sched, section=section,
+        line = ScheduleLine(schedule=sched, section=section, project=project,
                             supply_by=(data.get("supply_by") or "CONTRACTOR"),
                             created_by=actor)
         _apply_plan(line, data)
@@ -203,22 +266,25 @@ def add_line(sched, data, actor):
     return line, None
 
 
-def seed_from_bom(sched, actor):
-    """Seed the schedule from the project's BOM — the material budget is the
+def seed_from_bom(sched, actor, data=None):
+    """Seed the schedule from a project's BOM — the material budget is the
     planner's source document (owner 2026-08-11). One line per BOM item not
-    already on the schedule (matched by catalogue item), landed in a 'From
-    BOM' section for the PM to re-section/date/bundle. Returns (added, err)."""
+    already on the schedule for that project (matched by catalogue item),
+    landed in a 'From BOM' section of the project for the PM to
+    re-section/date/bundle. Returns (added, err)."""
     if actor.role not in PROPOSE_ROLES:
         return None, "Only the PM proposes schedule lines."
     doc = sched.document
     if doc.status not in ("DRAFT", "SIGNED_OFF"):
         return None, "The schedule is mid sign-off; wait for the current batch."
-    project = doc.project
+    project, err = _resolve_project(sched, data or {})
+    if err:
+        return None, err
     bom = list(project.bom_items.select_related("item")) if project else []
     if not bom:
         return None, ("This project has no BOM yet — build it on the "
                       "project's BOM tab first.")
-    existing = set(sched.lines.filter(item__isnull=False)
+    existing = set(sched.lines.filter(item__isnull=False, project=project)
                    .values_list("item_id", flat=True))
     todo = [b for b in bom if b.item_id not in existing]
     if not todo:
@@ -227,14 +293,14 @@ def seed_from_bom(sched, actor):
         if doc.status == "SIGNED_OFF":       # reopen for a change batch
             _set_status(doc, "DRAFT", "REOPEN", actor,
                         comment="Change batch opened", notify=False)
-        section = sched.sections.filter(code="BOM").first()
+        section = sched.sections.filter(code="BOM", project=project).first()
         if section is None:
             section = ScheduleSection.objects.create(
-                schedule=sched, code="BOM", title="From BOM",
-                sort_order=500)
+                schedule=sched, project=project, code="BOM",
+                title="From BOM", sort_order=500)
         for b in todo:
             ScheduleLine.objects.create(
-                schedule=sched, section=section, item=b.item,
+                schedule=sched, section=section, project=project, item=b.item,
                 description=b.item.description, uom=b.item.unit,
                 quantity=b.qty, supply_by="CONTRACTOR", created_by=actor,
                 remarks=b.remarks)
@@ -257,8 +323,18 @@ def update_line(line, data, actor):
         _apply_sourcing(line, data)
         if "supply_by" in data and data["supply_by"] in ("CONTRACTOR", "CLIENT"):
             line.supply_by = data["supply_by"]
+        if data.get("project_id") and str(data["project_id"]) \
+                != str(line.project_id or ""):
+            proj, err = _resolve_project(line.schedule, data)
+            if err:
+                return err
+            line.project = proj
+            # the section goes with the project (same code, that project)
+            data = {**data, "section_id": line.section_id,
+                    "section_code": data.get("section_code")
+                    or (line.section.code if line.section_id else "")}
         if "section_id" in data or "section_code" in data:
-            sec = _get_section(line.schedule, data)
+            sec = _get_section(line.schedule, data, line.project)
             if sec and sec.id != line.section_id:
                 old = line.section
                 line.section = sec
@@ -321,7 +397,7 @@ SPLIT_ROLES = (*PROPOSE_ROLES, *CONFIRM_ROLES)   # operational, like doc-linking
 # planning + commercial values, and the shared MAR/TDS. It does NOT inherit the
 # order links (ipr/shipment/grn), production stage, quotes or award — each split
 # gets its own IPR and tracks independently.
-_SPLIT_COPY = ("category", "item_id", "description", "make_brand",
+_SPLIT_COPY = ("project_id", "category", "item_id", "description", "make_brand",
                "specification", "uom", "trade", "supply_by", "required_date",
                "tds_required", "remarks", "planned_supplier", "source_country",
                "currency", "lead_time_days", "shipping_days",
@@ -630,8 +706,11 @@ def can_see_values(user, sched):
     if user.is_ho:
         return True
     if user.role == "PM":
-        proj = sched.project
-        return proj.pm_id == user.id or proj.site.is_current_pm(user)
+        site = sched.site or (sched.project.site if sched.project_id else None)
+        if site is None:
+            return False
+        return (site.is_current_pm(user)
+                or site.projects.filter(pm_id=user.id).exists())
     return False
 
 
@@ -674,6 +753,8 @@ def line_dict(line, values=True):
         "section_id": line.section_id,
         "section_code": line.section.code if line.section_id else "",
         "section_title": line.section.title if line.section_id else "",
+        "project_id": line.project_id,
+        "project_code": line.project.code if line.project_id else "",
         "bundle": line.bundle,
         "category": line.category, "description": line.description,
         "item_id": line.item_id,
@@ -756,17 +837,19 @@ def schedule_dict(sched, user):
     doc = sched.document
     values = can_see_values(user, sched)
     lines = list(sched.lines.select_related("section", "item", "mar", "ipr",
-                                            "grn", "shipment", "awarded_by")
+                                            "grn", "shipment", "awarded_by",
+                                            "project")
                  .prefetch_related("quotes")
                  .exclude(state="CANCELLED"))
     sections = [{"id": s.id, "code": s.code, "title": s.title,
-                 "sort_order": s.sort_order}
-                for s in sched.sections.all()]
+                 "sort_order": s.sort_order, "project_id": s.project_id}
+                for s in sched.sections.select_related("project")
+                .order_by("sort_order", "id")]
     line_dicts = [line_dict(ln, values=values) for ln in lines]
     counts, risk_counts = {}, {}
     est_total = Decimal("0")
     comm_total = Decimal("0")
-    section_est = {}
+    section_est, project_est = {}, {}
     for ln, ld in zip(lines, line_dicts):
         counts[ln.state] = counts.get(ln.state, 0) + 1
         lvl = ld["risk"]["level"]
@@ -776,11 +859,14 @@ def schedule_dict(sched, user):
             est_total += ev
             key = ln.section_id or 0
             section_est[key] = section_est.get(key, Decimal("0")) + ev
+            pkey = ln.project_id or 0
+            project_est[pkey] = project_est.get(pkey, Decimal("0")) + ev
             comm = ld.get("committed")
             if comm and comm["currency"] == "USD":
                 comm_total += comm["value"]
     totals = ({"currency": "USD", "estimated": est_total,
-               "committed": comm_total, "sections": section_est}
+               "committed": comm_total, "sections": section_est,
+               "projects": project_est}
               if values else None)
     # Collapse same-bundle + same-supplier lines into expandable summary rows,
     # per section, so the planner (and client plan) stay readable. Standalone
@@ -792,15 +878,30 @@ def schedule_dict(sched, user):
     groups = {str(sid): group_rows(lds, values)
               for sid, lds in by_sec.items()}
     from .tenders import quote_payload
+    from .models import TenderQuote
+    site = sched.site or doc.site
+    # every project the plan can carry: the site's open ones, plus any a
+    # line already names (a project closed since keeps its lines readable)
+    projects = {p.id: p for p in site_projects(site)}
+    for ln in lines:
+        if ln.project_id and ln.project_id not in projects:
+            projects[ln.project_id] = ln.project
+    project_list = sorted(projects.values(), key=lambda p: p.code)
     tender_quotes = [quote_payload(q) for q in
-                     sched.project.tender_quotes.select_related(
-                         "attachment", "created_by", "tender__document")]
+                     TenderQuote.objects.filter(
+                         project_id__in=list(projects)).select_related(
+                         "attachment", "created_by", "tender__document",
+                         "project")]
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
         "tender_quotes": tender_quotes if values else [],
-        "project_id": sched.project_id, "project_code": sched.project.code,
-        "project_title": sched.project.title,
-        "site_code": doc.site.code, "site_id": doc.site_id,
+        "site_code": site.code, "site_id": site.id, "site_name": site.name,
+        "projects": [{"id": p.id, "code": p.code, "title": p.title,
+                      "status": p.status} for p in project_list],
+        # kept for older callers: the project it was first opened for
+        "project_id": sched.project_id,
+        "project_code": sched.project.code if sched.project_id else "",
+        "project_title": sched.project.title if sched.project_id else "",
         "baseline_signed_at": sched.baseline_signed_at,
         "baseline_signed_by": (sched.baseline_signed_by.full_name
                                if sched.baseline_signed_by_id else ""),
@@ -834,3 +935,69 @@ def schedule_dict(sched, user):
                       for a in doc.approvals.select_related("actor")
                       .order_by("acted_at")],
     }
+
+
+# ---- folding per-project schedules into the site's one ----------------------
+
+def merge_site_schedules(site, actor):
+    """Fold every live schedule on a site into ONE (owner 2026-10-11).
+
+    The one with the most lines stays and keeps its reference; every other
+    schedule's sections and lines move under it, tagged with the project they
+    were planned for, their quotes and links riding along. The folded
+    schedule's document is voided and points at the survivor, so an old
+    client link still opens the site's plan. Lines keep their state; the
+    survivor goes back to DRAFT when it takes on lines Purchasing has not seen,
+    so the batch is re-submitted as one. Returns (survivor, folded_refs)."""
+    live = list(ProcurementSchedule.objects
+                .filter(site=site, merged_into__isnull=True,
+                        document__is_void=False)
+                .select_related("document", "project"))
+    if len(live) < 2:
+        return (live[0] if live else None), []
+    live.sort(key=lambda s: (-s.lines.count(), s.document.doc_date,
+                             s.document_id))
+    main, others = live[0], live[1:]
+    folded = []
+    with transaction.atomic():
+        for other in others:
+            proj = other.project
+            for sec in list(other.sections.order_by("sort_order", "id")):
+                order = (main.sections.count() + 1) * 10
+                tgt = ScheduleSection.objects.create(
+                    schedule=main, project=sec.project or proj, code=sec.code,
+                    title=sec.title, sort_order=order)
+                sec.lines.update(schedule=main, section=tgt)
+                sec.delete()
+            # lines that never had a section
+            other.lines.update(schedule=main)
+            if proj is not None:
+                main.lines.filter(project__isnull=True).update(project=proj)
+            if not main.share_token and other.share_token:
+                main.share_token = other.share_token
+                main.save(update_fields=["share_token", "updated_at"])
+            other.share_token = ""
+            other.merged_into = main
+            other.save(update_fields=["share_token", "merged_into",
+                                      "updated_at"])
+            odoc = other.document
+            odoc.is_void = True
+            odoc.save(update_fields=["is_void", "updated_at"])
+            _record(odoc, "MERGED", actor,
+                    comment=f"Folded into {main.document.ref} — one schedule "
+                            f"per site")
+            audit("document", odoc.id, "PSC_MERGED", actor=actor,
+                  detail={"ref": odoc.ref, "into": main.document.ref,
+                          "project": proj.code if proj else ""})
+            folded.append(odoc.ref)
+        doc = main.document
+        if doc.status in ("SUBMITTED", "CONFIRMED") and \
+                main.lines.filter(state="PROPOSED").exists():
+            _set_status(doc, "DRAFT", "REOPEN", actor,
+                        comment="Reopened: other projects' schedules folded "
+                                "in — submit the site's plan as one",
+                        notify=False)
+        audit("document", doc.id, "PSC_MERGED_INTO", actor=actor,
+              detail={"ref": doc.ref, "folded": folded,
+                      "lines": main.lines.count()})
+    return main, folded

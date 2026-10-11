@@ -43,10 +43,129 @@ class ProcurementScheduleTests(TestCase):
         d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
         self.assertTrue(d["ref"].startswith("PSC-SJR-"))
         self.assertEqual(d["status"], "DRAFT")
-        # one schedule per project — reopening returns the same one
+        # one schedule per SITE (owner 2026-10-11) — opening it again from
+        # the same project, from another project on the site, or from the
+        # site itself, returns the same one
         r2 = self.client.post(
             f"/api/v1/projects/{self.project.id}/procurement-schedule")
         self.assertEqual(r2.data["id"], pk)
+        self.assertEqual(r2.data["focus_project_id"], self.project.id)
+        other = Project.objects.create(site=self.site, code="SJR-02",
+                                       title="Pool", pm=self.pm)
+        r3 = self.client.post(
+            f"/api/v1/projects/{other.id}/procurement-schedule")
+        self.assertEqual(r3.data["id"], pk)
+        r4 = self.client.post(
+            f"/api/v1/sites/{self.site.id}/procurement-schedule")
+        self.assertEqual(r4.data["id"], pk)
+        self.assertEqual([p["code"] for p in r4.data["projects"]],
+                         ["SJR-01", "SJR-02"])
+        self.assertEqual(len(self.client.get(
+            "/api/v1/procurement-schedules").data), 1)
+
+    def test_lines_belong_to_projects_and_sections_are_per_project(self):
+        """Two projects on one site, each with a section "A": the lines sit
+        under their own project's section, and the client plan reads
+        project-wise with the project code on each section."""
+        pk = self._open()
+        other = Project.objects.create(site=self.site, code="SJR-02",
+                                       title="Pool", pm=self.pm)
+        # with two projects a line must say which one it is for
+        r = self._add_line(pk)
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("project", r.data["detail"].lower())
+        r = self._add_line(pk, project_id=self.project.id)
+        self.assertEqual(r.status_code, 201, r.data)
+        r = self._add_line(pk, project_id=other.id, description="Pool pump",
+                           section_title="Pool plant")
+        self.assertEqual(r.status_code, 201, r.data)
+        d = r.data
+        self.assertEqual(sorted((s["code"], s["project_id"])
+                                for s in d["sections"]),
+                         sorted([("A", other.id), ("A", self.project.id)]))
+        by_proj = {ln["project_code"]: ln["section_title"]
+                   for ln in d["lines"]}
+        self.assertEqual(by_proj, {"SJR-01": "Villa Upgrades",
+                                   "SJR-02": "Pool plant"})
+        self.assertEqual(sorted(d["totals"]["projects"]) if d["totals"]
+                         else None, sorted([self.project.id, other.id]))
+        from . import procurement_client as pc
+        from .models import ProcurementSchedule
+        plan = pc.client_plan(ProcurementSchedule.objects.get(pk=pk))
+        self.assertEqual([s["title"] for s in plan["sections"]],
+                         ["SJR-01 · Villa Upgrades", "SJR-02 · Pool plant"])
+        self.assertEqual(plan["project_code"], "SJR")
+        # moving a line to the other project takes it to that project's own
+        # section "A" (which keeps its title)
+        line = next(ln for ln in d["lines"] if ln["project_code"] == "SJR-01")
+        r = self.client.patch(f"/api/v1/procurement-schedule-lines/{line['id']}",
+                              {"project_id": other.id}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        moved = next(ln for ln in r.data["lines"] if ln["id"] == line["id"])
+        self.assertEqual((moved["project_code"], moved["section_title"]),
+                         ("SJR-02", "Pool plant"))
+        self.assertEqual(sorted(s["title"] for s in r.data["sections"]),
+                         ["Pool plant", "Villa Upgrades"])
+
+    def test_per_project_schedules_fold_into_one_per_site(self):
+        """What production had: a schedule per project. The merge keeps the
+        biggest, moves the others' sections and lines under it tagged with
+        their project, voids the folded documents and keeps their client
+        links working (owner 2026-10-11)."""
+        from django.core.management import call_command
+        from .models import (Document, DocumentRevision, ProcurementSchedule,
+                             ScheduleLine, ScheduleSection)
+        from .procurement_client import generate_share_token
+
+        def legacy(project, ref, n, status="DRAFT"):
+            doc = Document.objects.create(
+                doc_type="PSC", ref=ref, site=self.site, project=project,
+                doc_date=date(2026, 8, 1), status=status, created_by=self.pm)
+            rev = DocumentRevision.objects.create(
+                document=doc, rev_label="R0", payload={}, created_by=self.pm)
+            doc.current_revision = rev
+            doc.save(update_fields=["current_revision"])
+            s = ProcurementSchedule.objects.create(document=doc, site=self.site,
+                                                   project=project)
+            sec = ScheduleSection.objects.create(schedule=s, project=project,
+                                                 code="A", title="Main")
+            for i in range(n):
+                ScheduleLine.objects.create(
+                    schedule=s, project=project, section=sec, s_no=i + 1,
+                    description=f"{project.code} item {i + 1}",
+                    created_by=self.pm)
+            return s
+        other = Project.objects.create(site=self.site, code="SJR-02",
+                                       title="Pool", pm=self.pm)
+        big = legacy(self.project, "PSC-SJR-001", 5, status="SUBMITTED")
+        small = legacy(other, "PSC-SJR-002", 2)
+        generate_share_token(small, self.pm)
+        old_token = small.share_token
+        call_command("merge_procurement_schedules", site="SJR",
+                     actor=self.pm.username)
+        big.refresh_from_db(); small.refresh_from_db()
+        self.assertEqual(small.merged_into_id, big.pk)
+        self.assertTrue(small.document.is_void)
+        self.assertEqual(big.lines.count(), 7)
+        self.assertEqual(sorted((s.code, s.project.code)
+                                for s in big.sections.all()),
+                         [("A", "SJR-01"), ("A", "SJR-02")])
+        self.assertEqual(big.lines.filter(project=other).count(), 2)
+        self.assertEqual(big.document.status, "DRAFT")   # re-submit as one
+        # the folded schedule's client link opens the site's plan
+        self.assertEqual(big.share_token, old_token)
+        r = self.client.get(f"/share/procurement/{old_token}")
+        self.assertEqual(r.status_code, 200)
+        # the register lists one schedule for the site, with both projects
+        self.client.force_authenticate(self.pm)
+        lst = self.client.get("/api/v1/procurement-schedules").data
+        self.assertEqual([(x["ref"], x["projects"]) for x in lst],
+                         [("PSC-SJR-001", ["SJR-01", "SJR-02"])])
+        # running it again changes nothing
+        call_command("merge_procurement_schedules", site="SJR",
+                     actor=self.pm.username)
+        self.assertEqual(ProcurementSchedule.objects.filter(
+            merged_into__isnull=True, document__is_void=False).count(), 1)
 
     def test_qs_and_site_engineer_can_also_propose(self):
         # QS opens the schedule (starts from the commercial side)

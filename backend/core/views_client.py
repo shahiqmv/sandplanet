@@ -207,10 +207,12 @@ def client_submittal_pdf(request, pk):
 
 def _project_schedule(project):
     from .models import ProcurementSchedule
+    # the project's site's one schedule (owner 2026-10-11)
     return (ProcurementSchedule.objects
-            .filter(project=project, document__is_void=False)
-            .select_related("document", "project")
-            .order_by("-document__doc_date").first())
+            .filter(site=project.site, merged_into__isnull=True,
+                    document__is_void=False)
+            .select_related("document", "site")
+            .order_by("document__doc_date", "document_id").first())
 
 
 def _client_project(request, pk):
