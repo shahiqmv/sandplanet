@@ -748,7 +748,11 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
   const blocks = projectList.map((pr) => {
     const secs = c.sections.filter((x) => (x.project_id ?? null) === pr.id);
     const mine = loose.filter((r) => (rowProject(r) ?? null) === pr.id);
-    return { pr, empty: !secs.length && !mine.length, secs: [
+    // "nothing planned" means no LINES — an empty section left behind by a
+    // deleted plan does not keep the project on the register (SJR, IVD PZH
+    // LAUN, owner 2026-10-11)
+    const hasRows = secs.some((x) => (c.groups?.[String(x.id)] || []).length);
+    return { pr, empty: !hasRows && !mine.length, secs: [
       ...secs,
       ...(mine.length ? [{ id: "none", code: "", title: "Ungrouped",
                            rows: mine }] : []),
