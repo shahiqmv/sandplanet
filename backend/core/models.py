@@ -6658,6 +6658,11 @@ class ProcurementSchedule(models.Model):
     merged_into = models.ForeignKey("self", on_delete=models.SET_NULL,
                                     null=True, blank=True,
                                     related_name="merged_from")
+    # The order the site reads its projects in, by priority — project ids,
+    # first = top. Projects not listed follow in code order. Set by the site
+    # team; a project whose procurement is under control moves down
+    # (owner 2026-10-11).
+    project_order = models.JSONField(default=list, blank=True)
     baseline_signed_at = models.DateTimeField(null=True, blank=True)
     baseline_signed_by = models.ForeignKey(User, on_delete=models.SET_NULL,
                                            null=True, blank=True,

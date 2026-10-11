@@ -107,6 +107,49 @@ class ProcurementScheduleTests(TestCase):
         self.assertEqual(sorted(s["title"] for s in r.data["sections"]),
                          ["Pool plant", "Villa Upgrades"])
 
+    def test_the_site_orders_its_projects_by_priority(self):
+        """The site puts the project that needs attention first; the order
+        holds on the planner and the client plan, at any stage, and Purchasing
+        does not set it (owner 2026-10-11)."""
+        pk = self._open()
+        other = Project.objects.create(site=self.site, code="SJR-02",
+                                       title="Pool", pm=self.pm)
+        self._add_line(pk, project_id=self.project.id)
+        self._add_line(pk, project_id=other.id, description="Pool pump",
+                       section_title="Pool plant")
+        d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
+        self.assertEqual([p["code"] for p in d["projects"]],
+                         ["SJR-01", "SJR-02"])
+        self.assertEqual(d["projects"][0]["progress"]["lines"], 1)
+        self.assertTrue(d["can_order_projects"])
+        # submitted to Purchasing: still the site's to reorder
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.se)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/project-order",
+                             {"project_ids": [other.id, self.project.id]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual([p["code"] for p in r.data["projects"]],
+                         ["SJR-02", "SJR-01"])
+        from . import procurement_client as pc
+        from .models import ProcurementSchedule
+        plan = pc.client_plan(ProcurementSchedule.objects.get(pk=pk))
+        self.assertEqual([s["project"] for s in plan["sections"]],
+                         ["SJR-02", "SJR-01"])
+        self.client.force_authenticate(self.purch)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/project-order",
+                             {"project_ids": [self.project.id]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.client.force_authenticate(self.pm)
+        stranger = Project.objects.create(
+            site=Site.objects.create(code="VKR", name="V",
+                                     status=Site.Status.ACTIVE),
+            code="VKR-01", title="Elsewhere")
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/project-order",
+                             {"project_ids": [stranger.id]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not on this site", r.data["detail"])
+
     def test_per_project_schedules_fold_into_one_per_site(self):
         """What production had: a schedule per project. The merge keeps the
         biggest, moves the others' sections and lines under it tagged with

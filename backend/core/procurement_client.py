@@ -211,7 +211,9 @@ def client_plan(sched, updated_by=""):
     for ln in lines:
         if ln.project_id:
             projects[ln.project_id] = ln.project
-    order = [p for p in sorted(projects.values(), key=lambda p: p.code)]
+    # the site's priority order (owner 2026-10-11)
+    from .procurement_schedule import order_projects
+    order = order_projects(sched, list(projects.values()))
     multi = len(order) > 1
     secs = list(sched.sections.select_related("project")
                 .order_by("sort_order", "id"))

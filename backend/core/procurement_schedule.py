@@ -132,6 +132,41 @@ def get_or_create_schedule(site, actor):
     return sched, None
 
 
+def order_projects(sched, projects):
+    """Projects in the site's priority order: those in `project_order` first,
+    as listed, then the rest by code."""
+    rank = {pid: i for i, pid in enumerate(sched.project_order or [])}
+    return sorted(projects, key=lambda p: (rank.get(p.id, len(rank)), p.code))
+
+
+ORDER_ROLES = PROPOSE_ROLES          # the site team, PM, QS, Director, Admin
+
+
+def set_project_order(sched, project_ids, actor):
+    """The site sets which project reads first. Presentation only — not part
+    of the baseline — so it needs no reopen and works at every stage."""
+    if actor.role not in ORDER_ROLES:
+        return "The site team or the PM orders the projects."
+    if sched.document.status == "CANCELLED":
+        return "This schedule is cancelled."
+    site = sched.site or sched.document.site
+    try:
+        ids = [int(x) for x in (project_ids or [])]
+    except (TypeError, ValueError):
+        return "Send the project ids in order."
+    if len(set(ids)) != len(ids):
+        return "A project is listed twice."
+    known = set(Project.objects.filter(site=site, pk__in=ids)
+                .values_list("id", flat=True))
+    if known != set(ids):
+        return "A project in that list is not on this site."
+    sched.project_order = ids
+    sched.save(update_fields=["project_order", "updated_at"])
+    audit("document", sched.document_id, "PSC_PROJECT_ORDER", actor=actor,
+          detail={"ref": sched.document.ref, "order": ids})
+    return None
+
+
 def _resolve_project(sched, data, fallback=None):
     """The project a line belongs to: {project_id} on the request, else the
     fallback (the line's current project), else the site's only project.
@@ -849,11 +884,25 @@ def schedule_dict(sched, user):
     counts, risk_counts = {}, {}
     est_total = Decimal("0")
     comm_total = Decimal("0")
-    section_est, project_est = {}, {}
+    section_est, project_est, progress = {}, {}, {}
     for ln, ld in zip(lines, line_dicts):
         counts[ln.state] = counts.get(ln.state, 0) + 1
         lvl = ld["risk"]["level"]
         risk_counts[lvl] = risk_counts.get(lvl, 0) + 1
+        # how far each project's procurement has got, so the site can see
+        # which are under control and move them down
+        pg = progress.setdefault(ln.project_id or 0, {
+            "lines": 0, "ordered": 0, "delivered": 0, "late": 0,
+            "at_risk": 0})
+        pg["lines"] += 1
+        if lvl == "DELIVERED":
+            pg["delivered"] += 1
+        elif lvl == "LATE":
+            pg["late"] += 1
+        elif lvl == "AT_RISK":
+            pg["at_risk"] += 1
+        if ln.ipr_id or lvl == "DELIVERED" or ln.supply_by == "CLIENT":
+            pg["ordered"] += 1
         if values:
             ev = ln.estimated_value or Decimal("0")
             est_total += ev
@@ -886,7 +935,7 @@ def schedule_dict(sched, user):
     for ln in lines:
         if ln.project_id and ln.project_id not in projects:
             projects[ln.project_id] = ln.project
-    project_list = sorted(projects.values(), key=lambda p: p.code)
+    project_list = order_projects(sched, list(projects.values()))
     tender_quotes = [quote_payload(q) for q in
                      TenderQuote.objects.filter(
                          project_id__in=list(projects)).select_related(
@@ -897,7 +946,11 @@ def schedule_dict(sched, user):
         "tender_quotes": tender_quotes if values else [],
         "site_code": site.code, "site_id": site.id, "site_name": site.name,
         "projects": [{"id": p.id, "code": p.code, "title": p.title,
-                      "status": p.status} for p in project_list],
+                      "status": p.status,
+                      "progress": progress.get(p.id)}
+                     for p in project_list],
+        "can_order_projects": (user.role in ORDER_ROLES
+                               and doc.status != "CANCELLED"),
         # kept for older callers: the project it was first opened for
         "project_id": sched.project_id,
         "project_code": sched.project.code if sched.project_id else "",

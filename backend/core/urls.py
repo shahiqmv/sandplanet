@@ -995,6 +995,8 @@ urlpatterns = [
          psched_api.schedule_seed_bom, name="psc-seed-bom"),
     path("procurement-schedules/<int:pk>/lines", psched_api.schedule_lines,
          name="psched-lines"),
+    path("procurement-schedules/<int:pk>/project-order",
+         psched_api.schedule_project_order, name="psched-project-order"),
     path("procurement-schedules/<int:pk>/submit", psched_api.schedule_submit,
          name="psched-submit"),
     path("procurement-schedules/<int:pk>/action", psched_api.schedule_action,

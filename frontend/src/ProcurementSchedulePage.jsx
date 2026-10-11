@@ -643,6 +643,8 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
   // the reader asks for the whole site.
   const [onlyFocus, setOnlyFocus] = useState(!!focusProject);
   const [seedProject, setSeedProject] = useState(focusProject || "");
+  // a fully delivered project folds away by default; the reader can open it
+  const [unfolded, setUnfolded] = useState({});
   // Everyone gets the status card on the planner (owner 2026-08-27) — the
   // full order page is a jump too far mid-schedule; HO reaches it from the
   // International Orders list when they need to act.
@@ -878,17 +880,56 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
           onSaved={() => { setAdding(false); load(); }} />
       </Modal>}
 
-      {blocks.map((blk) => (
+      {blocks.map((blk, bi) => {
+        const pg = blk.pr.progress;
+        const done = !!pg && pg.lines > 0 && pg.delivered === pg.lines;
+        const folded = done && !unfolded[blk.pr.id];
+        // the order the site reads its projects in (owner 2026-10-11)
+        const ordered = blocks.filter((b) => b.pr.id != null).map((b) => b.pr.id);
+        const canMove = c.can_order_projects && blk.pr.id != null
+                        && !onlyFocus && ordered.length > 1;
+        const pos = ordered.indexOf(blk.pr.id);
+        const move = (dir) => {
+          const next = [...ordered];
+          const j = pos + dir;
+          [next[pos], next[j]] = [next[j], next[pos]];
+          run(() => api(`/procurement-schedules/${id}/project-order`,
+            { method: "POST", body: { project_ids: next } }));
+        };
+        return (
       <div key={blk.pr.id ?? "general"} style={{ marginTop: 18 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+                      flexWrap: "wrap",
                       borderBottom: "2px solid var(--navy)", paddingBottom: 4 }}>
+          {canMove && (
+            <span style={{ display: "inline-flex", flexDirection: "column" }}>
+              <button disabled={busy || pos === 0} onClick={() => move(-1)}
+                title="Move this project up — read first"
+                style={{ ...linkBtn, padding: 0, lineHeight: 1, fontSize: 12 }}>▲</button>
+              <button disabled={busy || pos === ordered.length - 1}
+                onClick={() => move(1)} title="Move this project down"
+                style={{ ...linkBtn, padding: 0, lineHeight: 1, fontSize: 12 }}>▼</button>
+            </span>)}
           <h3 style={{ margin: 0, color: "var(--navy)" }}>
             {blk.pr.code ? `${blk.pr.code} — ${blk.pr.title}` : blk.pr.title}
           </h3>
+          {pg && (
+            <span style={{ fontSize: 12, color: "var(--muted)" }}
+              title="Lines on order (an order raised, delivered or client-supplied) and delivered">
+              {pg.ordered}/{pg.lines} ordered · {pg.delivered}/{pg.lines} delivered
+              {pg.late > 0 && <b style={{ color: "var(--red-fg)" }}> · {pg.late} late</b>}
+              {pg.at_risk > 0 && <b style={{ color: "#8a6d00" }}> · {pg.at_risk} at risk</b>}
+            </span>)}
+          {done && <Chip tone="ok">all delivered</Chip>}
           {c.show_values && c.totals?.projects?.[blk.pr.id ?? 0] != null && (
             <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
               estimated {money(c.totals.projects[blk.pr.id ?? 0], "USD")}</span>)}
+          {done && (
+            <button style={{ ...linkBtn, marginLeft: "auto", fontSize: 12.5 }}
+              onClick={() => setUnfolded((u) => ({ ...u, [blk.pr.id]: !u[blk.pr.id] }))}>
+              {folded ? "show lines" : "fold"}</button>)}
         </div>
+      {!folded && <>
       {blk.empty && (
         <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "6px 0 0" }}>
           Nothing planned for this project yet.</p>)}
@@ -952,7 +993,9 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
           </div>
         );
       })}
-      </div>))}
+      </>}
+      </div>);
+      })}
 
       {editId && <Modal onClose={() => setEditId(null)}>
         <LineForm mode={c.can_confirm ? "commercial"

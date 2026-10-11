@@ -152,6 +152,20 @@ def schedule_detail(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def schedule_project_order(request, pk):
+    """The site sets the order its projects read in: {project_ids: [...]}."""
+    sched, err = _get_sched(request, pk)
+    if err:
+        return err
+    msg = ps.set_project_order(sched, request.data.get("project_ids"),
+                               request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(sched, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def schedule_lines(request, pk):
     sched, err = _get_sched(request, pk)
     if err:
