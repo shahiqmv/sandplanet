@@ -997,6 +997,7 @@ def attendance_bulk(request):
     refused = []
     withdrawn = []
     health_opened = []
+    skipped_unedited = 0
     # Per-employee change record. The audit used to say only "this site,
     # this date, N rows" — you could prove someone edited the day but not
     # whose, from what, to what; and an OFF mark DELETED a record silently,
@@ -1011,6 +1012,7 @@ def attendance_bulk(request):
         # old records"). A row the person did not touch is left alone. An
         # older client sends no flag and is treated as before.
         if "edited" in row and not row.get("edited"):
+            skipped_unedited += 1
             continue
         try:
             employee = Employee.objects.get(pk=row.get("employee_id"))
@@ -1159,6 +1161,17 @@ def attendance_bulk(request):
                             **({"ot_approval": "withdrawn"}
                                if employee.emp_no in withdrawn else {})})
         saved += 1
+    # Every row claimed to be already saved, yet the day has nothing: the
+    # screen was still showing the previous day when Save was pressed, and
+    # the edited-only save then wrote nothing. SJR's 8th and 9th of October
+    # went missing exactly so — "Saved 0 row(s)" went unread (2026-10-11).
+    # Said out loud instead of a quiet no-op.
+    rows_sent = len(request.data.get("rows", []))
+    if (rows_sent and saved == 0 and skipped_unedited == rows_sent
+            and not Attendance.objects.filter(site=site, day=day).exists()):
+        return Response({"detail": f"Nothing was saved for {day}: the rows on "
+                                   "the screen belong to another day. Reload "
+                                   "this day and save it again."}, status=400)
     audit("attendance", site.id, "ATTENDANCE_SAVED", actor=request.user,
           detail={"site": site.code, "date": day.isoformat(), "rows": saved,
                   "late_edit": late_edit,

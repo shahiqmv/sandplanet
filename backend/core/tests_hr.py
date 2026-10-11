@@ -989,6 +989,30 @@ class OtRevisionAndReviewTests(HrBase):
         self.assertEqual(log.detail["ot_approval_withdrawn"],
                          [self.mason.emp_no])
 
+    def test_a_stale_screen_saved_under_an_empty_day_is_refused(self):
+        """Save pressed the moment after stepping to the next day sent the
+        previous day's rows — all flagged as already saved — under the new
+        date, and the edited-only save quietly wrote nothing: SJR's 8th and
+        9th of October had no attendance at all (2026-10-11)."""
+        day = working_day(self.site, 2)
+        self.as_user(self.sa)
+        stale = {"employee_id": self.mason.id, "check_in": "07:00",
+                 "check_out": "18:00", "remark": "PRESENT", "ot_requested": 0,
+                 "edited": False}
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": day.isoformat(),
+            "rows": [stale]}, format="json")
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("another day", r.data["detail"])
+        self.assertFalse(Attendance.objects.filter(day=day).exists())
+        # once the day has rows, an unedited save is the ordinary no-op
+        self.save_attendance(day)
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": day.isoformat(),
+            "rows": [stale]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["saved"], 0)
+
     def test_a_row_the_clerk_did_not_touch_is_left_alone(self):
         """Six people save SJR's whole day from their own screens; a grid
         opened before a colleague's edit put the old figure back and

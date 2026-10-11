@@ -29,6 +29,7 @@ export default function AttendancePage({ site, me, onClose,
   const [day, setDay] = useState(() =>
     initialDay || new Date().toISOString().slice(0, 10));
   const [grid, setGrid] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -57,7 +58,9 @@ export default function AttendancePage({ site, me, onClose,
 
   const load = useCallback(() => {
     setNotice(null);
+    setLoading(true);
     api(`/attendance?site=${site.id}&date=${day}`).then((data) => {
+      setLoading(false);
       setGrid(data);
       // Shift sites read best crew by crew: normal-hours staff first, then
       // each shift in start order.
@@ -92,7 +95,7 @@ export default function AttendancePage({ site, me, onClose,
         }
         return row;
       }));
-    }).catch((e) => setError(e.message));
+    }).catch((e) => { setLoading(false); setError(e.message); });
   }, [site.id, day]);
 
   useEffect(() => { if (mode === "day") load(); }, [load, mode]);
@@ -121,6 +124,15 @@ export default function AttendancePage({ site, me, onClose,
   async function save() {
     setBusy(true);
     setError(null);
+    // The rows on screen must be THIS day's. Pressing Save the moment after
+    // stepping to the next day sent the previous day's rows — all marked as
+    // already saved — under the new date, and the edited-only save wrote
+    // nothing: SJR's 8th and 9th of October vanished that way (2026-10-11).
+    if (loading || !grid || String(grid.date) !== String(day)) {
+      setError("This day is still loading — wait a moment, then save.");
+      setBusy(false);
+      return;
+    }
     // an absence without a reason is refused by the server row by row;
     // say it here first, with the names, so the clerk fixes them in one go
     const noReason = rows.filter((r) => r.remark === "ABSENT" && !r.absence_reason
@@ -664,8 +676,8 @@ export default function AttendancePage({ site, me, onClose,
       <div style={{ display: "flex", gap: 10, marginTop: 14,
                     flexWrap: "wrap" }}>
         {canEnter && !grid?.locked && rows.length > 0 && (
-          <button onClick={save} disabled={busy} style={buttonStyle}>
-            Save day
+          <button onClick={save} disabled={busy || loading} style={buttonStyle}>
+            {loading ? "Loading…" : "Save day"}
           </button>
         )}
         {isPm && !grid?.locked && (
