@@ -519,6 +519,7 @@ export default function App() {
   const [payrollRunId, setPayrollRunId] = useState(null);
   const [fineId, setFineId] = useState(null);   // a fine opened from My Tasks
   const [healthCaseId, setHealthCaseId] = useState(null);  // a case from My Tasks
+  const [pscOpenId, setPscOpenId] = useState(null);  // a schedule opened by ref
   const [healthSite, setHealthSite] = useState(null);      // from a site dashboard
   // Set when a voucher is opened straight from My Tasks, so the vouchers page
   // expands it instead of showing the list.
@@ -795,6 +796,15 @@ export default function App() {
     }
     try {
       const doc = await api(`/documents/${ref}`);
+      // A procurement schedule has no document lines of its own; it opens
+      // on its own page, whichever way it was reached.
+      if (doc.doc_type === "PSC") {
+        setDocView(null);
+        setOpenSite(null);
+        setPscOpenId(doc.id);
+        setHoPage("procurement-schedule");
+        return;
+      }
       if (doc.doc_type === "IPR") {
         setDocView({ mode: "ipr-view", doc, returnTo });
         return;
@@ -1672,7 +1682,8 @@ export default function App() {
               .includes(me.role) &&
             hoPage === "procurement-schedule" && (
             <ProcurementSchedulePage me={me} sites={sites}
-              onOpenDoc={openDoc} />
+              onOpenDoc={openDoc} openScheduleId={pscOpenId}
+              onOpened={() => setPscOpenId(null)} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",

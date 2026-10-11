@@ -177,6 +177,30 @@ class DiscussionTests(TestCase):
         self.assertEqual(self.c.get(f"/api/v1/discussion/att:{self.site.id}:x")
                          .status_code, 404)
 
+    def test_a_procurement_schedule_has_a_thread(self):
+        """The site's procurement plan is a document: the PM asks Purchasing
+        on it, and Purchasing is offered first in the tag list (2026-10-11)."""
+        buyer = make_user("d_buy", User.Role.HO_PURCHASING)
+        psc = Document.objects.create(
+            doc_type="PSC", ref="PSC-SJR-900", site=self.site,
+            doc_date=date(2026, 10, 1), status="DRAFT", created_by=self.pm)
+        key = f"doc:{psc.id}"
+        self.c.force_authenticate(self.pm)
+        people = [p["name"] for p in self.c.get(
+            f"/api/v1/discussion/{key}/people").data["people"]]
+        self.assertIn(buyer.full_name, people)
+        r = self.c.post(f"/api/v1/discussion/{key}",
+                        {"body": "Is the pump supplier confirmed?",
+                         "to": [buyer.id]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.c.force_authenticate(buyer)
+        items = self.c.get("/api/v1/discussion/mine").data["items"]
+        self.assertEqual([(i["ref"], i["doc_type"]) for i in items],
+                         [("PSC-SJR-900", "PSC")])
+        self.c.force_authenticate(self.far)
+        self.assertEqual(self.c.get(f"/api/v1/discussion/{key}").status_code,
+                         404)
+
     def test_a_payroll_run_has_a_thread_too(self):
         from .models import PayrollRun
         hr = make_user("d_hr", User.Role.HO_HR)

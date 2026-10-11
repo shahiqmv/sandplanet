@@ -3,6 +3,7 @@ import { api, apiUpload } from "./api.js";
 import { MovementsTable } from "./ImportOrders.jsx";
 import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
+import Discussion from "./Discussion.jsx";
 
 const STATUS_TONE = {
   DRAFT: "info", SUBMITTED: "warn", CONFIRMED: "warn", SIGNED_OFF: "ok",
@@ -462,9 +463,16 @@ function BundleRow({ group, c, open, onToggle }) {
 // a schedule per project made the register and the client's portal a
 // nuisance). PM proposes lines, Purchasing confirms the commercial fields,
 // the Director signs off the baseline.
-export default function ProcurementSchedulePage({ me, sites, onOpenDoc }) {
+export default function ProcurementSchedulePage({ me, sites, onOpenDoc,
+                                                 openScheduleId = null,
+                                                 onOpened }) {
   const [list, setList] = useState(null);
-  const [openId, setOpenId] = useState(null);
+  const [openId, setOpenId] = useState(openScheduleId);
+  // opened by reference — from My Tasks, a notification or the Discussion
+  // badge — straight onto the schedule
+  useEffect(() => {
+    if (openScheduleId) { setOpenId(openScheduleId); onOpened?.(); }
+  }, [openScheduleId, onOpened]);
   const [view, setView] = useState("list");   // list | new
   const [error, setError] = useState(null);
 
@@ -1012,6 +1020,11 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
       </Modal>}
       {briefRef && <IprBrief refIpr={briefRef}
         onClose={() => setBriefRef(null)} />}
+
+      {/* Notes and questions on the site's plan (owner 2026-10-11): the PM
+          asks Purchasing about a supplier, the Director asks the PM why a
+          line is late — on the schedule itself, answered where it is read. */}
+      <Discussion threadKey={`doc:${c.id}`} me={me} />
 
       {quotesId && <Modal onClose={() => setQuotesId(null)}>
         <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}

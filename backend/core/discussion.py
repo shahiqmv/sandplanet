@@ -197,6 +197,10 @@ def _chain(key, obj):
             roles += ["DIRECTOR", "SIGNATORY"]
         elif t in ("OBR", "WCR"):
             roles += ["HO_HR", "DIRECTOR"]
+        elif t == "PSC":
+            # the site's plan: Purchasing confirms it, the QS built it, the
+            # Director signs it off
+            roles += ["HO_PURCHASING", "QS", "DIRECTOR"]
         elif t in ("SVC", "SCA", "VO", "IPC"):
             roles += ["QS", "DIRECTOR", "SIGNATORY", "FINANCE"]
         else:
