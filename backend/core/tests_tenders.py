@@ -1505,7 +1505,10 @@ class TenderQuoteTests(GateMixin, TestCase):
     def test_a_quote_is_filed_as_a_file_or_a_link_and_kept_off_the_pack(self):
         r = self.client.post(self._url(), {
             "supplier": "Timber Traders", "reference": "TT/2026/88",
-            "quote_date": "2026-09-10", "valid_until": "2026-10-10",
+            "quote_date": "2026-09-10",
+            # relative, not fixed: a fixed 2026-10-10 expired on the day and
+            # failed CI the morning after (2026-10-11)
+            "valid_until": (date.today() + timedelta(days=30)).isoformat(),
             "currency": "USD", "file": self._file()}, format="multipart")
         self.assertEqual(r.status_code, 201, r.data)
         q = r.data["quote"]
