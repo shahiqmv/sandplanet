@@ -11,6 +11,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum as models_Sum
 
 from . import costing
 from .audit import audit
@@ -1453,6 +1454,8 @@ def advance_shipment(shipment, to_status, actor):
         # a consolidated shipment arrives for every order aboard
         for o in shipment.orders():
             fire_milestones(o, "ARRIVAL", actor)
+    if to_status == "CLEARED":
+        sync_cleared_incurred(shipment, actor)   # project goods: Incurred
     return None
 
 
@@ -1571,6 +1574,9 @@ def set_clearing_charges(shipment, data, actor):
             setattr(shipment, f, _dec(data.get(f)) if data.get(f) not in
                     (None, "") else None)
     shipment.save(update_fields=list(CHARGE_FIELDS))
+    # a cleared shipment's project cost follows its landed cost — every
+    # order aboard, since the charges are shared by goods value
+    sync_order_clearances(shipment.orders(), actor)
     audit("document", shipment.order.document_id, "SHIPMENT_CHARGES",
           actor=actor, detail={"shipment": shipment.seq,
                                "total": str(shipment.clearing_total)})
@@ -2089,6 +2095,7 @@ def post_receipt(irn_doc, actor):
     if receipt.shipment.status != "CLEARED":
         receipt.shipment.status = "CLEARED"
         receipt.shipment.save(update_fields=["status"])
+    sync_cleared_incurred(receipt.shipment, actor)
     audit("document", irn_doc.id, "IRN_POSTED", actor=actor,
           to_state="RECEIVED", detail={"ref": irn_doc.ref})
     if discrepancy:
@@ -2285,6 +2292,10 @@ def receive_store_issue_line(sil, qty, to_site, document, actor):
             cost_head=costing.by_code(costing.MATERIALS),
             state="INCURRED", source="STORE_ISSUE",
             amount=amount, document=document, actor=actor)
+    # project goods were already Incurred when their shipment cleared: step
+    # that posting down by what the store has now issued
+    if lot.project_id and lot.source_receipt_id:
+        sync_cleared_incurred(lot.source_receipt.shipment, actor)
     sin = sil.issue
     if all((ln.received_qty or ZERO) >= (ln.qty or ZERO)
            for ln in sin.lines.all()):
@@ -2412,3 +2423,106 @@ def fulfil_mr_from_store(mr, line_ids, actor):
     DocumentLink.objects.get_or_create(from_document=doc, to_document=mr,
                                        link_type="MR_SIN")
     return doc, None
+
+# ---- project imports are Incurred when cleared (owner 2026-10-12) ----------
+#
+# An import used to reach a site's Incurred cost only when Head Office issued
+# it from store and the site received it. In practice the goods go from the
+# port straight to the resort, so that step was never recorded: USD 1.08m of
+# imports committed across the sites, USD 21,000 of it incurred. A line
+# allocated to a project now counts as Incurred at that project's site once
+# its shipment is cleared, at landed cost. General stock still waits for a
+# store issue. If project goods are later issued through the store, the
+# issue posts its own Incurred and the clearance posting steps down by the
+# same amount, so the total is counted once.
+
+def _cleared_targets(shipment):
+    """{(ipr_line, site): MVR} the project share of a cleared shipment, at
+    current landed cost, less what has already been issued to site through
+    the store."""
+    from collections import defaultdict
+    from .models import StoreIssueLine
+    rows = list(shipment.lines.select_related("ipr_line__order").all())
+    if rows:
+        pairs = [(sl.ipr_line, sl.qty or ZERO) for sl in rows]
+    elif shipment.order_id:
+        pairs = [(ln, ln.order_qty or ZERO)
+                 for ln in shipment.order.lines.all()]
+    else:
+        pairs = []
+    landed, out = {}, defaultdict(lambda: ZERO)
+    for line, qty in pairs:
+        order = line.order
+        if order.trading_order_id:          # trading stock, not a project
+            continue
+        if order.id not in landed:
+            landed[order.id] = landed_cost(order)
+        unit = landed[order.id]["lines"].get(line.id, {}).get(
+            "unit_landed", ZERO)
+        oq = line.order_qty or ZERO
+        if not oq or not unit:
+            continue
+        for alloc in line.allocations.select_related("project__site"):
+            if not alloc.project_id:
+                continue
+            share = qty * alloc.qty / oq
+            issued = sum(
+                ((sil.received_qty or ZERO) * (sil.unit_landed_cost or ZERO)
+                 for sil in StoreIssueLine.objects.filter(
+                     lot__source_ipr_line=line, lot__project=alloc.project,
+                     lot__source_receipt__shipment=shipment)), ZERO)
+            out[(line, alloc.project.site)] += share * unit - issued
+    return out
+
+
+def sync_cleared_incurred(shipment, actor=None):
+    """Keep a cleared shipment's project cost in step: post the difference
+    between what its project lines should carry now and what is already
+    posted against it. Idempotent; a no-op until the shipment is cleared.
+    Returns the MVR posted (signed)."""
+    from . import costing
+    from .models import CostPosting
+    if shipment.status != "CLEARED":
+        return ZERO
+    target = _cleared_targets(shipment)
+    posted = {}
+    for r in (CostPosting.objects.filter(import_shipment=shipment,
+                                         state="INCURRED", source="IPR")
+              .values("ipr_line_id", "site_id")
+              .annotate(t=models_Sum("amount"))):
+        posted[(r["ipr_line_id"], r["site_id"])] = r["t"] or ZERO
+    moved = ZERO
+    keys = {(ln.id, site.id): (ln, site) for ln, site in target}
+    for k in posted:
+        keys.setdefault(k, None)
+    for (line_id, site_id), pair in keys.items():
+        want = ZERO
+        if pair is not None:
+            want = target[pair].quantize(Decimal("0.01"))
+        delta = want - posted.get((line_id, site_id), ZERO)
+        if not delta:
+            continue
+        from .models import ImportOrderLine, Site
+        line = pair[0] if pair else ImportOrderLine.objects.get(pk=line_id)
+        site = pair[1] if pair else Site.objects.get(pk=site_id)
+        costing.post(site=site, cost_head=line.cost_head, state="INCURRED",
+                     source="IPR", amount=delta, currency="MVR",
+                     document=line.order.document, ipr_line=line,
+                     import_shipment=shipment, actor=actor)
+        moved += delta
+    if moved:
+        audit("shipment", shipment.id, "IMPORT_CLEARED_COST", actor=actor,
+              detail={"shipment": shipment.ref or shipment.seq,
+                      "mvr": str(moved)})
+    return moved
+
+
+def sync_order_clearances(orders, actor=None):
+    """Every cleared shipment of these orders — a charge on one shipment
+    moves the landed cost of every line of the orders aboard it."""
+    done = set()
+    for order in orders:
+        for sh in order_shipments(order):
+            if sh.id not in done and sh.status == "CLEARED":
+                done.add(sh.id)
+                sync_cleared_incurred(sh, actor)

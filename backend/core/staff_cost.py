@@ -90,21 +90,29 @@ def _staff_head():
     return costing.by_code(costing.LABOUR)
 
 
-def _active_originals(site, year, month):
-    """Non-reversed STAFF postings for this site+month that are not already
-    reversed."""
+def _unreversed(qs):
+    """The rows of `qs` that no reversal points at."""
     reversed_ids = set(CostPosting.objects.filter(
-        reversal_of__site=site, reversal_of__source="STAFF",
-        reversal_of__staff_year=year, reversal_of__staff_month=month)
-        .values_list("reversal_of_id", flat=True))
-    return CostPosting.objects.filter(
+        reversal_of__in=qs).values_list("reversal_of_id", flat=True))
+    return qs.exclude(id__in=reversed_ids)
+
+
+def _active_originals(site, year, month, estimates_only=False):
+    """Non-reversed STAFF postings for this site+month. With
+    `estimates_only`, only the attendance-lock estimate — the posting no
+    payroll run made."""
+    qs = CostPosting.objects.filter(
         site=site, source="STAFF", staff_year=year, staff_month=month,
-        reversal_of__isnull=True).exclude(id__in=reversed_ids)
+        reversal_of__isnull=True)
+    if estimates_only:
+        qs = qs.filter(payroll_run__isnull=True, payroll_line__isnull=True)
+    return _unreversed(qs)
 
 
 def post_staff_cost(site, year, month, actor):
     """Post the month's Labour & Staff INCURRED cost for a site (at lock).
-    Idempotent — skips if an active posting already exists for the period."""
+    Idempotent — skips if an active posting already exists for the period,
+    an estimate or a locked run's actual."""
     if _active_originals(site, year, month).exists():
         return None
     _, total = month_staff_cost(site, year, month)
@@ -119,18 +127,46 @@ def post_staff_cost(site, year, month, actor):
     return posting
 
 
-def reverse_staff_cost(site, year, month, actor):
-    """Reverse the month's staff cost (at HR reopen) — negative mirror."""
-    reversals = []
-    for orig in _active_originals(site, year, month):
-        reversals.append(costing.post(
-            site=orig.site, cost_head=orig.cost_head, state=orig.state,
-            source="STAFF", amount=-orig.amount, staff_year=year,
-            staff_month=month, reversal_of=orig, actor=actor))
+def mirror(orig, actor):
+    """The exact negative of a posting — same site, head, state, CURRENCY,
+    book and vehicle. A reversal of a USD salary used to be booked in MVR,
+    so it cancelled nothing in dollars and took the same number off the
+    rufiyaa (owner 2026-10-12)."""
+    return costing.post(
+        site=orig.site, cost_head=orig.cost_head, state=orig.state,
+        source=orig.source, amount=-orig.amount, currency=orig.currency,
+        posted_on=orig.posted_on, staff_year=orig.staff_year,
+        staff_month=orig.staff_month, book=orig.book, vehicle=orig.vehicle,
+        payroll_run=orig.payroll_run, payroll_line=orig.payroll_line,
+        reversal_of=orig, actor=actor)
+
+
+def reverse_staff_cost(site, year, month, actor, estimates_only=True):
+    """Reverse the month's attendance-lock ESTIMATE for a site (at HR reopen,
+    or when a payroll run locks and replaces it). A locked run's own posting
+    is never touched here: a second run for the same site and month — a
+    settlement, the USD run, a man paid at another site — used to wipe the
+    first run's payroll, and August lost USD 200,000 of salaries that way
+    (owner 2026-10-12)."""
+    reversals = [mirror(o, actor) for o in
+                 _active_originals(site, year, month,
+                                   estimates_only=estimates_only)]
     if reversals:
         audit("cost_posting", reversals[0].id, "STAFF_COST_REVERSED",
               actor=actor, detail={"site": site.code,
                                    "period": f"{year}-{month:02d}"})
+    return reversals
+
+
+def reverse_run_cost(run, actor, states=("INCURRED",)):
+    """Reverse what one payroll run posted (its lock), and nothing else."""
+    qs = CostPosting.objects.filter(payroll_run=run, reversal_of__isnull=True,
+                                    state__in=states)
+    reversals = [mirror(o, actor) for o in _unreversed(qs)]
+    if reversals:
+        audit("cost_posting", reversals[0].id, "PAYROLL_COST_REVERSED",
+              actor=actor, detail={"run": run.ref,
+                                   "period": f"{run.year}-{run.month:02d}"})
     return reversals
 
 

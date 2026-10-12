@@ -40,6 +40,16 @@ RETURN_REASONS = {"SIGNATORY_DECLINED", "INCORRECT_DETAILS",
                   "MISSING_DOCUMENT", "DUPLICATE", "ON_HOLD", "OTHER"}
 
 
+def _payroll_run_paid_here(doc):
+    """The payroll run this payment request pays as ONE payment — None for a
+    run whose salaries go out per person (those post as each is settled)."""
+    from .models import PayrollRun
+    run = PayrollRun.objects.filter(payment_request=doc).first()
+    if run is None or doc.payables.filter(payroll_line__isnull=False).exists():
+        return None
+    return run
+
+
 def cost_centre(pr):
     """The ledger dimension a PYR's postings carry: a fleet cost sits in the
     RENTAL book against its vehicle; everything else is a project cost."""
@@ -502,6 +512,13 @@ def pyr_action(request, doc, action_name):
             # so the advance itself posts no project cost. Its GST is still
             # recoverable input tax and goes to the pool.
             subcontract.on_advance_paid(doc, pr, user)
+        elif pr.is_capitalized and _payroll_run_paid_here(doc):
+            # A run's salaries, paid as one payment: the run booked the
+            # labour as Incurred when it locked; the money leaving is the
+            # Paid side, split by site as the cost was (owner 2026-10-12).
+            from . import payroll
+            payroll.post_run_paid(_payroll_run_paid_here(doc), user,
+                                  posted_on=pr.paid_date, document=doc)
         elif pr.is_capitalized:
             # An import charge already capitalized into the material's landed
             # cost at receipt — the PYR pays the agent but posts nothing here,

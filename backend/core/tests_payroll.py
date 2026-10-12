@@ -3095,9 +3095,14 @@ class UsdSalariesAreTransferredPerPersonTests(UsdSalaryRunTests):
         p.refresh_from_db()
         self.assertEqual(p.status, "SETTLED")
         self.assertEqual(p.settled_ref, "TRF-11")
-        # the run booked the month's labour when it locked; paying a person
-        # moves money and must post nothing, or the month is counted twice
-        self.assertEqual(CostPosting.objects.count(), posted_before)
+        # the run booked the month's labour as Incurred when it locked;
+        # paying a person posts his salary as Paid and nothing Incurred, so
+        # the month is still counted once (owner 2026-10-12)
+        new = CostPosting.objects.order_by("id")[posted_before:]
+        self.assertTrue(new)
+        self.assertEqual({(x.state, x.payroll_line_id) for x in new},
+                         {("PAID", p.payroll_line_id)})
+        self.assertEqual(sum(x.amount for x in new), p.amount)
         # the other one is untouched, and the PYR stays open
         other = Payable.objects.get(payroll_line__employee=self.spark)
         self.assertEqual(other.status, "OUTSTANDING")

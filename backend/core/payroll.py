@@ -1344,64 +1344,121 @@ def cost_split(line, money, gross):
     return {k: v for k, v in out.items() if v}
 
 
-def lock_run(run, actor):
-    """Freeze the run and post its labour cost — the authoritative actual,
-    replacing the M7 estimate: per affected site, reverse that site's existing
-    STAFF estimate for the period, then post the payroll gross."""
-    from collections import defaultdict
-
-    from django.db import transaction
-    from django.utils import timezone
-
-    from . import costing, staff_cost
-    from .models import Site
-
-    if run.status == "LOCKED":
-        return
-    head = costing.by_code(costing.LABOUR)
-    by_site = defaultdict(Decimal)
-    # An operator's wages follow the vehicles they ran that month (the daily
-    # register), to the vehicle cost centres; what is left stays site labour
-    # (MARINE_BUILD_BRIEF.md §4, phase 6).
+def labour_shares(run):
+    """Where a run's labour cost belongs: [(site, vehicle, gross, net,
+    line)] — a man's gross split across the sites he worked (cost_split)
+    after any share that follows the vehicles he ran (operator_allocation).
+    `net` is the same slice of what he is actually paid, for the Paid side.
+    A line with no site of its own falls to the run's site, else Head
+    Office — it used to be dropped, and with it about USD 7,000 of salaries
+    (owner 2026-10-12)."""
     from .fleet_costs import operator_allocation
-    vehicle_shares = []
-    for line in run.lines.all():
+    from .models import Site
+    ho = Site.objects.filter(is_head_office=True).first()
+    sites = {}
+
+    def site_of(site_id):
+        sid = site_id or run.site_id or (ho.id if ho else None)
+        if sid and sid not in sites:
+            sites[sid] = Site.objects.get(pk=sid)
+        return sites.get(sid)
+
+    out = []
+    for line in run.lines.select_related("site").all():
+        if line.excluded:
+            continue
         money = compute_line(line)
         # What the rounding adds is paid out, so it is labour cost too.
         gross = money["gross"] + money["rounding"]
+        if gross <= 0:
+            continue
+        net = money["net"]
+        ratio = (net / gross) if gross else Decimal("0")
+        rest = gross
         for vehicle, share in operator_allocation(line, gross):
-            vehicle_shares.append((line, vehicle, share))
-            gross -= share
-        for site_id, part in cost_split(line, money, gross).items():
-            by_site[site_id] += part
+            if share <= 0:
+                continue
+            out.append((site_of(line.site_id), vehicle, share,
+                        (share * ratio).quantize(Decimal("0.01")), line))
+            rest -= share
+        for site_id, part in cost_split(line, money, rest).items():
+            if part <= 0:
+                continue
+            out.append((site_of(site_id), None, part,
+                        (part * ratio).quantize(Decimal("0.01")), line))
+    return out
+
+
+def _post_run_labour(run, actor, state, amount_index, lines=None,
+                     posted_on=None, document=None):
+    """Post one run's labour, gross (INCURRED, at lock) or net (PAID, when
+    the money leaves), per site and vehicle, tagged with the run. `lines`
+    limits it to some lines (a per-person salary transfer)."""
+    from collections import defaultdict
+
+    from . import costing
+    lab = costing.by_code(costing.LABOUR)
+    op_head = costing.by_code(costing.RNT_OPERATOR)
+    groups = defaultdict(Decimal)
+    for site, vehicle, gross, net, line in labour_shares(run):
+        if lines is not None and line.id not in lines:
+            continue
+        key = (site.id if site else None, vehicle.id if vehicle else None,
+               line.id if lines is not None else None)
+        groups[key] += (gross, net)[amount_index]
+    from .models import PayrollLine, Site, Vehicle
+    made = []
+    for (site_id, vehicle_id, line_id), amount in groups.items():
+        if not site_id or amount <= 0:
+            continue
+        vehicle = Vehicle.objects.get(pk=vehicle_id) if vehicle_id else None
+        head = op_head if vehicle else lab
+        if head is None:
+            continue
+        made.append(costing.post(
+            site=Site.objects.get(pk=site_id), cost_head=head, state=state,
+            source="STAFF", amount=amount, currency=run.currency,
+            staff_year=run.year, staff_month=run.month, actor=actor,
+            posted_on=posted_on, book="RENTAL" if vehicle else "PROJECT",
+            vehicle=vehicle, payroll_run=run, document=document,
+            payroll_line=(PayrollLine.objects.get(pk=line_id)
+                          if line_id else None)))
+    return made
+
+
+def post_run_incurred(run, actor):
+    """The run's labour as INCURRED: replace each site's attendance estimate
+    for the month and this run's own earlier posting — never another run's
+    (owner 2026-10-12)."""
+    from . import staff_cost
+    staff_cost.reverse_run_cost(run, actor)
+    seen = set()
+    for site, _v, _g, _n, _l in labour_shares(run):
+        if site and site.id not in seen:
+            seen.add(site.id)
+            staff_cost.reverse_staff_cost(site, run.year, run.month, actor,
+                                          estimates_only=True)
+    return _post_run_labour(run, actor, "INCURRED", 0)
+
+
+def post_run_paid(run, actor, posted_on=None, lines=None, document=None):
+    """The run's salaries as PAID when the money leaves — the net actually
+    handed over, split by site exactly as the cost was (owner 2026-10-12).
+    The run's payment request still posts nothing itself."""
+    return _post_run_labour(run, actor, "PAID", 1, lines=lines,
+                            posted_on=posted_on, document=document)
+
+
+def lock_run(run, actor):
+    """Freeze the run and post its labour cost — the authoritative actual,
+    replacing the M7 estimate for each site it touches."""
+    from django.db import transaction
+    from django.utils import timezone
+
+    if run.status == "LOCKED":
+        return
     with transaction.atomic():
-        reversed_sites = set()
-        for site_id, gross in by_site.items():
-            if not site_id or gross <= 0 or head is None:
-                continue
-            site = Site.objects.get(pk=site_id)
-            staff_cost.reverse_staff_cost(site, run.year, run.month, actor)
-            reversed_sites.add(site.id)
-            costing.post(site=site, cost_head=head, state="INCURRED",
-                         source="STAFF", amount=gross, currency=run.currency,
-                         staff_year=run.year, staff_month=run.month,
-                         actor=actor)
-        # The vehicle shares go in AFTER the estimate reversal, which would
-        # otherwise catch them: they are STAFF postings of the same site and
-        # month. A site whose whole gross went to vehicles is reversed here.
-        op_head = costing.by_code(costing.RNT_OPERATOR)
-        ho = Site.objects.filter(is_head_office=True).first()
-        for line, vehicle, share in vehicle_shares:
-            if op_head is None or share <= 0:
-                continue
-            site = line.site or ho
-            if site.id not in reversed_sites:
-                staff_cost.reverse_staff_cost(site, run.year, run.month, actor)
-                reversed_sites.add(site.id)
-            costing.post(site=site, cost_head=op_head, state="INCURRED",
-                         source="STAFF", amount=share, currency=run.currency,
-                         staff_year=run.year, staff_month=run.month,
-                         actor=actor, book="RENTAL", vehicle=vehicle)
+        post_run_incurred(run, actor)
         from .fines import settle_on_lock
         settle_on_lock(run)             # fines on it are spent; strays carry
         run.status = "LOCKED"
@@ -1553,9 +1610,8 @@ def transfer_schedule(payables):
 def settle_salary_payable(payable, actor, ref):
     """Finance has transferred one person's salary.
 
-    Nothing is posted to the cost ledger: locking the run already booked the
-    whole month's labour, and the run's PYR is capitalized for exactly that
-    reason. This records that the money left, against that person.
+    Locking the run already booked the labour as Incurred; this posts the
+    person's net as Paid, at the sites his cost went to (owner 2026-10-12).
 
     When the last one is settled the run's PYR is PAID — there is no lump
     payment to mark off, so it closes when the people do.
@@ -1565,6 +1621,9 @@ def settle_salary_payable(payable, actor, ref):
     payable.settled_ref = ref or ""
     payable.save(update_fields=["status", "settled_on", "settled_ref"])
     line = payable.payroll_line
+    # the money left for this person: his salary is Paid, at his sites
+    post_run_paid(line.run, actor, posted_on=payable.settled_on,
+                  lines={line.id})
     audit("payroll_run", line.run_id, "SALARY_PAID", actor=actor,
           detail={"employee": line.employee.emp_no, "ref": ref,
                   "period": f"{line.run.year}-{line.run.month:02d}"})
@@ -1733,7 +1792,6 @@ def reopen_run(run, actor):
     from django.db import transaction
 
     from . import staff_cost
-    from .models import Site
 
     if run.status != "LOCKED":
         return None, "This run is not locked."
@@ -1750,9 +1808,9 @@ def reopen_run(run, actor):
             return None, f"{doc.ref} is {doc.status.lower()}."
 
     with transaction.atomic():
-        for site_id in {l.site_id for l in run.lines.all() if l.site_id}:
-            staff_cost.reverse_staff_cost(Site.objects.get(pk=site_id),
-                                          run.year, run.month, actor)
+        # this run's labour only — another run of the same month is not
+        # this reopen's to undo (owner 2026-10-12)
+        staff_cost.reverse_run_cost(run, actor)
         # The per-head salary payables belong to the PYR being cancelled, so
         # they go with it; the next approval raises them afresh at the
         # corrected figures. Left standing, they kept the OLD amounts under a

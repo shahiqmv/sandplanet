@@ -5826,6 +5826,22 @@ class CostPosting(models.Model):
                                       on_delete=models.PROTECT, null=True,
                                       blank=True, related_name="+")
     # sin_line FK added with its Phase 1B module
+    # What created a labour or import posting (owner 2026-10-12). A payroll
+    # run's lock and its payment carry the run, a per-person salary transfer
+    # the line, an import cleared at Malé its shipment — so a lock replaces
+    # the attendance estimate and its OWN earlier posting, never another
+    # run's payroll, and a cleared shipment's cost can be kept in step with
+    # its landed cost.
+    payroll_run = models.ForeignKey("PayrollRun", on_delete=models.PROTECT,
+                                    null=True, blank=True,
+                                    related_name="cost_postings")
+    payroll_line = models.ForeignKey("PayrollLine", on_delete=models.PROTECT,
+                                     null=True, blank=True,
+                                     related_name="cost_postings")
+    import_shipment = models.ForeignKey("ImportShipment",
+                                        on_delete=models.PROTECT, null=True,
+                                        blank=True,
+                                        related_name="cost_postings")
     is_stock_pool = models.BooleanField(default=False)  # HO pool posting
     staff_year = models.IntegerField(null=True, blank=True)
     staff_month = models.IntegerField(null=True, blank=True)
