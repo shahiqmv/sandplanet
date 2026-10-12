@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  /* Request for quotation (owner 2026-10-12): a plain running list for a
+     supplier — photo, description, make, unit, quantity. No project, no
+     trade or section, no dates, no terms, no footer. */
+  @page { margin: 12mm 12mm 12mm 12mm; }
+  table.rfq td { vertical-align: top; }
+  table.rfq th { font-size: 8pt; }
+  .num { text-align: right; }
+  .ctr { text-align: center; }
+  .img { width: 30mm; text-align: center; }
+  .img img { max-width: 28mm; max-height: 24mm; }
+  .desc b { font-size: 8.5pt; }
+  tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+{% include "pdf/_letterhead.html" with title="REQUEST FOR QUOTATION" %}
+
+<table class="kv"{% if not supplier %} style="width:50%;margin-left:auto"{% endif %}>
+  <tr>{% if supplier %}<td class="k">To</td><td>{{ supplier }}</td>{% endif %}
+      <td class="k">RFQ ref</td><td><b>{{ ref }}</b></td></tr>
+</table>
+
+<table class="rfq" style="margin-top:8px">
+  <thead><tr>
+    <th style="width:6%">No.</th>
+    {% if has_images %}<th style="width:32mm">Photo</th>{% endif %}
+    <th>Description</th>
+    <th style="width:16%">Make / brand</th>
+    <th style="width:9%">Unit</th>
+    <th class="num" style="width:9%">Qty</th>
+  </tr></thead>
+  {% for r in rows %}
+  <tr>
+    <td class="ctr">{{ r.no }}</td>
+    {% if has_images %}<td class="img">{% if r.image %}<img src="{{ r.image }}">{% endif %}</td>{% endif %}
+    <td class="desc"><b>{{ r.description }}</b>
+      {% if r.spec %}<div>{{ r.spec|linebreaksbr }}</div>{% endif %}</td>
+    <td>{{ r.make|default:"" }}</td>
+    <td>{{ r.uom }}</td>
+    <td class="num">{% if r.qty %}{{ r.qty|floatformat:"-2" }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</body>
+</html>

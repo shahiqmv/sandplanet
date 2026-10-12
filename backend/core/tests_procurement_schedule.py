@@ -1,5 +1,6 @@
 """Procurement Schedule — spine + propose/confirm/sign-off workflow (Phase 1)."""
 from datetime import date
+from decimal import Decimal
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -149,6 +150,74 @@ class ProcurementScheduleTests(TestCase):
                              {"project_ids": [stranger.id]}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("not on this site", r.data["detail"])
+
+    def test_an_rfq_prints_the_chosen_items_and_nothing_internal(self):
+        """The PM or QS picks items and prints a plain running list for a
+        supplier: photo, description, make, unit, quantity — under the
+        supplier's name and an RFQ ref. No project, section, dates, terms,
+        estimate or other supplier (owner 2026-10-12)."""
+        import fitz
+        pk = self._open()
+        self._add_line(pk, description="SS316 handrail", make_brand="Hafele",
+                       quantity="12", uom="m")
+        self._add_line(pk, description="Glass balustrade", quantity="30",
+                       uom="m2")
+        from .models import ScheduleLine
+        lines = list(ScheduleLine.objects.filter(schedule__pk=pk)
+                     .order_by("id"))
+        ScheduleLine.objects.filter(pk=lines[0].pk).update(
+            estimated_value=Decimal("98765"), planned_supplier="Secret Metals")
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/rfq.pdf",
+                             {"line_ids": [lines[0].id],
+                              "supplier": "Asia Hardware"}, format="json")
+        self.assertEqual(r.status_code, 200, getattr(r, "data", None))
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertIn("RFQ-SJR-001", r["Content-Disposition"])
+        doc = fitz.open("pdf", r.content)
+        text = "".join(p.get_text() for p in doc)
+        doc.close()
+        self.assertIn("REQUEST FOR QUOTATION", text)
+        self.assertIn("SS316 handrail", text)
+        self.assertIn("Hafele", text)
+        self.assertIn("Asia Hardware", text)
+        self.assertNotIn("Glass balustrade", text)      # not chosen
+        for internal in ("Villa Upgrades", "SJR-01", "Metalwork", "2026",
+                         "quotation"):
+            self.assertNotIn(internal, text.replace("QUOTATION", ""))
+        self.assertNotIn("98765", text.replace(",", ""))
+        self.assertNotIn("Secret Metals", text)
+        # the next one numbers on
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/rfq.pdf",
+                             {"line_ids": [x.id for x in lines]},
+                             format="json")
+        self.assertIn("RFQ-SJR-002", r["Content-Disposition"])
+
+    def test_an_rfq_needs_items_from_this_schedule(self):
+        pk = self._open()
+        self._add_line(pk)
+        self.client.force_authenticate(self.pm)
+        url = f"/api/v1/procurement-schedules/{pk}/rfq.pdf"
+        self.assertEqual(self.client.post(url, {"line_ids": []},
+                                          format="json").status_code, 400)
+        self.assertEqual(self.client.post(url, {"line_ids": [999999]},
+                                          format="json").status_code, 400)
+        from .models import ScheduleLine
+        lid = ScheduleLine.objects.filter(schedule__pk=pk).first().id
+        # the addressee is optional: no "To" without a name
+        import fitz
+        r = self.client.post(url, {"line_ids": [lid]}, format="json")
+        self.assertEqual(r.status_code, 200)
+        doc = fitz.open("pdf", r.content)
+        text = "".join(p.get_text() for p in doc)
+        doc.close()
+        self.assertNotIn("To\n", text)
+        self.assertIn("RFQ ref", text)
+        # Finance does not send RFQs
+        fin = make_user("psched_fin", User.Role.FINANCE)
+        self.client.force_authenticate(fin)
+        self.assertEqual(self.client.post(url, {"line_ids": [lid]},
+                                          format="json").status_code, 400)
 
     def test_per_project_schedules_fold_into_one_per_site(self):
         """What production had: a schedule per project. The merge keeps the

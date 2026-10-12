@@ -152,6 +152,29 @@ def schedule_detail(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def schedule_rfq(request, pk):
+    """A request for quotation for the chosen lines, as a PDF to send to a
+    supplier: {line_ids, supplier, attention, reply_by, delivery_terms,
+    notes, show_required}. No internal money or supplier names."""
+    from django.template.loader import render_to_string
+
+    from . import procurement_rfq
+    from .pdf import company_info, logo_src
+    from .views_payroll import _pdf_response
+    sched, err = _get_sched(request, pk)
+    if err:
+        return err
+    ctx, msg = procurement_rfq.build(sched, request.data.get("line_ids"),
+                                     request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    ctx.update(logo_src=logo_src(), co=company_info())
+    html = render_to_string("pdf/procurement_rfq.html", ctx)
+    return _pdf_response(html, f"{ctx['ref']}.pdf")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def schedule_project_order(request, pk):
     """The site sets the order its projects read in: {project_ids: [...]}."""
     sched, err = _get_sched(request, pk)

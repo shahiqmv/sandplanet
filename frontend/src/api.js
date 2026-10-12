@@ -199,11 +199,18 @@ export async function api(path, { method = "GET", body } = {}) {
 // and displayed raw JSON, and on success it downloaded in silence, so the
 // button looked broken either way (owner 2026-08-19). Returns a short summary
 // to show the user; throws a readable Error otherwise.
-export async function apiDownload(path) {
+export async function apiDownload(path, { method = "GET", body } = {}) {
   const id = _start("Preparing the download", false);
   let res;
   try {
-    res = await fetch(`${API_BASE}${path}`, { credentials: "same-origin" });
+    // a POST download carries its choices in the body (an RFQ's items)
+    const opts = { credentials: "same-origin", method };
+    if (method !== "GET") {
+      opts.headers = { "X-CSRFToken": getCookie(CSRF_COOKIE),
+                       "Content-Type": "application/json" };
+      if (body !== undefined) opts.body = JSON.stringify(body);
+    }
+    res = await fetch(`${API_BASE}${path}`, opts);
   } finally {
     _end(id);
   }

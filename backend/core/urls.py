@@ -997,6 +997,8 @@ urlpatterns = [
          name="psched-lines"),
     path("procurement-schedules/<int:pk>/project-order",
          psched_api.schedule_project_order, name="psched-project-order"),
+    path("procurement-schedules/<int:pk>/rfq.pdf",
+         psched_api.schedule_rfq, name="psched-rfq"),
     path("procurement-schedules/<int:pk>/submit", psched_api.schedule_submit,
          name="psched-submit"),
     path("procurement-schedules/<int:pk>/action", psched_api.schedule_action,

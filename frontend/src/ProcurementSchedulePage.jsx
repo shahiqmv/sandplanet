@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { api, apiUpload } from "./api.js";
+import { api, apiDownload, apiUpload } from "./api.js";
 import { MovementsTable } from "./ImportOrders.jsx";
 import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
@@ -22,6 +22,8 @@ const STATE_TONE = {
 const SUPPLY = [["CONTRACTOR", "Contractor"], ["CLIENT", "Client"]];
 // The commercial/project team proposes lines; Purchasing + PD are the gates.
 const PROPOSE = ["QS", "PM", "SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR", "ADMIN"];
+// who may send suppliers a request for quotation from the plan
+const RFQ = [...PROPOSE, "HO_PURCHASING"];
 const money = (v, c) => v == null ? "—"
   : `${c || ""} ${Number(v).toLocaleString("en-US",
       { minimumFractionDigits: 2 })}`.trim();
@@ -318,12 +320,18 @@ function RefImage({ ln }) {
   );
 }
 
-function LineRow({ ln, c, member, sel, on }) {
+function LineRow({ ln, c, member, sel, on, pick }) {
   return (
     <tr style={{ borderTop: member ? "1px dashed var(--line)"
       : "1px solid var(--line)",
-      background: member ? "var(--sky-soft)" : undefined }}>
-      <td style={{ ...cell, paddingLeft: member ? 26 : 10 }}>
+      background: pick?.has(ln.id) ? "#fff7e0"
+        : member ? "var(--sky-soft)" : undefined }}>
+      <td style={{ ...cell, paddingLeft: member ? 26 : 10,
+                   whiteSpace: "nowrap" }}>
+        {pick && <input type="checkbox" checked={pick.has(ln.id)}
+          onChange={() => pick.toggle([ln.id])}
+          title="Ask suppliers to quote this item"
+          style={{ marginRight: 6, verticalAlign: "middle" }} />}
         {member ? "" : ln.s_no}</td>
       <td style={cell}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -418,7 +426,7 @@ function LineRow({ ln, c, member, sel, on }) {
 
 // The collapsed summary row for a bundle of same-material, same-supplier lines
 // (e.g. "Deck & Fence Timber" in six sizes). Click to expand the members.
-function BundleRow({ group, c, open, onToggle }) {
+function BundleRow({ group, c, open, onToggle, pick }) {
   const s = group.summary;
   const qty = s.quantity != null
     ? `${Number(s.quantity)}${s.uom ? " " + s.uom : ""}`
@@ -426,7 +434,17 @@ function BundleRow({ group, c, open, onToggle }) {
   return (
     <tr style={{ borderTop: "1px solid var(--line)",
       background: "var(--sky-soft)", cursor: "pointer" }} onClick={onToggle}>
-      <td style={{ ...cell, color: "var(--muted)" }}>{open ? "▾" : "▸"}</td>
+      <td style={{ ...cell, color: "var(--muted)", whiteSpace: "nowrap" }}>
+        {pick && (() => {
+          const ids = group.members.map((m) => m.id);
+          const all = ids.every((x) => pick.has(x));
+          return <input type="checkbox" checked={all}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => pick.toggle(ids, !all)}
+            title="Ask suppliers to quote every item in this group"
+            style={{ marginRight: 6, verticalAlign: "middle" }} />;
+        })()}
+        {open ? "▾" : "▸"}</td>
       <td style={cell}>
         <span style={{ fontWeight: 600 }}>{s.bundle}</span>
         <span style={{ color: "var(--muted)", fontSize: 11 }}>
@@ -653,6 +671,29 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
   const [seedProject, setSeedProject] = useState(focusProject || "");
   // a fully delivered project folds away by default; the reader can open it
   const [unfolded, setUnfolded] = useState({});
+  // Request for quotation (owner 2026-10-12): pick a section or items, and
+  // print an RFQ to send to suppliers
+  const [rfqOn, setRfqOn] = useState(false);
+  const [rfqSel, setRfqSel] = useState(() => new Set());
+  const [rfqForm, setRfqForm] = useState(null);
+  const pick = rfqOn ? {
+    has: (x) => rfqSel.has(x),
+    toggle: (ids, on) => setRfqSel((cur) => {
+      const next = new Set(cur);
+      const turnOn = on ?? !ids.every((x) => cur.has(x));
+      ids.forEach((x) => (turnOn ? next.add(x) : next.delete(x)));
+      return next;
+    }),
+  } : null;
+  async function sendRfq() {
+    setBusy(true); setError(null);
+    try {
+      await apiDownload(`/procurement-schedules/${id}/rfq.pdf`, {
+        method: "POST", body: { ...rfqForm, line_ids: [...rfqSel] } });
+      setRfqForm(null);
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
   // Everyone gets the status card on the planner (owner 2026-08-27) — the
   // full order page is a jump too far mid-schedule; HO reaches it from the
   // International Orders list when they need to act.
@@ -879,8 +920,49 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
             all variants</a>
           {c.share?.can_share && <ClientLink share={c.share} busy={busy}
             onCreate={share} onRevoke={revokeShare} />}
+          {RFQ.includes(me.role) && (
+            <Btn variant={rfqOn ? "primary" : "secondary"} disabled={busy}
+              title="Tick a section or items, then print a request for quotation to send to suppliers"
+              onClick={() => { setRfqOn((v) => !v); setRfqSel(new Set()); }}>
+              {rfqOn ? "✕ Done selecting" : "📨 Request quotes"}</Btn>)}
         </div>
+        {rfqOn && (
+          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8,
+                        background: "#fff7e0", border: "1px solid #e0c66b",
+                        display: "flex", gap: 10, alignItems: "center",
+                        flexWrap: "wrap", fontSize: 13 }}>
+            <b>{rfqSel.size} item{rfqSel.size === 1 ? "" : "s"} selected</b>
+            <span style={{ color: "var(--muted)" }}>
+              Tick a section heading for the whole section, a group for all its
+              variants, or items one by one.</span>
+            {rfqSel.size > 0 && <>
+              <Btn variant="primary" disabled={busy}
+                onClick={() => setRfqForm({ supplier: "" })}>
+                Prepare RFQ</Btn>
+              <button style={linkBtn} onClick={() => setRfqSel(new Set())}>
+                clear</button></>}
+          </div>)}
       </div>
+
+      {rfqForm && <Modal onClose={() => setRfqForm(null)}>
+        <div style={card}>
+          <h3 style={{ marginTop: 0 }}>Request for quotation — {rfqSel.size}{" "}
+            item{rfqSel.size === 1 ? "" : "s"}</h3>
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 0 }}>
+            A running list of the items — photo, description, make, unit and
+            quantity — addressed to the supplier under an RFQ reference.</p>
+          <label style={fld}>Supplier (addressed to) — optional
+            <input style={inputStyle} value={rfqForm.supplier} autoFocus
+              onChange={(e) => setRfqForm({ supplier: e.target.value })} />
+          </label>
+          {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <Btn variant="primary" disabled={busy} onClick={sendRfq}>
+              {busy ? "Preparing…" : "Download RFQ (PDF)"}</Btn>
+            <Btn variant="ghost" onClick={() => setRfqForm(null)}>Cancel</Btn>
+          </div>
+        </div>
+      </Modal>}
 
       {adding && <Modal onClose={() => setAdding(false)}>
         <LineForm mode="plan" c={c} me={me} focusProject={focusProject}
@@ -956,6 +1038,15 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
             {(sec.code || sec.id === "none") && (
               <div style={{ padding: "8px 12px", fontWeight: 600,
                 background: "var(--sky-soft)" }}>
+                {pick && (() => {
+                  const ids = grows.flatMap((r) => r.kind === "line"
+                    ? [r.line.id] : r.members.map((m) => m.id));
+                  const all = ids.length > 0 && ids.every((x) => pick.has(x));
+                  return <input type="checkbox" checked={all}
+                    onChange={() => pick.toggle(ids, !all)}
+                    title="Ask suppliers to quote the whole section"
+                    style={{ marginRight: 8, verticalAlign: "middle" }} />;
+                })()}
                 {sec.code ? `${sec.code} — ${sec.title}` : sec.title}
               </div>)}
             <table style={{ width: "100%", borderCollapse: "collapse",
@@ -972,16 +1063,17 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc,
                 {grows.map((row) => row.kind === "bundle" ? (
                   <Fragment key={`b${row.key}`}>
                     <BundleRow group={row} c={c} open={!!openB[row.key]}
+                      pick={pick}
                       onToggle={() => setOpenB((o) =>
                         ({ ...o, [row.key]: !o[row.key] }))} />
                     {openB[row.key] && row.members.map((ln) => (
                       <LineRow key={ln.id} ln={ln} c={c} member sel={sel}
-                        on={on} />
+                        on={on} pick={pick} />
                     ))}
                   </Fragment>
                 ) : (
                   <LineRow key={row.line.id} ln={row.line} c={c} sel={sel}
-                    on={on} />
+                    on={on} pick={pick} />
                 ))}
                 {!grows.length && <tr><td style={{ ...cell,
                   color: "var(--muted)" }} colSpan={c.show_values ? 15 : 14}>
