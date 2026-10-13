@@ -40,6 +40,12 @@ run_deploy() {
   # 2026-08-12).
   echo "==> Recreating caddy so Caddyfile changes take effect…"
   docker compose $COMPOSE_FILES up -d --force-recreate caddy
+  # The relay forgets its pull cameras whenever it restarts; teach it again
+  # (owner 2026-10-13). The five-minute cron below covers reboots.
+  echo "==> Re-registering cameras with the relay…"
+  sleep 5
+  docker compose $COMPOSE_FILES exec -T web python manage.py camera_relay_sync \
+    || echo "!! camera relay sync failed — the cron will retry"
   echo "==> Status:"
   docker compose $COMPOSE_FILES ps
   echo "Done."
@@ -121,6 +127,9 @@ ensure_crons() {
     "$C training_expiry >> /var/log/training_expiry.log 2>&1" \
     "training/competency expiry reminders"
 
+  add_cron "# planet-camera-relay" "*/5 * * * *" \
+    "$C camera_relay_sync >> /var/log/camera_relay.log 2>&1" \
+    "camera relay re-registration (every 5 minutes; covers reboots)"
   add_cron "# planet-health-daily" "30 17 * * *" \
     "$C health_daily >> /var/log/health_daily.log 2>&1" \
     "the daily worker-health summary to PMs, HR and the Director (17:30)"

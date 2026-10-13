@@ -180,3 +180,40 @@ def resync_all():
         ok, msg = sync_relay_path(cam)
         done.append((cam.path, ok, msg))
     return done
+
+
+def ensure_relay_paths():
+    """Put back any camera the relay has forgotten (owner 2026-10-13).
+
+    The relay keeps pull cameras in memory only, so a server reboot or a
+    relay restart empties it — the office feeds were dark for two weeks after
+    the 26 September reboot because nothing taught the relay again. This is
+    cheap enough to run every few minutes: one request lists what the relay
+    has, and only a missing camera, one whose address changed, or one that
+    should no longer be pulled is touched. Returns [(path, action, ok, msg)];
+    empty when all is in step. A relay that cannot be reached returns
+    [("*", "unreachable", False, reason)] and changes nothing.
+    """
+    from .models import Camera
+    code, body = _api("GET", "/v3/config/paths/list?itemsPerPage=1000")
+    if code != 200:
+        return [("*", "unreachable", False, str(body)[:120])]
+    try:
+        have = {i.get("name"): i for i in json.loads(body).get("items", [])}
+    except ValueError:
+        return [("*", "unreachable", False, "unreadable reply")]
+    out = []
+    for cam in Camera.objects.exclude(source_url=""):
+        cur = have.get(cam.path)
+        if cam.is_active:
+            if cur is None:
+                ok, msg = sync_relay_path(cam)
+                out.append((cam.path, "added", ok, msg))
+            elif cur.get("source") != cam.source_url:
+                ok, msg = sync_relay_path(cam)
+                out.append((cam.path, "updated", ok, msg))
+        elif cur is not None:
+            ok, msg = sync_relay_path(cam)
+            out.append((cam.path, "removed", ok, msg))
+    return out
+

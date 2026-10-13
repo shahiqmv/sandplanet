@@ -398,3 +398,91 @@ class PullModeTests(TestCase):
             api.post(f"/api/relay/auth/{SECRET}",
                      {"action": "read", "path": cam.path,
                       "password": t}, format="json").status_code, 200)
+
+
+class RelayResyncTests(TestCase):
+    """The relay keeps pull cameras in memory, so a reboot empties it; the
+    office feeds were dark for two weeks after 26 September. The app now
+    teaches it again after every deploy and every five minutes, touching only
+    what is out of step (owner 2026-10-13)."""
+
+    def setUp(self):
+        import json
+        from unittest import mock
+
+        from . import cameras
+        from .models import Camera
+        self.site = Site.objects.create(code="RSY", name="Resync",
+                                        status=Site.Status.ACTIVE)
+        self.relay = {}                       # name -> config, like MediaMTX
+        self.calls = []
+
+        def fake_api(method, path, body=None):
+            self.calls.append((method, path))
+            if path.startswith("/v3/config/paths/list"):
+                if self.relay is None:
+                    return None, "connection refused"
+                return 200, json.dumps({"items": [
+                    {"name": n, **c} for n, c in self.relay.items()]})
+            name = path.rsplit("/", 1)[-1]
+            if "/add/" in path:
+                if name in self.relay:
+                    return 400, "path already exists"
+                self.relay[name] = dict(body)
+                return 200, ""
+            if "/patch/" in path:
+                self.relay[name].update(body)
+                return 200, ""
+            if "/delete/" in path:
+                return (200, "") if self.relay.pop(name, None) else (404, "")
+            return 404, ""
+        patcher = mock.patch.object(cameras, "_api", side_effect=fake_api)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.cameras = cameras
+        mk = lambda path, **kw: Camera.objects.create(  # noqa: E731
+            site=self.site, name=path, path=path,
+            stream_key=cameras.new_stream_key(), **kw)
+        self.pull = mk("rsy-pull", source_url="rtsp://u:p@203.0.113.9:8554/a")
+        self.push = mk("rsy-push")
+        self.off = mk("rsy-off", source_url="rtsp://u:p@203.0.113.9:8554/b",
+                      is_active=False)
+
+    def test_a_forgotten_camera_is_put_back_and_nothing_else_is_touched(self):
+        out = self.cameras.ensure_relay_paths()
+        self.assertEqual([(p, a, ok) for p, a, ok, _ in out],
+                         [("rsy-pull", "added", True)])
+        self.assertEqual(set(self.relay), {"rsy-pull"})
+        self.assertTrue(self.relay["rsy-pull"]["sourceOnDemand"])
+        # in step: one listing, no writes
+        self.calls.clear()
+        self.assertEqual(self.cameras.ensure_relay_paths(), [])
+        self.assertEqual([m for m, _ in self.calls], ["GET"])
+
+    def test_a_changed_address_is_updated_and_a_stopped_camera_removed(self):
+        self.cameras.ensure_relay_paths()
+        self.pull.source_url = "rtsp://u:p@198.51.100.4:8554/a"
+        self.pull.save()
+        self.relay["rsy-off"] = {"source": self.off.source_url}
+        out = {p: a for p, a, ok, _ in self.cameras.ensure_relay_paths()}
+        self.assertEqual(out, {"rsy-pull": "updated", "rsy-off": "removed"})
+        self.assertEqual(self.relay["rsy-pull"]["source"],
+                         "rtsp://u:p@198.51.100.4:8554/a")
+        self.assertNotIn("rsy-off", self.relay)
+
+    def test_a_relay_that_is_down_changes_nothing(self):
+        self.relay = None
+        out = self.cameras.ensure_relay_paths()
+        self.assertEqual([(p, a, ok) for p, a, ok, _ in out],
+                         [("*", "unreachable", False)])
+
+    def test_the_command_reports_only_what_it_did(self):
+        import io
+
+        from django.core.management import call_command
+        buf = io.StringIO()
+        call_command("camera_relay_sync", stdout=buf)
+        self.assertIn("rsy-pull: added — ok", buf.getvalue())
+        buf = io.StringIO()
+        call_command("camera_relay_sync", stdout=buf)
+        self.assertEqual(buf.getvalue(), "")
