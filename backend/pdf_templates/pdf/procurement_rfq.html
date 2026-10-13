@@ -21,8 +21,10 @@
 <body>
 {% include "pdf/_letterhead.html" with title="REQUEST FOR QUOTATION" %}
 
-<table class="kv"{% if not supplier %} style="width:50%;margin-left:auto"{% endif %}>
-  <tr>{% if supplier %}<td class="k">To</td><td>{{ supplier }}</td>{% endif %}
+<table class="kv">
+  {% if supplier %}<tr><td class="k">To</td><td colspan="3">{{ supplier }}</td></tr>{% endif %}
+  <tr><td class="k">Quote to</td>
+      <td><b>{{ co.legal_name }}</b>{% if co.address %}<br>{{ co.address }}{% endif %}</td>
       <td class="k">RFQ ref</td><td><b>{{ ref }}</b></td></tr>
 </table>
 

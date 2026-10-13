@@ -213,6 +213,9 @@ class ProcurementScheduleTests(TestCase):
         doc.close()
         self.assertNotIn("To\n", text)
         self.assertIn("RFQ ref", text)
+        # who the supplier quotes to: the company, by name and address
+        self.assertIn("Quote to", text)
+        self.assertIn("Sand Planet", text)
         # Finance does not send RFQs
         fin = make_user("psched_fin", User.Role.FINANCE)
         self.client.force_authenticate(fin)
