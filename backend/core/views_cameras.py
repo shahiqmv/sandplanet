@@ -199,47 +199,122 @@ def _tl_sites(request):
     return scoped_site_ids(request.user)
 
 
+def _tl_site_choices(ids):
+    """The sites this user works with — a site team's own site only — each
+    with the projects a camera can be marked against."""
+    from .models import Project
+    sites = Site.objects.exclude(status=Site.Status.CLOSED).exclude(
+        is_head_office=True).order_by("code")
+    if ids is not None:
+        sites = sites.filter(pk__in=ids)
+    out = []
+    for s in sites.prefetch_related("projects"):
+        out.append({"id": s.id, "code": s.code, "name": s.name,
+                    "projects": [{"id": p.id, "code": p.code,
+                                  "title": p.title}
+                                 for p in s.projects.all()
+                                 if p.status in (Project.Status.AWARDED,
+                                                 Project.Status.ACTIVE,
+                                                 Project.Status.ON_HOLD)]})
+    return out
+
+
 @api_view(["GET", "POST"])
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def timelapses(request):
-    """Each camera's joined reel and the weekly uploads behind it (?site=),
-    or a new week's video (multipart: site_id, camera_label, week_from,
-    week_to, file, note)."""
+    """Each camera's joined reel, the weekly uploads behind it and the camera
+    register (?site=), or a new week's video (multipart: camera_id,
+    week_from, week_to, file, note)."""
     from . import timelapse as tl
-    from .models import SiteTimelapse, TimelapseReel
+    from .models import SiteTimelapse, TimelapseCamera, TimelapseReel
     ids = _tl_sites(request)
     if request.method == "POST":
-        site = Site.objects.filter(pk=request.data.get("site_id")).first()
-        if site is None:
-            return Response({"detail": "Choose the site."}, status=400)
-        if ids is not None and site.id not in ids:
+        cam = TimelapseCamera.objects.select_related("site").filter(
+            pk=request.data.get("camera_id") or None).first()
+        if cam is None:
+            return Response({"detail": "Pick the camera."}, status=400)
+        if ids is not None and cam.site_id not in ids:
             return Response({"detail": "Not your site."}, status=403)
-        clip, msg = tl.create(site, request.data, request.FILES.get("file"),
+        clip, msg = tl.create(cam, request.data, request.FILES.get("file"),
                               request.user)
         if msg:
             return Response({"detail": msg}, status=400)
         return Response(tl.clip_dict(clip, request), status=201)
-    reels = TimelapseReel.objects.select_related("site")
-    clips = SiteTimelapse.objects.select_related("site", "uploaded_by")
+    reels = TimelapseReel.objects.select_related("site", "camera__project")
+    clips = SiteTimelapse.objects.select_related("site", "camera",
+                                                 "uploaded_by")
+    cams = TimelapseCamera.objects.select_related("site", "project")
     if ids is not None:
-        reels, clips = reels.filter(site_id__in=ids), clips.filter(
-            site_id__in=ids)
+        reels, clips, cams = (reels.filter(site_id__in=ids),
+                              clips.filter(site_id__in=ids),
+                              cams.filter(site_id__in=ids))
     if request.GET.get("site"):
         reels = reels.filter(site_id=request.GET["site"])
         clips = clips.filter(site_id=request.GET["site"])
+        cams = cams.filter(site_id=request.GET["site"])
     lw_from, lw_to = tl.last_week()
     reel_rows = [tl.reel_dict(r, request) for r in reels]
+    sites = _tl_site_choices(ids)
+    default = sites[0]["id"] if len(sites) == 1 else None
     return Response({
         "reels": reel_rows,
         "uploads": [tl.clip_dict(c, request) for c in clips[:200]],
+        "cameras": [tl.camera_dict(c) for c in cams],
+        "sites": sites,
+        # a site team uploads for its own site — chosen for them, not a pick
+        "default_site_id": default,
+        "site_locked": ids is not None and len(sites) == 1,
         "last_week": {"from": lw_from, "to": lw_to},
-        # a camera whose newest week is older than last week is behind
+        # a live camera whose newest week is older than last week is behind
         "behind": sorted(f"{r['site_code']} · {r['camera_label']}"
                          for r in reel_rows
-                         if r["covers_to"] and r["covers_to"] < lw_to),
+                         if r["camera_active"] and r["covers_to"]
+                         and r["covers_to"] < lw_to),
         "can_upload": request.user.role in tl.UPLOAD_ROLES,
         "can_publish": request.user.role in tl.PUBLISH_ROLES,
+        "can_manage_cameras": request.user.role in tl.CAMERA_ROLES,
     })
+
+
+@api_view(["POST"])
+def timelapse_cameras(request):
+    """Register a time-lapse camera: site_id, name, location, project_id."""
+    from . import timelapse as tl
+    ids = _tl_sites(request)
+    site = Site.objects.filter(pk=request.data.get("site_id") or None).first()
+    if site is None:
+        return Response({"detail": "Choose the site."}, status=400)
+    if ids is not None and site.id not in ids:
+        return Response({"detail": "Not your site."}, status=403)
+    cam, msg = tl.camera_create(site, request.data, request.user)
+    if msg:
+        return Response({"detail": msg},
+                        status=403 if "registers" in msg else 400)
+    return Response(tl.camera_dict(cam), status=201)
+
+
+@api_view(["PATCH", "DELETE"])
+def timelapse_camera_detail(request, pk):
+    """Edit or retire a camera; remove one that never had an upload."""
+    from . import timelapse as tl
+    from .models import TimelapseCamera
+    ids = _tl_sites(request)
+    cam = TimelapseCamera.objects.select_related("site", "project") \
+        .filter(pk=pk).first()
+    if cam is None or (ids is not None and cam.site_id not in ids):
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in tl.CAMERA_ROLES:
+        return Response({"detail": "The PM or the Director manages "
+                                   "cameras."}, status=403)
+    if request.method == "DELETE":
+        msg = tl.camera_remove(cam, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(status=204)
+    msg = tl.camera_update(cam, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(tl.camera_dict(cam))
 
 
 @api_view(["DELETE"])
@@ -248,7 +323,8 @@ def timelapse_detail(request, pk):
     from . import timelapse as tl
     from .models import SiteTimelapse
     ids = _tl_sites(request)
-    clip = SiteTimelapse.objects.select_related("site").filter(pk=pk).first()
+    clip = SiteTimelapse.objects.select_related("site", "camera") \
+        .filter(pk=pk).first()
     if clip is None or (ids is not None and clip.site_id not in ids):
         return Response({"detail": "Not found."}, status=404)
     if not (request.user.role in tl.PUBLISH_ROLES
@@ -265,7 +341,8 @@ def timelapse_reel(request, pk):
     from . import timelapse as tl
     from .models import TimelapseReel
     ids = _tl_sites(request)
-    reel = TimelapseReel.objects.select_related("site").filter(pk=pk).first()
+    reel = TimelapseReel.objects.select_related("site", "camera").filter(
+        pk=pk).first()
     if reel is None or (ids is not None and reel.site_id not in ids):
         return Response({"detail": "Not found."}, status=404)
     if request.user.role not in tl.PUBLISH_ROLES:
@@ -275,5 +352,5 @@ def timelapse_reel(request, pk):
     reel.save(update_fields=["client_visible"])
     audit("site", reel.site_id, "TIMELAPSE_PUBLISHED" if reel.client_visible
           else "TIMELAPSE_UNPUBLISHED", actor=request.user,
-          detail={"site": reel.site.code, "camera": reel.camera_label})
+          detail={"site": reel.site.code, "camera": reel.camera.name})
     return Response(tl.reel_dict(reel, request))

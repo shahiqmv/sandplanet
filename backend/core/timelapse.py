@@ -22,10 +22,13 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import audit
-from .models import SiteTimelapse, TimelapseReel
+from .models import Project, SiteTimelapse, TimelapseCamera, TimelapseReel
 
 UPLOAD_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN")
 PUBLISH_ROLES = ("PM", "DIRECTOR", "ADMIN")
+# the cameras are registered like the live ones — by whoever installs and
+# answers for them, not by whoever happens to upload
+CAMERA_ROLES = PUBLISH_ROLES
 MAX_BYTES = 1024 * 1024 * 1024          # 1 GB: an AVI week can be large
 ALLOWED = (".mp4", ".m4v", ".mov", ".webm", ".avi", ".mkv")
 
@@ -43,11 +46,94 @@ def last_week(today=None):
     return fri - timedelta(days=6), fri
 
 
+# ---- the camera register --------------------------------------------------------
+
+def _camera_fields(site, data, cam=None):
+    """Validated (name, location, project) or an error string."""
+    name = (data.get("name", cam.name if cam else "") or "").strip()[:80]
+    if not name:
+        return "Name the camera, e.g. 'Brinno 1 — north side'."
+    clash = TimelapseCamera.objects.filter(site=site, name__iexact=name)
+    if cam:
+        clash = clash.exclude(pk=cam.pk)
+    if clash.exists():
+        return f"{site.code} already has a camera called '{name}'."
+    location = (data.get("location", cam.location if cam else "")
+                or "").strip()[:200]
+    if not location:
+        return "Say where it is mounted and what it looks at."
+    project = cam.project if cam else None
+    if "project_id" in data:
+        pid = data.get("project_id")
+        project = None
+        if pid not in (None, ""):
+            project = Project.objects.filter(pk=pid, site=site).first()
+            if project is None:
+                return "That project is not on this site."
+    return name, location, project
+
+
+def camera_create(site, data, actor):
+    if actor.role not in CAMERA_ROLES:
+        return None, "The PM or the Director registers cameras."
+    got = _camera_fields(site, data)
+    if isinstance(got, str):
+        return None, got
+    name, location, project = got
+    cam = TimelapseCamera.objects.create(site=site, name=name,
+                                         location=location, project=project,
+                                         created_by=actor)
+    audit("site", site.id, "TIMELAPSE_CAMERA_ADDED", actor=actor,
+          detail={"site": site.code, "camera": name,
+                  "project": project.code if project else None})
+    return cam, None
+
+
+def camera_update(cam, data, actor):
+    if actor.role not in CAMERA_ROLES:
+        return "The PM or the Director edits cameras."
+    got = _camera_fields(cam.site, data, cam)
+    if isinstance(got, str):
+        return got
+    cam.name, cam.location, cam.project = got
+    if "is_active" in data:
+        cam.is_active = bool(data.get("is_active"))
+    cam.save()
+    audit("site", cam.site_id, "TIMELAPSE_CAMERA_UPDATED", actor=actor,
+          detail={"site": cam.site.code, "camera": cam.name,
+                  "active": cam.is_active})
+    return None
+
+
+def camera_remove(cam, actor):
+    """Only a camera nothing was ever uploaded for; otherwise retire it."""
+    if actor.role not in CAMERA_ROLES:
+        return "The PM or the Director removes cameras."
+    if cam.uploads.exists():
+        return ("Weeks have been uploaded for this camera — retire it "
+                "instead, so its video is kept.")
+    audit("site", cam.site_id, "TIMELAPSE_CAMERA_REMOVED", actor=actor,
+          detail={"site": cam.site.code, "camera": cam.name})
+    cam.delete()
+    return None
+
+
+def camera_dict(cam):
+    return {"id": cam.id, "site_id": cam.site_id, "site_code": cam.site.code,
+            "name": cam.name, "location": cam.location,
+            "project_id": cam.project_id,
+            "project_code": cam.project.code if cam.project_id else "",
+            "project_title": cam.project.title if cam.project_id else "",
+            "is_active": cam.is_active,
+            "uploads": cam.uploads.count()}
+
+
 # ---- uploads -------------------------------------------------------------------
 
 @transaction.atomic
-def create(site, data, upload, actor):
+def create(camera, data, upload, actor):
     """Returns (clip, error)."""
+    site = camera.site
     if actor.role not in UPLOAD_ROLES:
         return None, "The site team, PM or Director uploads time-lapses."
     if upload is None:
@@ -56,9 +142,8 @@ def create(site, data, upload, actor):
         return None, "Upload the camera's video file (AVI or MP4)."
     if upload.size > MAX_BYTES:
         return None, "That video is over 1 GB — split the week and upload twice."
-    label = (data.get("camera_label") or "").strip()[:80]
-    if not label:
-        return None, "Name the camera, e.g. 'Brinno — north side'."
+    if not camera.is_active:
+        return None, "That camera is retired — pick the one now in its place."
     try:
         wf = date.fromisoformat(str(data.get("week_from"))[:10])
         wt = date.fromisoformat(str(data.get("week_to"))[:10])
@@ -69,34 +154,34 @@ def create(site, data, upload, actor):
     if wf > date.today():
         return None, "That week has not started yet."
     clip = SiteTimelapse.objects.create(
-        site=site, camera_label=label, week_from=wf, week_to=wt,
+        site=site, camera=camera, week_from=wf, week_to=wt,
         file=upload, file_name=upload.name[:200], size_bytes=upload.size,
         note=(data.get("note") or "")[:300].strip(), uploaded_by=actor)
-    reel, _ = TimelapseReel.objects.get_or_create(site=site,
-                                                  camera_label=label)
+    reel, _ = TimelapseReel.objects.get_or_create(camera=camera,
+                                                  defaults={"site": site})
     TimelapseReel.objects.filter(pk=reel.pk).update(needs_build=True)
     audit("site", site.id, "TIMELAPSE_ADDED", actor=actor,
-          detail={"site": site.code, "camera": label, "week": f"{wf}..{wt}"})
+          detail={"site": site.code, "camera": camera.name,
+                  "week": f"{wf}..{wt}"})
     return clip, None
 
 
 @transaction.atomic
 def remove(clip, actor):
-    site, label = clip.site, clip.camera_label
+    site, camera = clip.site, clip.camera
     if clip.file:
         clip.file.delete(save=False)
     clip.delete()
-    reel = TimelapseReel.objects.filter(site=site, camera_label=label).first()
+    reel = TimelapseReel.objects.filter(camera=camera).first()
     if reel:
-        if not SiteTimelapse.objects.filter(site=site,
-                                            camera_label=label).exists():
+        if not SiteTimelapse.objects.filter(camera=camera).exists():
             if reel.file:
                 reel.file.delete(save=False)
             reel.delete()
         else:
             TimelapseReel.objects.filter(pk=reel.pk).update(needs_build=True)
     audit("site", site.id, "TIMELAPSE_REMOVED", actor=actor,
-          detail={"site": site.code, "camera": label})
+          detail={"site": site.code, "camera": camera.name})
 
 
 # ---- the video work (ffmpeg) -----------------------------------------------------
@@ -186,7 +271,7 @@ def normalize_clip(clip, workdir):
 def build_reel(reel, workdir):
     """Join every converted week of this camera, in date order."""
     clips = list(SiteTimelapse.objects.filter(
-        site=reel.site, camera_label=reel.camera_label, normalized=True)
+        camera_id=reel.camera_id, normalized=True)
         .order_by("week_from", "id"))
     if not clips:
         TimelapseReel.objects.filter(pk=reel.pk).update(needs_build=False)
@@ -202,7 +287,7 @@ def build_reel(reel, workdir):
     else:
         concat(parts, out)
     old = reel.file.name if reel.file else ""
-    name = f"{reel.site.code}-{reel.camera_label}".replace(" ", "-")[:60]
+    name = f"{reel.site.code}-{reel.camera.name}".replace(" ", "-")[:60]
     with open(out, "rb") as f:
         reel.file.save(f"{name}.mp4", File(f), save=False)
     reel.covers_from = clips[0].week_from
@@ -229,15 +314,14 @@ def build_pending():
                 normalized=False, status="PENDING").order_by("id"):
             if normalize_clip(clip, work):
                 converted += 1
-                TimelapseReel.objects.filter(
-                    site=clip.site, camera_label=clip.camera_label).update(
-                    needs_build=True)
+                TimelapseReel.objects.filter(camera_id=clip.camera_id) \
+                    .update(needs_build=True)
             else:
                 failed += 1
             for name in os.listdir(work):
                 os.remove(os.path.join(work, name))
         for reel in TimelapseReel.objects.filter(needs_build=True) \
-                .select_related("site"):
+                .select_related("site", "camera"):
             if build_reel(reel, work):
                 built += 1
             for name in os.listdir(work):
@@ -255,17 +339,20 @@ def _url(f, request):
 
 
 def reel_dict(reel, request=None, staff=True):
-    waiting = SiteTimelapse.objects.filter(
-        site=reel.site, camera_label=reel.camera_label,
-        status="PENDING").count()
+    cam = reel.camera
+    waiting = SiteTimelapse.objects.filter(camera=cam,
+                                           status="PENDING").count()
     out = {"id": reel.id, "site_code": reel.site.code,
-           "camera_label": reel.camera_label,
+           "camera_label": cam.name, "location": cam.location,
+           "project_code": cam.project.code if cam.project_id else "",
+           "project_title": cam.project.title if cam.project_id else "",
            "play_url": _url(reel.file, request),
            "covers_from": reel.covers_from, "covers_to": reel.covers_to,
            "weeks": reel.weeks,
            "duration_s": reel.duration_s, "updated": reel.built_at}
     if staff:
-        out.update({"site_id": reel.site_id,
+        out.update({"site_id": reel.site_id, "camera_id": cam.id,
+                    "camera_active": cam.is_active,
                     "client_visible": reel.client_visible,
                     "waiting": waiting,
                     "size_mb": (round(reel.size_bytes / 1048576, 1)
@@ -275,7 +362,7 @@ def reel_dict(reel, request=None, staff=True):
 
 def clip_dict(clip, request=None):
     return {"id": clip.id, "site_code": clip.site.code,
-            "camera_label": clip.camera_label,
+            "camera_label": clip.camera.name,
             "week_from": clip.week_from, "week_to": clip.week_to,
             "status": clip.status, "status_label": clip.get_status_display(),
             "error": clip.error, "note": clip.note,

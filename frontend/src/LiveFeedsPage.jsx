@@ -97,7 +97,7 @@ export default function LiveFeedsPage({ me }) {
       ))}
 
       {/* the SD-card time-lapse cameras: weekly uploads joined per camera */}
-      <TimelapseSection sites={sites} />
+      <TimelapseSection />
     </div>
   );
 }

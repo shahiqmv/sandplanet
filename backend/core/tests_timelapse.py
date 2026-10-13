@@ -11,7 +11,8 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from . import timelapse as tl
-from .models import Site, SiteTimelapse, TimelapseReel, User
+from .models import (Project, Site, SiteTimelapse, TimelapseCamera,
+                     TimelapseReel, User)
 from .tests import make_user
 
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
@@ -45,17 +46,87 @@ class TimelapseTests(TestCase):
         self.pm = make_user("tl_pm", User.Role.PM, site=self.site)
         self.far = make_user("tl_far", User.Role.SITE_ADMIN, site=self.other)
         self.c = APIClient()
+        self.cam = TimelapseCamera.objects.create(
+            site=self.site, name="Brinno north", location="Roof of block A")
 
-    def upload(self, user, video, week_from, week_to, label="Brinno north"):
+    def upload(self, user, video, week_from, week_to, camera=None):
         self.c.force_authenticate(user)
+        cam = self.cam if camera is None else camera
         return self.c.post("/api/v1/timelapses", {
-            "site_id": self.site.id, "camera_label": label,
+            "camera_id": cam.id if cam else "",
             "week_from": week_from, "week_to": week_to, "file": video},
             format="multipart")
 
+    def test_cameras_are_registered_with_project_and_location(self):
+        proj = Project.objects.create(site=self.site, code="DTE",
+                                      title="Deck villas",
+                                      status=Project.Status.ACTIVE)
+        elsewhere = Project.objects.create(site=self.other, code="VKR-1",
+                                           title="Spa",
+                                           status=Project.Status.ACTIVE)
+        body = {"site_id": self.site.id, "name": "Brinno 2",
+                "location": "Jetty head, looking at villas 20-30",
+                "project_id": proj.id}
+        # the site engineer uploads but does not register cameras
+        self.c.force_authenticate(self.se)
+        self.assertEqual(self.c.post("/api/v1/timelapse-cameras", body,
+                                     format="json").status_code, 403)
+        self.c.force_authenticate(self.pm)
+        r = self.c.post("/api/v1/timelapse-cameras",
+                        {**body, "location": ""}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("mounted", r.data["detail"])
+        r = self.c.post("/api/v1/timelapse-cameras",
+                        {**body, "project_id": elsewhere.id}, format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.c.post("/api/v1/timelapse-cameras", body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual((r.data["project_code"], r.data["location"]),
+                         ("DTE", body["location"]))
+        # one name per site
+        self.assertEqual(self.c.post("/api/v1/timelapse-cameras",
+                                     {**body, "name": "brinno 2"},
+                                     format="json").status_code, 400)
+        # the site team sees its own site only, chosen for it
+        self.c.force_authenticate(self.se)
+        d = self.c.get("/api/v1/timelapses").data
+        self.assertEqual([s["code"] for s in d["sites"]], ["SJR"])
+        self.assertTrue(d["site_locked"])
+        self.assertEqual(d["default_site_id"], self.site.id)
+        self.assertEqual(d["sites"][0]["projects"][0]["code"], "DTE")
+        self.assertEqual(sorted(c["name"] for c in d["cameras"]),
+                         ["Brinno 2", "Brinno north"])
+        self.assertFalse(d["can_manage_cameras"])
+        self.c.force_authenticate(self.far)
+        self.assertEqual(self.c.get("/api/v1/timelapses").data["cameras"],
+                         [])
+        # a retired camera takes no more uploads; one with uploads is
+        # retired, not deleted
+        cam2 = TimelapseCamera.objects.get(name="Brinno 2")
+        tiny = SimpleUploadedFile("week.avi", b"RIFF0000AVI ")
+        self.assertEqual(self.upload(self.se, tiny, "2026-10-03",
+                                     "2026-10-09", cam2).status_code, 201)
+        self.c.force_authenticate(self.pm)
+        self.assertEqual(self.c.delete(
+            f"/api/v1/timelapse-cameras/{cam2.id}").status_code, 400)
+        r = self.c.patch(f"/api/v1/timelapse-cameras/{cam2.id}",
+                         {"is_active": False}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.upload(self.se, SimpleUploadedFile("w.avi", b"RIFF"),
+                        "2026-10-10", "2026-10-16", cam2)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("retired", r.data["detail"])
+        # a camera never used can be removed outright
+        self.c.force_authenticate(self.pm)
+        spare = TimelapseCamera.objects.create(site=self.site, name="Spare",
+                                               location="store")
+        self.assertEqual(self.c.delete(
+            f"/api/v1/timelapse-cameras/{spare.id}").status_code, 204)
+
     def test_an_upload_needs_a_camera_a_week_and_a_video(self):
         tiny = SimpleUploadedFile("week.avi", b"RIFF0000AVI ")
-        r = self.upload(self.se, tiny, "2026-10-03", "2026-10-09", label="")
+        r = self.upload(self.se, tiny, "2026-10-03", "2026-10-09",
+                        camera=False)
         self.assertEqual(r.status_code, 400)
         self.assertIn("camera", r.data["detail"].lower())
         r = self.upload(self.se, SimpleUploadedFile("notes.txt", b"x"),
@@ -70,7 +141,7 @@ class TimelapseTests(TestCase):
         # another site's staff cannot upload here or see it
         self.c.force_authenticate(self.far)
         self.assertEqual(self.c.post("/api/v1/timelapses", {
-            "site_id": self.site.id, "camera_label": "x",
+            "camera_id": self.cam.id,
             "week_from": "2026-10-03", "week_to": "2026-10-09",
             "file": SimpleUploadedFile("w.mp4", b"x")},
             format="multipart").status_code, 403)
@@ -153,11 +224,11 @@ class TimelapseTests(TestCase):
         self.assertNotIn("client_visible", rows[0])      # no staff detail
 
     def test_a_camera_behind_on_its_weeks_is_flagged(self):
-        TimelapseReel.objects.create(site=self.site, camera_label="Brinno",
+        TimelapseReel.objects.create(site=self.site, camera=self.cam,
                                      covers_from=date(2026, 1, 3),
                                      covers_to=date(2026, 1, 9), weeks=1,
                                      needs_build=False)
         self.c.force_authenticate(self.pm)
         d = self.c.get("/api/v1/timelapses").data
-        self.assertEqual(d["behind"], ["SJR · Brinno"])
+        self.assertEqual(d["behind"], ["SJR · Brinno north"])
         self.assertTrue(d["can_publish"])

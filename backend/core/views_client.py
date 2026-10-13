@@ -450,7 +450,8 @@ def client_site_timelapses(request, pk):
     from . import timelapse as tl
     from .models import TimelapseReel
     reels = TimelapseReel.objects.filter(
-        site_id=pk, client_visible=True, file__gt="").select_related("site")
+        site_id=pk, client_visible=True, file__gt="").select_related(
+        "site", "camera__project")
     return Response({"timelapses": [tl.reel_dict(r, request, staff=False)
                                     for r in reels]})
 

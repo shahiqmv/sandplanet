@@ -9885,6 +9885,29 @@ def timelapse_path(instance, filename):
     return f"timelapse/{code}/{uuid.uuid4().hex[:8]}-{filename}"
 
 
+class TimelapseCamera(models.Model):
+    """A time-lapse camera on the register, like the live cameras: the site,
+    the project it watches and where it is mounted (owner 2026-10-13: "need
+    to be managed like live"). Uploads pick it from a list, so a week can
+    never land on a mistyped camera."""
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="timelapse_cameras")
+    project = models.ForeignKey("Project", on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="+")
+    name = models.CharField(max_length=80)
+    location = models.CharField(max_length=200, blank=True)
+    # retired: off the upload list, its video kept
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["site__code", "name"]
+        constraints = [models.UniqueConstraint(
+            fields=["site", "name"], name="uniq_timelapse_camera_name")]
+
+
 class SiteTimelapse(models.Model):
     """One week's video from a site camera (owner 2026-10-13).
 
@@ -9900,7 +9923,8 @@ class SiteTimelapse(models.Model):
 
     site = models.ForeignKey(Site, on_delete=models.CASCADE,
                              related_name="timelapses")
-    camera_label = models.CharField(max_length=80)
+    camera = models.ForeignKey(TimelapseCamera, on_delete=models.PROTECT,
+                               related_name="uploads")
     week_from = models.DateField()
     week_to = models.DateField()
     file = models.FileField(upload_to=timelapse_path)
@@ -9927,7 +9951,8 @@ class TimelapseReel(models.Model):
     — the one video the team and the client watch."""
     site = models.ForeignKey(Site, on_delete=models.CASCADE,
                              related_name="timelapse_reels")
-    camera_label = models.CharField(max_length=80)
+    camera = models.OneToOneField(TimelapseCamera, on_delete=models.CASCADE,
+                                  related_name="reel")
     file = models.FileField(upload_to=timelapse_path, null=True, blank=True)
     covers_from = models.DateField(null=True, blank=True)
     covers_to = models.DateField(null=True, blank=True)
@@ -9940,6 +9965,4 @@ class TimelapseReel(models.Model):
     client_visible = models.BooleanField(default=False)
 
     class Meta:
-        ordering = ["site__code", "camera_label"]
-        constraints = [models.UniqueConstraint(
-            fields=["site", "camera_label"], name="uniq_reel_per_camera")]
+        ordering = ["site__code", "camera__name"]

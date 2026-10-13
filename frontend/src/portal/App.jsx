@@ -1011,7 +1011,7 @@ function CamerasPage({ site, onBack }) {
           <div key={`tl-${t.id}`} className="camrow">
             <div className="camhead">
               <strong>{t.camera_label}</strong>
-              <span className="muted"> · time-lapse</span>
+              <span className="muted"> · time-lapse{t.location && ` · ${t.location}`}</span>
             </div>
             <video src={t.play_url} controls preload="metadata"
                    style={{ width: "100%", borderRadius: 8, background: "#000" }} />
