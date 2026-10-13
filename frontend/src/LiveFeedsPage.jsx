@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 import WhepPlayer from "./WhepPlayer.jsx";
+import TimelapseSection from "./Timelapse.jsx";
 
 /* Live site cameras (owner 2026-08-12).
  *
@@ -94,6 +95,9 @@ export default function LiveFeedsPage({ me }) {
           </div>
         </div>
       ))}
+
+      {/* the SD-card time-lapse cameras: weekly uploads joined per camera */}
+      <TimelapseSection sites={sites} />
     </div>
   );
 }

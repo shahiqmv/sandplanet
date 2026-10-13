@@ -17,7 +17,9 @@ import secrets
 
 from django.conf import settings
 from rest_framework.decorators import (api_view, authentication_classes,
+                                       parser_classes,
                                        permission_classes)
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
@@ -189,3 +191,89 @@ def relay_auth(request, secret=""):
         return Response({"detail": "denied"}, status=401)
 
     return Response({"detail": "denied"}, status=401)
+
+
+# ---- site time-lapse: weekly uploads joined per camera (owner 2026-10-13) ----
+
+def _tl_sites(request):
+    return scoped_site_ids(request.user)
+
+
+@api_view(["GET", "POST"])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def timelapses(request):
+    """Each camera's joined reel and the weekly uploads behind it (?site=),
+    or a new week's video (multipart: site_id, camera_label, week_from,
+    week_to, file, note)."""
+    from . import timelapse as tl
+    from .models import SiteTimelapse, TimelapseReel
+    ids = _tl_sites(request)
+    if request.method == "POST":
+        site = Site.objects.filter(pk=request.data.get("site_id")).first()
+        if site is None:
+            return Response({"detail": "Choose the site."}, status=400)
+        if ids is not None and site.id not in ids:
+            return Response({"detail": "Not your site."}, status=403)
+        clip, msg = tl.create(site, request.data, request.FILES.get("file"),
+                              request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(tl.clip_dict(clip, request), status=201)
+    reels = TimelapseReel.objects.select_related("site")
+    clips = SiteTimelapse.objects.select_related("site", "uploaded_by")
+    if ids is not None:
+        reels, clips = reels.filter(site_id__in=ids), clips.filter(
+            site_id__in=ids)
+    if request.GET.get("site"):
+        reels = reels.filter(site_id=request.GET["site"])
+        clips = clips.filter(site_id=request.GET["site"])
+    lw_from, lw_to = tl.last_week()
+    reel_rows = [tl.reel_dict(r, request) for r in reels]
+    return Response({
+        "reels": reel_rows,
+        "uploads": [tl.clip_dict(c, request) for c in clips[:200]],
+        "last_week": {"from": lw_from, "to": lw_to},
+        # a camera whose newest week is older than last week is behind
+        "behind": sorted(f"{r['site_code']} · {r['camera_label']}"
+                         for r in reel_rows
+                         if r["covers_to"] and r["covers_to"] < lw_to),
+        "can_upload": request.user.role in tl.UPLOAD_ROLES,
+        "can_publish": request.user.role in tl.PUBLISH_ROLES,
+    })
+
+
+@api_view(["DELETE"])
+def timelapse_detail(request, pk):
+    """Remove a week's upload — its reel is rebuilt without it."""
+    from . import timelapse as tl
+    from .models import SiteTimelapse
+    ids = _tl_sites(request)
+    clip = SiteTimelapse.objects.select_related("site").filter(pk=pk).first()
+    if clip is None or (ids is not None and clip.site_id not in ids):
+        return Response({"detail": "Not found."}, status=404)
+    if not (request.user.role in tl.PUBLISH_ROLES
+            or clip.uploaded_by_id == request.user.id):
+        return Response({"detail": "Whoever uploaded it, the PM or the "
+                                   "Director removes it."}, status=403)
+    tl.remove(clip, request.user)
+    return Response(status=204)
+
+
+@api_view(["PATCH"])
+def timelapse_reel(request, pk):
+    """Publish a camera's reel to the client's portal, or take it back."""
+    from . import timelapse as tl
+    from .models import TimelapseReel
+    ids = _tl_sites(request)
+    reel = TimelapseReel.objects.select_related("site").filter(pk=pk).first()
+    if reel is None or (ids is not None and reel.site_id not in ids):
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in tl.PUBLISH_ROLES:
+        return Response({"detail": "The PM or the Director publishes to the "
+                                   "client."}, status=403)
+    reel.client_visible = bool(request.data.get("client_visible"))
+    reel.save(update_fields=["client_visible"])
+    audit("site", reel.site_id, "TIMELAPSE_PUBLISHED" if reel.client_visible
+          else "TIMELAPSE_UNPUBLISHED", actor=request.user,
+          detail={"site": reel.site.code, "camera": reel.camera_label})
+    return Response(tl.reel_dict(reel, request))

@@ -439,6 +439,25 @@ def client_document_pdf(request, ref):
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
+def client_site_timelapses(request, pk):
+    """The camera time-lapses published to this client — each one a single
+    continuous video. Same gate as the cameras, and off until a PM or the
+    Director publishes it."""
+    if (b := _blocked(request, "show_cameras")):
+        return b
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    from . import timelapse as tl
+    from .models import TimelapseReel
+    reels = TimelapseReel.objects.filter(
+        site_id=pk, client_visible=True, file__gt="").select_related("site")
+    return Response({"timelapses": [tl.reel_dict(r, request, staff=False)
+                                    for r in reels]})
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
 def client_site_cameras(request, pk):
     """Cameras this client may watch on this site.
 

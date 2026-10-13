@@ -951,6 +951,12 @@ function CamerasPage({ site, onBack }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
   const [open, setOpen] = useState(null);
+  // the camera time-lapses the team has published — one video per camera
+  const [tl, setTl] = useState([]);
+  useEffect(() => {
+    api(`/sites/${site.id}/timelapses`)
+      .then((r) => setTl(r.timelapses || [])).catch(() => setTl([]));
+  }, [site.id]);
 
   function load() {
     api(`/sites/${site.id}/cameras`)
@@ -972,7 +978,7 @@ function CamerasPage({ site, onBack }) {
         <div className="sec-title"><h2>Live Feeds</h2></div>
         {err && <p className="muted">{err}</p>}
         {!d && !err && <p className="muted">Loading…</p>}
-        {d && cams.length === 0 && (
+        {d && cams.length === 0 && tl.length === 0 && (
           <div className="soon">
             <div className="icon">📹</div>
             <h3>Coming soon</h3>
@@ -999,6 +1005,18 @@ function CamerasPage({ site, onBack }) {
                   This camera isn’t reporting in at the moment. It usually comes
                   back on its own once the site’s connection recovers.
                 </p>}
+          </div>
+        ))}
+        {tl.map((t) => (
+          <div key={`tl-${t.id}`} className="camrow">
+            <div className="camhead">
+              <strong>{t.camera_label}</strong>
+              <span className="muted"> · time-lapse</span>
+            </div>
+            <video src={t.play_url} controls preload="metadata"
+                   style={{ width: "100%", borderRadius: 8, background: "#000" }} />
+            {t.covers_from && <p className="muted" style={{ margin: "6px 0 0" }}>
+              {fmt(t.covers_from)} – {fmt(t.covers_to)} · {t.weeks} week{t.weeks > 1 ? "s" : ""}</p>}
           </div>
         ))}
       </div>

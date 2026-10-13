@@ -127,6 +127,9 @@ ensure_crons() {
     "$C training_expiry >> /var/log/training_expiry.log 2>&1" \
     "training/competency expiry reminders"
 
+  add_cron "# planet-timelapse-build" "*/10 * * * *" \
+    "$C timelapse_build >> /var/log/timelapse_build.log 2>&1" \
+    "time-lapse conversion and joining (every 10 minutes)"
   add_cron "# planet-camera-relay" "*/5 * * * *" \
     "$C camera_relay_sync >> /var/log/camera_relay.log 2>&1" \
     "camera relay re-registration (every 5 minutes; covers reboots)"

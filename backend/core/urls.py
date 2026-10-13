@@ -1101,6 +1101,11 @@ urlpatterns = [
     # --- site cameras (owner 2026-08-12)
     path("cameras", cameras_api.camera_list, name="camera-list"),
     path("cameras/<int:pk>", cameras_api.camera_detail, name="camera-detail"),
+    path("timelapses", cameras_api.timelapses, name="timelapses"),
+    path("timelapses/<int:pk>", cameras_api.timelapse_detail,
+         name="timelapse-detail"),
+    path("timelapse-reels/<int:pk>", cameras_api.timelapse_reel,
+         name="timelapse-reel"),
     path("cameras/<int:pk>/ticket", cameras_api.camera_ticket,
          name="camera-ticket"),
     # --- Trading arm (TRADING_BUILD_BRIEF.md): its own app at /t/, its own

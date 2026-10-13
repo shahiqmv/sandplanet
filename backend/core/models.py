@@ -9877,3 +9877,69 @@ class HealthAlert(models.Model):
     count = models.IntegerField()
     raised_at = models.DateTimeField(auto_now_add=True)
     closed_on = models.DateField(null=True, blank=True)
+
+
+def timelapse_path(instance, filename):
+    import uuid
+    code = instance.site.code if instance.site_id else "site"
+    return f"timelapse/{code}/{uuid.uuid4().hex[:8]}-{filename}"
+
+
+class SiteTimelapse(models.Model):
+    """One week's video from a site camera (owner 2026-10-13).
+
+    The Brinno construction cameras have no network: they record to an SD
+    card and make the time-lapse themselves. Someone on site uploads each
+    week's video here; a background job converts it to a standard MP4 and
+    joins it onto that camera's one continuous reel (TimelapseReel). The
+    weekly pieces are the inputs, not what people watch."""
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Waiting to be joined"
+        JOINED = "JOINED", "Joined"
+        FAILED = "FAILED", "Could not be read"
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="timelapses")
+    camera_label = models.CharField(max_length=80)
+    week_from = models.DateField()
+    week_to = models.DateField()
+    file = models.FileField(upload_to=timelapse_path)
+    file_name = models.CharField(max_length=200, blank=True)
+    size_bytes = models.BigIntegerField(null=True, blank=True)
+    duration_s = models.DecimalField(max_digits=9, decimal_places=2,
+                                     null=True, blank=True)
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.PENDING)
+    # converted to the reel's standard MP4 (the original is then dropped)
+    normalized = models.BooleanField(default=False)
+    error = models.CharField(max_length=300, blank=True)
+    note = models.CharField(max_length=300, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-week_from", "-id"]
+
+
+class TimelapseReel(models.Model):
+    """A camera's whole time-lapse so far, every week joined in date order
+    — the one video the team and the client watch."""
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="timelapse_reels")
+    camera_label = models.CharField(max_length=80)
+    file = models.FileField(upload_to=timelapse_path, null=True, blank=True)
+    covers_from = models.DateField(null=True, blank=True)
+    covers_to = models.DateField(null=True, blank=True)
+    weeks = models.IntegerField(default=0)
+    duration_s = models.DecimalField(max_digits=9, decimal_places=2,
+                                     null=True, blank=True)
+    size_bytes = models.BigIntegerField(null=True, blank=True)
+    built_at = models.DateTimeField(null=True, blank=True)
+    needs_build = models.BooleanField(default=True)
+    client_visible = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["site__code", "camera_label"]
+        constraints = [models.UniqueConstraint(
+            fields=["site", "camera_label"], name="uniq_reel_per_camera")]
