@@ -774,11 +774,17 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
 
   async function propose() {
     onError(null);
+    // only lines still on the order — the ones this form shows
+    const live = new Set(o.lines.filter((l) => Number(l.line_value) > 0)
+      .map((l) => l.id));
     try {
       await api(`/ipr/${refIpr}/correct-charges`,
                 { method: "POST", body: {
-                    ...f, fold_line_ids: foldIds, drop_line_ids: dropIds,
-                    line_amendments: Object.entries(amend).map(
+                    ...f,
+                    fold_line_ids: foldIds.filter((i) => live.has(i)),
+                    drop_line_ids: dropIds.filter((i) => live.has(i)),
+                    line_amendments: Object.entries(amend)
+                      .filter(([id]) => live.has(Number(id))).map(
                       ([id, a]) => ({ line_id: Number(id), ...a })),
                     new_lines: added } });
       setOpen(false); onChanged();
@@ -964,9 +970,17 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
   if (!open) return (
     <p style={{ margin: "8px 0", fontSize: 12.5 }}>
       <button style={ghostButton}
-        onClick={() => { setF({ discount: o.discount ?? "",
-          freight_handling: o.freight_handling ?? "",
-          misc_fee: o.misc_fee ?? "", reason: "" }); setOpen(true); }}>
+        onClick={() => {
+          setF({ discount: o.discount ?? "",
+                 freight_handling: o.freight_handling ?? "",
+                 misc_fee: o.misc_fee ?? "", reason: "" });
+          // A fresh start every time: the previous correction's picks
+          // stayed in memory, so a second correction re-sent lines the
+          // first had already removed — hidden now, refused as "already
+          // off the order" (owner 2026-10-13, IPR-048).
+          setFoldIds([]); setDropIds([]); setAmend({}); setAdded([]);
+          setOpen(true);
+        }}>
         Correct order…</button>
       <span style={{ color: "#8a97a1", marginLeft: 8 }}>
         add or remove an item the supplier changed at shipment, or fix
