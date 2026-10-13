@@ -49,5 +49,10 @@
   </tr>
   {% endfor %}
 </table>
+{% if remark %}
+<table class="kv" style="margin-top:10px">
+  <tr><td class="k">Remarks</td><td>{{ remark|linebreaksbr }}</td></tr>
+</table>
+{% endif %}
 </body>
 </html>

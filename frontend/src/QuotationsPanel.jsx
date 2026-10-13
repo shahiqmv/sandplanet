@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { RfqQuotePicker } from "./MrRfq.jsx";
 import { SectionTitle, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -446,6 +447,9 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                           flexWrap: "wrap" }}>
               <strong style={{ color: "var(--sp-navy)" }}>
                 {q.supplier_name}</strong>
+                {q.rfq_ref && <span style={{ fontSize: 11.5, color: "#5a6b78",
+                                             marginLeft: 6 }}>
+                  from {q.rfq_ref}</span>}
               <span style={{ fontSize: 12, color: "#5a6b78" }}>
                 {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
                 net MVR {Number(q.total).toLocaleString()}
@@ -547,6 +551,10 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
         );
       })}
 
+      {/* a quote that came back against one of the MR's RFQs is taken in
+          from there — supplier, file and items already matched */}
+      {canEdit && <RfqQuotePicker prRef={doc.ref}
+        onTaken={() => { load(); onChanged?.(); }} />}
       {canEdit && !adding && (
         <button onClick={() => setAdding(true)} style={buttonStyle}>
           + Add quotation

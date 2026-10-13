@@ -4,6 +4,7 @@ import { shrinkPhoto } from "./imageResize.js";
 import PoAmendPanel from "./PoAmendPanel.jsx";
 import AwardWithdrawModal from "./AwardWithdrawModal.jsx";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
+import MrRfqPanel from "./MrRfq.jsx";
 import { VesselPicker, VesselTrack } from "./Vessels.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
@@ -1943,6 +1944,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         <QuotationsSummary doc={doc} me={me}
                            onOpenWorkspace={() => onOpenMatch(doc)} />
       )}
+      {/* RFQs sent for this MR's items and the quotes that came back
+          (owner 2026-10-13) */}
+      {doc.doc_type === "MR" && !doc.is_void && <MrRfqPanel doc={doc} me={me} />}
 
       {doc.revisions?.length > 1 && (
         <p style={{ fontSize: 12, color: "#5a6b78" }}>

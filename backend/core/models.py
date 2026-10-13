@@ -2423,9 +2423,57 @@ class Quotation(models.Model):
     gst_applicable = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
     file = models.FileField(upload_to=quotation_path, null=True, blank=True)
+    # the MR's request for quotation this quote answers, when picked from it
+    rfq = models.ForeignKey("MrRfq", on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="quotations")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
+def mr_rfq_quote_path(instance, filename):
+    import uuid
+    return f"rfq-quotes/{instance.ref}/{uuid.uuid4().hex[:8]}-{filename}"
+
+
+class MrRfq(models.Model):
+    """A request for quotation sent to one supplier for items of an MR
+    (owner 2026-10-13). Local purchasing asks before it buys: the RFQ is kept
+    on the MR's history, the supplier's quote is uploaded against it, and
+    when the PR is prepared Purchasing picks the quote from here instead of
+    typing it in again."""
+    mr = models.ForeignKey(Document, on_delete=models.CASCADE,
+                           related_name="rfqs")
+    ref = models.CharField(max_length=24, unique=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT,
+                                 related_name="rfqs")
+    remark = models.TextField(blank=True)        # for the supplier, printed
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    # the supplier's answer
+    quote_file = models.FileField(upload_to=mr_rfq_quote_path, null=True,
+                                  blank=True)
+    quote_ref = models.TextField(blank=True)
+    quote_date = models.DateField(null=True, blank=True)
+    received_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    received_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+
+class MrRfqLine(models.Model):
+    rfq = models.ForeignKey(MrRfq, on_delete=models.CASCADE,
+                            related_name="lines")
+    mr_line = models.ForeignKey("DocumentLine", on_delete=models.PROTECT,
+                                related_name="rfq_lines")
+    qty = models.DecimalField(max_digits=12, decimal_places=2, null=True,
+                              blank=True)        # as asked, at the time
 
     class Meta:
         ordering = ["id"]

@@ -114,6 +114,8 @@ class QuotationSerializer(serializers.ModelSerializer):
     total = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
     terms_text = serializers.SerializerMethodField()
+    rfq_ref = serializers.CharField(source="rfq.ref", read_only=True,
+                                    default=None)
 
     def get_terms_text(self, obj):
         from .procurement import quotation_terms_text
@@ -124,7 +126,7 @@ class QuotationSerializer(serializers.ModelSerializer):
         fields = ["id", "supplier", "supplier_name", "quote_ref", "quote_date",
                   "valid_until", "payment_terms", "advance_percent",
                   "terms_text", "gst_applicable", "notes",
-                  "file_url", "total", "lines"]
+                  "file_url", "total", "lines", "rfq_ref"]
 
     def get_total(self, obj):
         return sum((line.amount or 0) for line in obj.lines.all())
@@ -593,3 +595,120 @@ def pr_sync_vendor_rows(request, ref):
     from .serializers_documents import DocumentSerializer
 
     return Response(DocumentSerializer(pr, context={"request": request}).data)
+
+
+
+# ---- requests for quotation on an MR (owner 2026-10-13) ----------------------
+
+def _get_mr(request, ref):
+    try:
+        mr = Document.objects.get(ref=ref, doc_type="MR", is_void=False)
+    except Document.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and mr.site_id not in site_ids:
+        return None, Response({"detail": "Not found."}, status=404)
+    return mr, None
+
+
+def _get_rfq(request, pk):
+    from .models import MrRfq
+    rfq = MrRfq.objects.select_related("mr__site", "supplier").filter(
+        pk=pk).first()
+    if rfq is None:
+        return None, Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and rfq.mr.site_id not in site_ids:
+        return None, Response({"detail": "Not found."}, status=404)
+    return rfq, None
+
+
+def _rfq_pdf(rfq):
+    from django.template.loader import render_to_string
+
+    from . import mr_rfq
+    from .pdf import company_info, logo_src
+    from .views_payroll import _pdf_response
+    ctx = mr_rfq.pdf_context(rfq)
+    ctx.update(logo_src=logo_src(), co=company_info())
+    return _pdf_response(render_to_string("pdf/procurement_rfq.html", ctx),
+                         f"{rfq.ref}.pdf")
+
+
+@api_view(["GET", "POST"])
+def mr_rfqs(request, ref):
+    """The MR's RFQs (its history), or a new one: {line_ids, supplier_id |
+    supplier_name, remark}. The new RFQ comes back as its record; the PDF
+    is at mr-rfqs/<id>/pdf."""
+    from . import mr_rfq
+    mr, err = _get_mr(request, ref)
+    if err:
+        return err
+    if request.method == "POST":
+        rfq, msg = mr_rfq.create(mr, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(mr_rfq.rfq_dict(rfq, request), status=201)
+    can = request.user.role in mr_rfq.RFQ_ROLES
+    return Response({
+        "rfqs": [mr_rfq.rfq_dict(r, request) for r in mr.rfqs.select_related(
+            "supplier", "created_by", "received_by", "mr")],
+        "can_send": can and mr.status in mr_rfq.OPEN_STATUSES,
+        "lines": [{"id": ln.id, "line_no": ln.line_no,
+                   "description": (ln.item.description if ln.item_id
+                                   else ln.free_text_desc),
+                   "unit": ln.unit,
+                   "qty": ln.qty_to_order if ln.qty_to_order is not None
+                   else ln.qty_required,
+                   "ordered_pr": (ln.ordered_pr.ref if ln.ordered_pr_id
+                                  else None)}
+                  for ln in mr_rfq.orderable_lines(mr)] if can else [],
+    })
+
+
+@api_view(["GET"])
+def mr_rfq_pdf(request, pk):
+    rfq, err = _get_rfq(request, pk)
+    if err:
+        return err
+    return _rfq_pdf(rfq)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def mr_rfq_quote(request, pk):
+    """The supplier's quote, uploaded against the RFQ it answers."""
+    from . import mr_rfq
+    rfq, err = _get_rfq(request, pk)
+    if err:
+        return err
+    msg = mr_rfq.attach_quote(rfq, request.FILES.get("file"), request.data,
+                              request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(mr_rfq.rfq_dict(rfq, request))
+
+
+@api_view(["GET", "POST"])
+def pr_rfq_quotes(request, ref):
+    """Quotes received against the PR's MRs' RFQs (GET), or take one into
+    the PR as its quotation (POST {rfq_id})."""
+    from . import mr_rfq
+    from .models import MrRfq
+    pr, err = _get_pr(request, ref)
+    if err:
+        return err
+    if request.method == "GET":
+        return Response([mr_rfq.rfq_dict(r, request)
+                         for r in mr_rfq.quotes_for_pr(pr)])
+    err = _can_edit_quotes(request, pr)
+    if err:
+        return err
+    rfq = MrRfq.objects.filter(pk=request.data.get("rfq_id")).first()
+    if rfq is None:
+        return Response({"detail": "Unknown RFQ."}, status=400)
+    q, msg = mr_rfq.take_into_pr(pr, rfq, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(QuotationSerializer(q, context={"request": request}).data,
+                    status=201)

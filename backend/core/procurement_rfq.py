@@ -7,7 +7,7 @@ the supplier under an RFQ reference. Nothing else goes on it: no project,
 section or trade, no dates, no terms, no estimate, no other supplier.
 """
 from .audit import audit
-from .models import AuditLog, ScheduleLine
+from .models import ScheduleLine
 
 RFQ_ROLES = ("QS", "PM", "SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR",
              "HO_PURCHASING", "ADMIN")
@@ -26,9 +26,9 @@ def _image_src(line):
 
 
 def _next_ref(site):
-    n = AuditLog.objects.filter(event="PSC_RFQ",
-                                detail__site=site.code).count() + 1
-    return f"RFQ-{site.code}-{n:03d}"
+    # one sequence with the MR's RFQs
+    from .mr_rfq import next_rfq_ref
+    return next_rfq_ref(site)
 
 
 def build(sched, line_ids, data, actor):
