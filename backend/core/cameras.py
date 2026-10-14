@@ -153,7 +153,9 @@ def sync_relay_path(camera):
     """
     name = camera.path
     if not camera.source_url or not camera.is_active:
-        code, _ = _api("POST", f"/v3/config/paths/delete/{name}")
+        # MediaMTX 1.x removes a path with DELETE; a POST here was answered
+        # 404 and silently left the relay pulling (owner 2026-10-14)
+        code, _ = _api("DELETE", f"/v3/config/paths/delete/{name}")
         return True, ("stopped pulling" if code == 200 else "not pulling")
     body = {
         "source": camera.source_url,
@@ -203,7 +205,10 @@ def ensure_relay_paths():
     except ValueError:
         return [("*", "unreachable", False, "unreadable reply")]
     out = []
+    pulled = set()
     for cam in Camera.objects.exclude(source_url=""):
+        if cam.is_active:
+            pulled.add(cam.path)
         cur = have.get(cam.path)
         if cam.is_active:
             if cur is None:
@@ -215,5 +220,15 @@ def ensure_relay_paths():
         elif cur is not None:
             ok, msg = sync_relay_path(cam)
             out.append((cam.path, "removed", ok, msg))
+    # A pull entry no active pull camera owns — a camera switched to a site
+    # box, or removed — would refuse that box's video ("source is not
+    # publisher"), so it goes. Publisher entries and the catch-all stay.
+    for name, cur in have.items():
+        if (name in pulled or name in ("all", "all_others")
+                or name.startswith("~")
+                or cur.get("source") in (None, "", "publisher")):
+            continue
+        code, msg = _api("DELETE", f"/v3/config/paths/delete/{name}")
+        out.append((name, "removed", code == 200, str(msg)[:120]))
     return out
 

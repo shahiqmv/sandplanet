@@ -434,6 +434,8 @@ class RelayResyncTests(TestCase):
                 self.relay[name].update(body)
                 return 200, ""
             if "/delete/" in path:
+                if method != "DELETE":            # as MediaMTX 1.x answers
+                    return 404, "404 page not found"
                 return (200, "") if self.relay.pop(name, None) else (404, "")
             return 404, ""
         patcher = mock.patch.object(cameras, "_api", side_effect=fake_api)
@@ -458,6 +460,22 @@ class RelayResyncTests(TestCase):
         self.calls.clear()
         self.assertEqual(self.cameras.ensure_relay_paths(), [])
         self.assertEqual([m for m, _ in self.calls], ["GET"])
+
+    def test_a_camera_moved_to_a_site_box_stops_being_pulled(self):
+        # the office camera went behind a 5G router's carrier NAT, so a site
+        # box publishes it instead; the relay's old pull entry refused the
+        # box until it was removed (owner 2026-10-14)
+        self.cameras.ensure_relay_paths()
+        self.pull.source_url = ""
+        self.pull.save()
+        ok, _ = self.cameras.sync_relay_path(self.pull)
+        self.assertNotIn("rsy-pull", self.relay)
+        # and a leftover entry nobody owns is cleared by the regular check
+        self.relay["rsy-push"] = {"source": "rtsp://u:p@203.0.113.9:8554/x"}
+        self.relay["all_others"] = {"source": "publisher"}
+        out = {p: a for p, a, ok, _ in self.cameras.ensure_relay_paths()}
+        self.assertEqual(out, {"rsy-push": "removed"})
+        self.assertEqual(set(self.relay), {"all_others"})
 
     def test_a_changed_address_is_updated_and_a_stopped_camera_removed(self):
         self.cameras.ensure_relay_paths()
