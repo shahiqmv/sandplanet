@@ -4,12 +4,14 @@ Read is wider than write: QS, the Director and Admin run it, a signatory reads
 it as they read everything, and a site PM sees the enquiries for their own
 site (owner 2026-09-08).
 """
+from datetime import date
 from urllib.parse import urlparse
 
 from rest_framework.decorators import (api_view, parser_classes,
                                        permission_classes)
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
+from django.utils import timezone
 from rest_framework.response import Response
 
 from . import tenders as svc
@@ -24,6 +26,46 @@ def _rev(r):
             "value": (r.payload or {}).get("value"),
             # The distinction the register exists for.
             "issued": r.issued_at is not None}
+
+
+def _ageing(t, today=None):
+    """When the tender was opened and how it stands against its dates
+    (owner 2026-10-18: "cant figure out when it was created, what the
+    deadline is and days since created")."""
+    today = today or timezone.localdate()
+
+    def as_date(v):
+        # a tender just saved still holds the dates as the text sent in
+        if isinstance(v, str):
+            try:
+                return date.fromisoformat(v[:10])
+            except ValueError:
+                return None
+        return v
+
+    due, outcome = as_date(t.due_date), as_date(t.outcome_date)
+    status = t.document.status
+    opened = timezone.localdate(t.document.created_at)
+    submitted = (timezone.localdate(t.submitted_at) if t.submitted_at
+                 else None)
+    still_open = status in svc.OPEN_STATUSES
+    # an open tender ages to today; a decided one stops at its outcome
+    end = today if still_open else (outcome or submitted or today)
+    return {
+        "opened_on": opened,
+        "age_days": max((end - opened).days, 0),
+        # the deadline only matters while it is still being priced
+        "due_in_days": ((due - today).days
+                        if due and status in svc.WORKING_STATUSES
+                        else None),
+        "submitted_on": submitted,
+        # positive = sent after the due date
+        "submitted_late_days": ((submitted - due).days
+                                if submitted and due else None),
+        # with the client, waiting for their decision
+        "waiting_days": ((today - submitted).days
+                         if submitted and status == "ISSUED" else None),
+    }
 
 
 def _row(t, full=False):
@@ -46,6 +88,7 @@ def _row(t, full=False):
         "assigned_to": (t.assigned_to.full_name if t.assigned_to_id
                         else None),
         "assigned_to_id": t.assigned_to_id,
+        **_ageing(t),
     }
     if full:
         out.update({

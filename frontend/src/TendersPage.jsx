@@ -27,6 +27,28 @@ const money = (v, ccy) => (v == null ? "—"
   : `${ccy} ${Number(v).toLocaleString(undefined,
       { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? String(d).slice(0, 10) : "—");
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+// Where the tender stands against its deadline — one short line under the
+// due date, coloured only when it needs someone (owner 2026-10-18).
+function dueNote(r) {
+  if (r.due_in_days != null) {
+    const n = r.due_in_days;
+    if (n < 0) return { text: `${plural(-n, "day")} overdue`, color: "#c0392b" };
+    if (n === 0) return { text: "due today", color: "#c0392b" };
+    return { text: `in ${plural(n, "day")}`, color: n <= 7 ? "#b26a00" : "var(--muted)" };
+  }
+  if (r.submitted_on) {
+    const late = r.submitted_late_days;
+    const sent = late == null ? `sent ${day(r.submitted_on)}`
+      : late > 0 ? `sent ${plural(late, "day")} late`
+      : "sent on time";
+    const wait = r.waiting_days != null
+      ? ` · with client ${plural(r.waiting_days, "day")}` : "";
+    return { text: sent + wait, color: late > 0 ? "#b26a00" : "var(--muted)" };
+  }
+  return null;
+}
 
 export default function TendersPage({ me, sites }) {
   const [rows, setRows] = useState(null);
@@ -47,6 +69,11 @@ export default function TendersPage({ me, sites }) {
   const live = (rows || []).filter((r) => OPEN.includes(r.status));
   const outstanding = live.reduce((n, r) =>
     n + (r.status === "ISSUED" ? 1 : 0), 0);
+  const overdue = live.filter((r) => r.due_in_days != null
+                                     && r.due_in_days < 0).length;
+  const dueSoon = live.filter((r) => r.due_in_days != null
+                                     && r.due_in_days >= 0
+                                     && r.due_in_days <= 7).length;
 
   // A tender holds a full bill of quantities. It gets the page, not a modal
   // floated over the register (owner 2026-09-09).
@@ -78,7 +105,11 @@ export default function TendersPage({ me, sites }) {
       </div>
       <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "0 0 12px" }}>
         {live.length} still open · {outstanding} awaiting the client's
-        decision. A revision is internal until it is issued — issuing one is
+        decision
+        {overdue > 0 && <> · <strong style={{ color: "#c0392b" }}>
+          {overdue} past the due date</strong></>}
+        {dueSoon > 0 && <> · <span style={{ color: "#b26a00" }}>
+          {dueSoon} due within 7 days</span></>}. A revision is internal until it is issued — issuing one is
         the submission, and it stays on the record whatever is priced after
         it.
       </p>
@@ -94,7 +125,10 @@ export default function TendersPage({ me, sites }) {
           <thead><tr>
             <th style={th}>Reference</th>
             <th style={th}>Works / client</th>
-            <th style={th}>Site</th><th style={th}>Due</th>
+            <th style={th}>Site</th>
+            <th style={th} title="When the tender was opened in Planet, and
+                                  how long it has been running">Opened</th>
+            <th style={th}>Due</th>
             <th style={{ ...th, textAlign: "right" }}>Submitted</th>
             <th style={{ ...th, textAlign: "right" }}>Awarded</th>
             <th style={th}>State</th>
@@ -117,7 +151,20 @@ export default function TendersPage({ me, sites }) {
                     {r.client_name}
                     {r.assigned_to ? ` · ${r.assigned_to}` : ""}</div></td>
                 <td style={td}>{r.site_code}</td>
-                <td style={td}>{day(r.due_date)}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  {day(r.opened_on)}
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                    {OPEN.includes(r.status)
+                      ? `${plural(r.age_days, "day")} ago`
+                      : `ran ${plural(r.age_days, "day")}`}</div></td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  {day(r.due_date)}
+                  {(() => {
+                    const n = dueNote(r);
+                    return n && <div style={{ fontSize: 11.5, color: n.color,
+                                              fontWeight: n.color === "#c0392b" ? 600 : 400 }}>
+                      {n.text}</div>;
+                  })()}</td>
                 <td style={{ ...td, textAlign: "right",
                              fontVariantNumeric: "tabular-nums" }}>
                   {money(r.value_submitted, r.currency)}</td>
@@ -133,7 +180,7 @@ export default function TendersPage({ me, sites }) {
                 </td>
               </tr>))}
             {rows && rows.length === 0 && (
-              <tr><td style={td} colSpan={7}>
+              <tr><td style={td} colSpan={8}>
                 No tenders yet.{can ? " Open an enquiry above." : ""}</td></tr>)}
           </tbody>
         </table>
@@ -331,7 +378,8 @@ function TenderDetail({ id, me, onClose }) {
         <p style={{ margin: "8px 0 2px", fontWeight: 600, fontSize: 16,
                     lineHeight: 1.3 }}>{t.title}</p>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
-          {t.client_name} · {t.site_code} · enquiry {day(t.enquiry_date)} ·
+          {t.client_name} · {t.site_code} · opened {day(t.opened_on)} ·
+          enquiry {day(t.enquiry_date)} ·
           due {day(t.due_date)} · {t.submit_our_format
             ? "submitted on our bill" : "submitted on the client's bill"}</p>
         {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}

@@ -148,6 +148,34 @@ class TenderRegisterTests(GateMixin, TestCase):
 
     # ---- working vs sending -------------------------------------------
 
+    def test_the_register_shows_when_it_opened_and_how_it_stands(self):
+        """'cant figure out when it was created, what the deadline is and
+        days since created' (owner 2026-10-18)."""
+        from django.utils import timezone
+
+        from .models import Document
+        t = self.open_one(due_date=str(date.today() + timedelta(days=5)))
+        Document.objects.filter(ref=t["ref"]).update(
+            created_at=timezone.now() - timedelta(days=12))
+        row = next(r for r in self.client.get("/api/v1/tenders").data
+                   if r["id"] == t["id"])
+        self.assertEqual(row["opened_on"], date.today() - timedelta(days=12))
+        self.assertEqual(row["age_days"], 12)
+        self.assertEqual(row["due_in_days"], 5)
+        self.assertIsNone(row["waiting_days"])
+        # past the deadline while still pricing reads negative
+        late = self.open_one(due_date=str(date.today() - timedelta(days=3)))
+        row = next(r for r in self.client.get("/api/v1/tenders").data
+                   if r["id"] == late["id"])
+        self.assertEqual(row["due_in_days"], -3)
+        # once submitted the countdown stops; lateness and the wait show
+        self.issue(late["id"], "100")
+        row = next(r for r in self.client.get("/api/v1/tenders").data
+                   if r["id"] == late["id"])
+        self.assertIsNone(row["due_in_days"])
+        self.assertEqual(row["submitted_late_days"], 3)
+        self.assertEqual(row["waiting_days"], 0)
+
     def test_issuing_a_revision_is_the_submission(self):
         t = self.open_one()
         r = self.issue(t["id"], "125000.00")
