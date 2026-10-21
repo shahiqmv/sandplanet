@@ -60,6 +60,63 @@ def _validate_add(data, exclude_pk=None):
     return None
 
 
+def rehire_candidate(passport_no, exclude_pk=None):
+    """The man who left and holds this passport — the one to bring back.
+
+    A man removed from a site keeps his record, so when he returns the
+    duplicate-passport guard stopped the site re-adding him and told them to
+    ask HR, who had no way to bring him back either (owner 2026-10-21,
+    EMP-0867 at MXR). A pending hire or a cancelled placeholder is not a
+    candidate: only someone who actually worked and left.
+    """
+    from .models import passport_holder
+    held = passport_holder(passport_no, exclude_pk=exclude_pk)
+    if (held is None or held.is_active or held.hire_pending
+            or CANCELLED_HIRE_TAG in held.full_name):
+        return None
+    return held
+
+
+def _left_from(emp):
+    last = (emp.site_allocations.select_related("site")
+            .order_by("-from_date", "-id").first())
+    return last.site.code if last else None
+
+
+def rehire_json(emp):
+    return {"employee_id": emp.id, "emp_no": emp.emp_no,
+            "full_name": emp.full_name, "nationality": emp.nationality,
+            "left_on": emp.left_on, "left_site": _left_from(emp),
+            "trade": emp.job_category.name if emp.job_category_id else ""}
+
+
+def _validate_rehire(data):
+    """Returns (employee, error)."""
+    try:
+        emp = Employee.objects.select_related("job_category").get(
+            pk=int(data.get("rehire_employee_id")))
+    except (Employee.DoesNotExist, TypeError, ValueError):
+        return None, "That returning worker could not be found."
+    if emp.is_active:
+        return None, (f"{emp.emp_no} {emp.full_name} is still active — "
+                      "transfer him instead.")
+    if emp.hire_pending or _has_open_change(emp):
+        return None, (f"{emp.emp_no} {emp.full_name} is already on a batch "
+                      "waiting for approval.")
+    if not data.get("job_category_id"):
+        return None, "Trade / category is required."
+    if _dec(data.get("basic_pay")) is None:
+        return None, "Basic pay (salary) is required."
+    return emp, None
+
+
+# What a returning man's batch row may change on his record: the terms he
+# comes back on. His name, passport and nationality stay as recorded.
+REHIRE_FIELDS = ("basic_pay", "currency", "work_permit_no",
+                 "work_permit_expiry", "job_category_id", "ot_applies",
+                 "emergency_contact")
+
+
 def _apply_add_fields(emp, data):
     if "full_name" in data:
         emp.full_name = (data.get("full_name") or "").strip()
@@ -106,14 +163,52 @@ def create_add_batch(site, workers, actor):
         (w.get(k) or "").strip() for k in ("full_name", "passport_no"))]
     if not workers:
         return None, "Add at least one worker."
+    returning = {}
     for i, w in enumerate(workers, 1):
+        if w.get("rehire_employee_id"):
+            emp, err = _validate_rehire(w)
+            if err:
+                return None, f"Worker {i}: {err}"
+            returning[i] = emp
+            continue
+        back = rehire_candidate(w.get("passport_no"))
+        if back is not None:
+            # offer to bring him back rather than refusing outright
+            return None, {
+                "detail": (f"Worker {i}: passport "
+                           f"{w['passport_no'].strip()} belongs to "
+                           f"{back.emp_no} {back.full_name}, who left"
+                           + (f" {_left_from(back)}" if _left_from(back)
+                              else "")
+                           + (f" on {back.left_on:%d %b %Y}" if back.left_on
+                              else "")
+                           + ". Bring him back on his own record instead "
+                           "of hiring him again."),
+                "rehire": {"row": i - 1, **rehire_json(back)}}
         err = _validate_add(w)
         if err:
             return None, f"Worker {i}: {err}"
     with transaction.atomic():
         batch = WCR.objects.create(kind=WCR.Kind.ADD, site=site,
                                    requested_by=actor)
-        for w in workers:
+        for i, w in enumerate(workers, 1):
+            if i in returning:
+                emp = returning[i]
+                before = {f: str(getattr(emp, f)) for f in REHIRE_FIELDS}
+                _apply_add_fields(emp, {f: w[f] for f in REHIRE_FIELDS
+                                        if f in w})
+                emp.employment_type = Employee.EmploymentType.CONTRACT
+                emp.hire_pending = True
+                emp.save()
+                WorkerChangeItem.objects.create(request=batch, employee=emp,
+                                                is_rehire=True)
+                audit("employee", emp.id, "WORKER_REHIRE_REQUESTED",
+                      actor=actor,
+                      detail={"site": site.code, "batch": batch.id,
+                              "left_on": str(emp.left_on),
+                              "before": {k: v for k, v in before.items()
+                                         if k != "basic_pay"}})
+                continue
             emp = Employee(
                 emp_no=f"EMP-{int(next_ref('EMP', None).split('-')[1]):04d}",
                 engagement_type=Employee.Engagement.DIRECT,
@@ -329,6 +424,11 @@ def cancel_batch(batch, actor):
         _stamp(batch, actor)
         if batch.kind == WCR.Kind.ADD:
             for item in batch.items.select_related("employee"):
+                if item.is_rehire:
+                    # he stays the man who left, as he was
+                    Employee.objects.filter(pk=item.employee_id).update(
+                        hire_pending=False)
+                    continue
                 release_cancelled_hire(item.employee)
     audit("worker_batch", batch.id, "WORKER_BATCH_CANCELLED", actor=actor)
     return None
@@ -362,12 +462,63 @@ def update_hire(employee, data, actor):
     return None
 
 
+def reengage(emp, site, on, actor):
+    """HR brings a man who left straight back onto a site (owner 2026-10-21).
+
+    The site's way back is the hire batch; this is HR's, for a removal made
+    in error or a man HR re-engages itself. Same effect as an approved
+    return: active again, leaving cleared, pay counting from the return
+    date, a new allocation at the site from that day. Returns an error or
+    None.
+    """
+    from .models import Site
+    if emp.is_active:
+        return f"{emp.emp_no} is already active."
+    if emp.hire_pending or _has_open_change(emp):
+        return (f"{emp.emp_no} is on a site batch waiting for approval — "
+                "approve or cancel that instead.")
+    if CANCELLED_HIRE_TAG in emp.full_name:
+        return "This record is a cancelled hire placeholder, not a worker."
+    if site is None or site.status == Site.Status.CLOSED:
+        return "Choose an open site to bring him back to."
+    if on > date.today():
+        return "The return date cannot be in the future."
+    last = emp.site_allocations.order_by("-from_date", "-id").first()
+    if last and on <= (last.to_date or last.from_date):
+        return (f"He was last allocated until {last.to_date or last.from_date:%d %b %Y}"
+                " — the return must be after that.")
+    with transaction.atomic():
+        before = {"left_on": str(emp.left_on), "join_date": str(emp.join_date),
+                  "left_reason": emp.left_reason}
+        emp.is_active = True
+        emp.left_on = None
+        emp.left_reason = ""
+        emp.join_date = on
+        emp.save(update_fields=["is_active", "left_on", "left_reason",
+                                "join_date", "updated_at"])
+        EmployeeSiteAllocation.objects.create(employee=emp, site=site,
+                                              from_date=on)
+    audit("employee", emp.id, "EMPLOYEE_REENGAGED", actor=actor,
+          detail={"site": site.code, "from": str(on), "before": before})
+    return None
+
+
 # ---- application -------------------------------------------------------------
 
 def _activate_add(batch, actor):
     with transaction.atomic():
         for item in batch.items.select_related("employee"):
             emp = item.employee
+            if item.is_rehire:
+                # back from today: the leaving is history (his old allocation
+                # keeps its dates), and pay counts from the return, not from
+                # the first join — or his old start date would pay him for
+                # days he was away
+                emp.left_on = None
+                emp.left_reason = ""
+                emp.join_date = date.today()
+                emp.save(update_fields=["left_on", "left_reason",
+                                        "join_date", "updated_at"])
             emp.is_active = True
             emp.hire_pending = False
             # Stamp when they started, or payroll has nothing to pro-rate a

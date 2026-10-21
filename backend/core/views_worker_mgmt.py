@@ -58,7 +58,8 @@ def _batch_json(batch, viewer=None):
         "requested_by": batch.requested_by.full_name
         if batch.requested_by_id else "",
         "created_at": batch.created_at, "worker_count": batch.worker_count,
-        "workers": [_emp_json(i.employee, viewer) for i in
+        "workers": [{**_emp_json(i.employee, viewer),
+                     "is_rehire": i.is_rehire} for i in
                     batch.items.select_related("employee__job_category").all()],
     }
 
@@ -170,7 +171,8 @@ def create_batch(request, site_id):
         return Response({"detail": "kind must be ADD / REMOVE / TRANSFER."},
                         status=400)
     if msg:
-        return Response({"detail": msg}, status=400)
+        return Response(msg if isinstance(msg, dict) else {"detail": msg},
+                        status=400)
     return Response(_batch_json(batch, request.user), status=201)
 
 

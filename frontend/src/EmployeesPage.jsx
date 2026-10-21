@@ -398,6 +398,54 @@ export default function EmployeesPage({ me, sites }) {
 // raise ONE PYR (Permits & Fees, Head Office) for the total. Each expiry
 // extends only once Finance pays that PYR. Workers expiring soon / expired
 // are pre-ticked; those with a renewal already pending payment are shown.
+// A man who left, brought straight back onto a site by HR (owner
+// 2026-10-21). Ticking "Active" alone left him on no site at all; this gives
+// him a new allocation from the return date and clears the leaving.
+function BringBack({ employee, sites, onDone }) {
+  const [siteId, setSiteId] = useState("");
+  const [on, setOn] = useState(new Date().toISOString().slice(0, 10));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const open = (sites || []).filter((s) => s.status !== "CLOSED");
+  async function go() {
+    if (!siteId) { setError("Choose the site he returns to."); return; }
+    setBusy(true); setError(null);
+    try {
+      await api(`/employees/${employee.id}/reengage`,
+                { method: "POST", body: { site_id: siteId, from_date: on } });
+      onDone();
+    } catch (e) { setError(e.message); setBusy(false); }
+  }
+  return (
+    <div style={{ marginTop: 14, padding: 10, borderRadius: 8,
+                  background: "#eef8f2", border: "1px solid #b7dcc6" }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: "#1f6f43" }}>
+        Not active{employee.left_on ? ` — left ${employee.left_on}` : ""}.
+        Bring him back to a site</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6,
+                    alignItems: "flex-end" }}>
+        <label style={{ fontSize: 11.5 }}>Site
+          <select style={inputStyle} value={siteId}
+                  onChange={(e) => setSiteId(e.target.value)}>
+            <option value="">Choose…</option>
+            {open.map((s) => (
+              <option key={s.id} value={s.id}>{s.code} — {s.name}</option>))}
+          </select></label>
+        <label style={{ fontSize: 11.5 }}>From
+          <input type="date" style={inputStyle} value={on}
+                 onChange={(e) => setOn(e.target.value)} /></label>
+        <button style={buttonStyle} disabled={busy} onClick={go}>
+          {busy ? "Bringing back…" : "Bring back"}</button>
+      </div>
+      <div style={{ fontSize: 11.5, color: "#5a6b78", marginTop: 4 }}>
+        Same record and number; pay counts from the return date. A site
+        brings a man back itself from its New hires form.</div>
+      {error && <div style={{ color: "#c0392b", fontSize: 12.5, marginTop: 4 }}>
+        {error}</div>}
+    </div>
+  );
+}
+
 function BatchRenewModal({ candidates, onClose, onDone }) {
   const [rows, setRows] = useState(candidates.map((c) => ({
     id: c.id, emp_no: c.emp_no, full_name: c.full_name,
@@ -1017,6 +1065,10 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
             </div>
           </div>
         )}
+
+        {isHr && !creating && employee.is_active === false && (
+          <BringBack employee={employee} sites={sites}
+                     onDone={() => { onChanged?.(); onClose?.(); }} />)}
 
         <div style={{ display: "flex", gap: 10, marginTop: 16,
                       alignItems: "center" }}>

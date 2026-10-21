@@ -149,9 +149,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "permit_days", "permit_pending", "emergency_contact",
                   "bank_name", "bank_branch", "bank_account_name",
                   "bank_account_no", "bank_swift",
-                  "join_date", "is_active", "site_id", "site_code",
-                  "engagement_type", "subcontractor_name"]
+                  "join_date", "is_active", "left_on", "site_id",
+                  "site_code", "engagement_type", "subcontractor_name"]
         read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_currency",
+                            "left_on",
                             "ot_effective",
                             "permit_state", "permit_days", "permit_pending",
                             "engagement_type", "subcontractor_name"]
@@ -500,6 +501,32 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             .update(to_date=date.today())
         audit("employee", employee.id, "EMPLOYEE_DEACTIVATED",
               actor=request.user)
+        return Response(self.get_serializer(employee).data)
+
+    @action(detail=True, methods=["post"])
+    def reengage(self, request, pk=None):
+        """Bring a man who left back onto a site: site_id, from_date."""
+        from . import worker_mgmt
+        from .models import Site
+        if not _is_hr(request.user):
+            return Response({"detail": "HR brings a worker back."},
+                            status=403)
+        # NOT get_object(): the register hides inactive staff unless asked,
+        # and an inactive man is the only one this action is for
+        employee = Employee.objects.hr_managed().filter(pk=pk).first()
+        if employee is None:
+            return Response({"detail": "No such employee."}, status=404)
+        site = Site.objects.filter(pk=request.data.get("site_id") or None) \
+            .first()
+        try:
+            on = (date.fromisoformat(str(request.data.get("from_date"))[:10])
+                  if request.data.get("from_date") else date.today())
+        except ValueError:
+            return Response({"detail": "Give the return date."}, status=400)
+        err = worker_mgmt.reengage(employee, site, on, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        employee.refresh_from_db()
         return Response(self.get_serializer(employee).data)
 
     @action(detail=True, methods=["get"], url_path="permit-renewals")

@@ -274,7 +274,13 @@ function BatchCard({ batch, me, onChanged }) {
           <tbody>
             {batch.workers.map((w) => (
               <tr key={w.id}>
-                <td style={{ ...td, padding: "3px 6px" }}>{w.full_name}</td>
+                <td style={{ ...td, padding: "3px 6px" }}>{w.full_name}
+                  {w.is_rehire && (
+                    <span title="Coming back on his own record"
+                          style={{ marginLeft: 6, fontSize: 10.5,
+                                   color: "#1f6f43", background: "#e6f4ec",
+                                   borderRadius: 8, padding: "1px 6px" }}>
+                      returning · {w.emp_no}</span>)}</td>
                 <td style={{ ...td, padding: "3px 6px",
                              color: "var(--muted)" }}>{w.job_title || "—"}</td>
                 <td style={{ ...td, padding: "3px 6px",
@@ -486,11 +492,27 @@ function HiresForm({ site, onCancel, onDone }) {
   const [cats, setCats] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // the man who left and holds a passport typed here — offered back
+  const [offer, setOffer] = useState(null);
   const set = (i, k) => (e) => {
     const next = rows.slice();
     next[i] = { ...next[i], [k]: e.target.value };
     setRows(next);
   };
+  function bringBack() {
+    const next = rows.slice();
+    const o = offer;
+    next[o.row] = { ...next[o.row], rehire_employee_id: o.employee_id,
+                    rehire: o, full_name: o.full_name,
+                    nationality: o.nationality || next[o.row].nationality };
+    setRows(next); setOffer(null); setError(null);
+  }
+  function notHim(i) {
+    const next = rows.slice();
+    const r = { ...next[i] };
+    delete r.rehire_employee_id; delete r.rehire;
+    next[i] = r; setRows(next);
+  }
 
   useEffect(() => {
     api("/manpower-categories")
@@ -500,11 +522,11 @@ function HiresForm({ site, onCancel, onDone }) {
 
   async function submit(e) {
     e.preventDefault();
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setOffer(null);
     try {
       const kept = rows.filter((r) => r.full_name.trim());
       const workers = kept.map((r) => { const w = { ...r };
-        delete w.photo;
+        delete w.photo; delete w.rehire;
         if (!w.job_category_id) delete w.job_category_id; return w; });
       const batch = await api(`/sites/${site.id}/worker-batches`,
                               { method: "POST",
@@ -529,7 +551,10 @@ function HiresForm({ site, onCancel, onDone }) {
         }
       }
       onDone();
-    } catch (err) { setError(err.message); } finally { setBusy(false); }
+    } catch (err) {
+      setError(err.message);
+      if (err.data?.rehire) setOffer(err.data.rehire);
+    } finally { setBusy(false); }
   }
 
   const star = (t) => (
@@ -543,6 +568,21 @@ function HiresForm({ site, onCancel, onDone }) {
         Site hires are <b>Contract</b> workers. A permanent worker (company
         work permit) is created by HR through Onboarding — not here.</p>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      {offer && (
+        <div style={{ border: "1px solid #b7dcc6", background: "#eef8f2",
+                      borderRadius: 8, padding: 10, marginBottom: 10,
+                      fontSize: 13 }}>
+          <b>{offer.emp_no} {offer.full_name}</b>
+          {offer.trade ? ` · ${offer.trade}` : ""}
+          {offer.left_site ? ` · left ${offer.left_site}` : ""}
+          {offer.left_on ? ` on ${offer.left_on}` : ""}
+          <div style={{ color: "var(--muted)", margin: "4px 0 8px" }}>
+            If this is the same man, bring him back on his own record — his
+            number and history stay with him. He goes for the PM's and the
+            Director's approval like any new hire.</div>
+          <Btn type="button" variant="navy" onClick={bringBack}>
+            Bring him back</Btn>
+        </div>)}
       {rows.map((r, i) => (
         <div key={i} style={{ border: "1px solid #e2e8f0", borderRadius: 8,
                               padding: 8, marginBottom: 8 }}>
@@ -562,16 +602,26 @@ function HiresForm({ site, onCancel, onDone }) {
                  style={{ fontSize: 12, color: "var(--red-fg)" }}>remove</a>
             )}
           </div>
+          {r.rehire && (
+            <div style={{ fontSize: 12, color: "#1f6f43", marginBottom: 6 }}>
+              Returning: <b>{r.rehire.emp_no}</b> — name, passport and
+              nationality stay as on his record; set the trade and pay he
+              comes back on.{" "}
+              <a href="#" onClick={(e) => { e.preventDefault(); notHim(i); }}
+                 style={{ color: "var(--red-fg)" }}>not him</a></div>)}
           <div style={{ display: "grid", gap: 6,
                         gridTemplateColumns: "repeat(4, 1fr)" }}>
             <label style={lbl}>{star("Full name")}
               <input style={inputStyle} value={r.full_name}
+                     disabled={!!r.rehire}
                      onChange={set(i, "full_name")} /></label>
             <label style={lbl}>{star("Passport no.")}
               <input style={inputStyle} value={r.passport_no}
+                     disabled={!!r.rehire}
                      onChange={set(i, "passport_no")} /></label>
             <label style={lbl}>{star("Nationality")}
               <input style={inputStyle} value={r.nationality}
+                     disabled={!!r.rehire}
                      onChange={set(i, "nationality")} /></label>
             <label style={lbl}>{star("Trade")}
               <select style={inputStyle} value={r.job_category_id}

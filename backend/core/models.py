@@ -3138,6 +3138,9 @@ class WorkerChangeItem(models.Model):
                                 related_name="items")
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
                                  related_name="change_items")
+    # an ADD that brings back a man who left, on his own record (owner
+    # 2026-10-21) — not a new employee
+    is_rehire = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["id"]
