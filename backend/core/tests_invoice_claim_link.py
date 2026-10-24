@@ -131,3 +131,90 @@ class InvoiceSupersededByClaimTests(TestCase):
                              site=self.site)
         self.assertIn("can't change",
                       mi_svc.link_to_claim(self.mi, self.claim, outsider))
+
+
+class ClaimBilledByInvoicesTests(TestCase):
+    """The other way round: SFR CASUAL's 40% advance (IPA-01) went to the
+    client as two invoices — 20% at the LOA, the balance once the policy
+    documents were in. The claim keeps the certificate (the next IPC reads
+    its advance from it); the invoices are the receivables (owner
+    2026-10-24)."""
+
+    def setUp(self):
+        from .commercial import _q2, claim_valuation
+        self.site = Site.objects.create(code="BIL", name="Billed site",
+                                        status=Site.Status.ACTIVE)
+        self.project = Project.objects.create(
+            site=self.site, code="CASUAL", title="Casual Accommodation",
+            status="ACTIVE", contract_value=Decimal("830844.83"),
+            advance_payment_pct=Decimal("40"))
+        Boq.objects.create(project=self.project, currency="USD")
+        self.qs = make_user("qs_bil", User.Role.QS)
+        self.pd = make_user("pd_bil", User.Role.DIRECTOR)
+        self.fin = make_user("fin_bil", User.Role.FINANCE)
+        self.claim = ProgressClaim.objects.create(
+            project=self.project, seq=1, ref="IPA-01", claim_type="ADVANCE",
+            basis="PERCENT", advance_pct=Decimal("40"), gst_pct=Decimal("8"),
+            status="DRAFT", created_by=self.qs)
+        set_claim_status(self.claim, "SUBMITTED", self.qs)
+        set_claim_status(self.claim, "CERTIFIED", self.pd)
+        self.claim.refresh_from_db()
+        self.due = _q2(claim_valuation(self.claim)["waterfall"]["net_to_pay"])
+        half = _q2(self.due / 2)
+        self.first = self._inv("INV-2026-0029", half, date(2026, 9, 1))
+        # the split rounds: the two halves come a cent over the claim
+        self.balance = self._inv("INV-2026-0055",
+                                 self.due - half + Decimal("0.01"),
+                                 date(2026, 10, 12))
+        ClientReceipt.objects.create(project=self.project,
+                                     manual_invoice=self.first, amount=half,
+                                     received_on=date(2026, 9, 6))
+
+    def _inv(self, no, amount, on):
+        return ManualInvoice.objects.create(
+            project=self.project, origin="ISSUED", invoice_no=no,
+            invoice_date=on, currency="USD", gst_pct=Decimal("0"),
+            net_amount=amount, gst_amount=Decimal("0"), amount=amount,
+            description="Advance", created_by=self.qs)
+
+    def _rows(self):
+        return {r["invoice_no"]: r for r in
+                receivables.invoice_rows(site_id=self.site.id)}
+
+    def test_before_the_link_the_advance_is_billed_twice(self):
+        self.assertTrue(self.claim.invoice_no)
+        self.assertEqual(len(self._rows()), 3)
+
+    def test_the_invoices_bill_the_claim_and_its_own_invoice_is_dropped(self):
+        claim_no = self.claim.invoice_no
+        err = mi_svc.bill_claim_by(self.claim, [self.first, self.balance],
+                                   self.qs, drop_claim_invoice=True)
+        self.assertIsNone(err, err)
+        self.claim.refresh_from_db()
+        self.assertEqual(self.claim.invoice_no, "")
+        rows = self._rows()
+        self.assertEqual(set(rows), {"INV-2026-0029", "INV-2026-0055"})
+        self.assertNotIn(claim_no, rows)
+        self.assertEqual(rows["INV-2026-0029"]["outstanding"], 0)
+        self.assertEqual(self.claim.status, "CERTIFIED")      # half paid
+        # re-certifying never issues it a number again
+        set_claim_status(self.claim, "DRAFT", make_user("adm_bil",
+                                                         User.Role.ADMIN))
+        set_claim_status(self.claim, "SUBMITTED", self.qs)
+        set_claim_status(self.claim, "CERTIFIED", self.pd)
+        self.claim.refresh_from_db()
+        self.assertEqual(self.claim.invoice_no, "")
+        # paying the balance through an official receipt settles the claim
+        from .receipts import create_official_receipt
+        rec, err = create_official_receipt({
+            "site": self.site.id, "receipt_date": "2026-10-20",
+            "method": "TT", "allocations": [
+                {"manual_invoice_id": self.balance.id,
+                 "amount": str(self.balance.amount)}]}, self.fin)
+        self.assertIsNone(err, err)
+        self.claim.refresh_from_db()
+        self.assertEqual(self.claim.status, "PAID")
+
+    def test_invoices_that_do_not_add_up_are_refused(self):
+        err = mi_svc.bill_claim_by(self.claim, [self.first], self.qs)
+        self.assertIn("must match", err)

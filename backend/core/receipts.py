@@ -67,11 +67,22 @@ def manual_outstanding(mi):
     return _q2(mi.amount) - _manual_received(mi)
 
 
+def billed_received(claim):
+    """Money received on the manual invoices that bill this claim."""
+    return _q2(ClientReceipt.objects.filter(
+        manual_invoice__bills_claim=claim, manual_invoice__is_void=False)
+        .aggregate(s=Sum("amount"))["s"] or ZERO)
+
+
 def _settle(claim, actor):
     """Mark a certified claim Paid once fully received; revert a Paid claim to
-    Certified if a deleted receipt leaves it short."""
+    Certified if a deleted receipt leaves it short. A claim billed through
+    manual invoices counts the money received on them."""
     due = _invoice_due(claim)
-    got = _received(claim)
+    got = _received(claim) + billed_received(claim)
+    # two invoices that split a claim can round a cent either way
+    if claim.billing_invoices.filter(is_void=False).exists():
+        due -= Decimal("0.05")
     if claim.status == "CERTIFIED" and got >= due and due > ZERO:
         set_claim_status(claim, "PAID", actor)
     elif claim.status == "PAID" and got < due:
@@ -147,8 +158,9 @@ def create_official_receipt(data, actor):
             amount=amt, received_on=receipt.receipt_date,
             reference=receipt.reference, recorded_by=actor)
     for claim, mi, _ in parsed:
-        if claim:
-            _settle(claim, actor)
+        target = claim or (mi.bills_claim if mi else None)
+        if target:
+            _settle(target, actor)
     audit("site", site.id, "OFFICIAL_RECEIPT", actor=actor,
           detail={"receipt_no": receipt.receipt_no,
                   "amount": str(receipt.total)})
@@ -157,7 +169,11 @@ def create_official_receipt(data, actor):
 
 @transaction.atomic
 def delete_official_receipt(receipt, actor):
-    claims = [r.claim for r in receipt.receipts.all() if r.claim]
+    claims = [r.claim or r.manual_invoice.bills_claim
+              for r in receipt.receipts.select_related(
+                  "claim", "manual_invoice__bills_claim")
+              if r.claim or (r.manual_invoice_id
+                             and r.manual_invoice.bills_claim_id)]
     no = receipt.receipt_no
     receipt.receipts.all().delete()
     receipt.delete()

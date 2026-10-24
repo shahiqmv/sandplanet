@@ -15,6 +15,7 @@ the number is never silently reused.
 """
 from decimal import Decimal, InvalidOperation
 
+from django.db import transaction
 from django.db.models import Sum
 
 from .audit import audit
@@ -256,4 +257,53 @@ def unlink_from_claim(mi, actor):
     mi.save(update_fields=["superseded_by", "superseded_at", "updated_at"])
     audit("project", mi.project_id, "MANUAL_INVOICE_UNLINKED", actor=actor,
           detail={"invoice_no": mi.invoice_no, "was": was})
+    return None
+
+
+@transaction.atomic
+def bill_claim_by(claim, invoices, actor, drop_claim_invoice=False):
+    """Record that these manual invoices are how a certified claim was billed
+    (owner 2026-10-24, SFR CASUAL IPA-01 = INV-2026-0029 + INV-2026-0055).
+
+    The claim keeps its certificate — the next IPC reads its advance from
+    it — while receivables reads the invoices. Their total must match what
+    the claim bills, to the cent or two a split rounds. With
+    drop_claim_invoice the claim's own invoice number is withdrawn (kept in
+    the audit), since the client never got it. Returns an error or None."""
+    from .commercial import claim_valuation
+    from .receipts import _settle
+    if claim.status not in ("CERTIFIED", "PAID"):
+        return "Only a certified claim is billed."
+    if not invoices:
+        return "Name the invoices that billed it."
+    for m in invoices:
+        if m.project_id != claim.project_id:
+            return f"{m.invoice_no} is on another project."
+        if m.is_void:
+            return f"{m.invoice_no} is void."
+        if m.superseded_at:
+            return (f"{m.invoice_no} was closed when a claim took it over — "
+                    "it cannot also bill one.")
+        if m.bills_claim_id and m.bills_claim_id != claim.id:
+            return f"{m.invoice_no} already bills {m.bills_claim.ref}."
+    due = _q2(claim_valuation(claim)["waterfall"]["net_to_pay"])
+    total = sum((_q2(m.amount) for m in invoices), Decimal("0"))
+    if abs(total - due) > Decimal("0.05"):
+        return (f"The invoices total {total}, but {claim.ref} bills {due} — "
+                "they must match.")
+    for m in invoices:
+        m.bills_claim = claim
+        m.save(update_fields=["bills_claim", "updated_at"])
+    dropped = ""
+    if drop_claim_invoice and claim.invoice_no:
+        dropped = claim.invoice_no
+        claim.invoice_no = ""
+        claim.save(update_fields=["invoice_no"])
+    _settle(claim, actor)
+    audit("project", claim.project_id, "CLAIM_BILLED_BY_INVOICES",
+          actor=actor,
+          detail={"claim": claim.ref, "invoices": [m.invoice_no
+                                                   for m in invoices],
+                  "total": str(total), "claim_due": str(due),
+                  "dropped_invoice_no": dropped})
     return None

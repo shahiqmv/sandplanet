@@ -606,7 +606,25 @@ def _claim_meta(claim):
         "previous_ref": claim.previous.ref if claim.previous_id else None,
         "certified_at": claim.certified_at,
         "invoice_no": claim.invoice_no,
+        # billed to the client through these manual invoices instead
+        "billed_by": _billed_by(claim),
     }
+
+
+def _billed_by(claim):
+    from django.db.models import Sum
+
+    from .receivables import invoice_links
+    out = []
+    for m in claim.billing_invoices.filter(is_void=False).order_by(
+            "invoice_date", "id"):
+        got = (m.receipts.aggregate(s=Sum("amount"))["s"]
+               if hasattr(m, "receipts") else None) or 0
+        out.append({"id": m.id, "invoice_no": m.invoice_no,
+                    "invoice_date": m.invoice_date, "amount": m.amount,
+                    "received": got, "currency": m.currency,
+                    "pdf_url": invoice_links("MANUAL", m.id, m).get("pdf_url")})
+    return out
 
 
 def _receipt_json(r):

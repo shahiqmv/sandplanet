@@ -823,7 +823,9 @@ def set_claim_status(claim, to_status, actor):
         claim.certified_by = actor
         claim.certified_at = timezone.now()
         fields += ["certified_by", "certified_at"]
-        if not claim.invoice_no:
+        # a claim billed through manual invoices issues none of its own
+        if not claim.invoice_no and not claim.billing_invoices.filter(
+                is_void=False).exists():
             claim.invoice_no = _next_invoice_no()
             fields.append("invoice_no")
     claim.save(update_fields=fields)

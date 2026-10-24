@@ -5719,6 +5719,15 @@ class ManualInvoice(models.Model):
         "ProgressClaim", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="superseded_invoices")
     superseded_at = models.DateTimeField(null=True, blank=True)
+    # The other way round: this invoice IS the billing of (part of) a claim,
+    # and the claim issues no invoice of its own. SFR CASUAL's 40% advance
+    # (IPA-01) went to the client as two invoices — 20% when the LOA was
+    # signed and the balance once the policy documents were in — so the
+    # claim carries the certificate and these carry the money (owner
+    # 2026-10-24).
+    bills_claim = models.ForeignKey(
+        "ProgressClaim", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="billing_invoices")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

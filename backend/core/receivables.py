@@ -97,6 +97,8 @@ def _invoice_claims(site_id=None):
     qs = (ProgressClaim.objects
           .filter(status__in=["CERTIFIED", "PAID"])
           .exclude(invoice_no="")
+          # billed through manual invoices: those are the receivables
+          .exclude(billing_invoices__is_void=False)
           .select_related("project", "project__site"))
     if site_id is not None:
         qs = qs.filter(project__site_id=site_id)

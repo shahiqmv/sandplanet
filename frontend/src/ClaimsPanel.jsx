@@ -726,11 +726,39 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                                        fontWeight: 600 }}>
             ⬇ {["CERTIFIED", "PAID"].includes(c.status)
               ? "Payment certificate (IPC)" : "Payment application (IPA)"}</a>
-          {["CERTIFIED", "PAID"].includes(c.status) && (
+          {["CERTIFIED", "PAID"].includes(c.status)
+            && !(c.billed_by || []).length && (
             <a href={`/api/v1/claims/${claimId}/invoice.pdf`} target="_blank"
                rel="noreferrer" style={{ fontSize: 13, color: "var(--navy)",
                                          fontWeight: 600 }}>
               ⬇ Tax invoice{c.invoice_no ? ` · ${c.invoice_no}` : ""}</a>
+          )}
+          {/* billed to the client as manual invoices, not its own (owner
+              2026-10-24 — SFR CASUAL's advance went as two invoices) */}
+          {(c.billed_by || []).length > 0 && (
+            <span style={{ fontSize: 13 }}>
+              <span style={{ color: "var(--muted)" }}>Billed as </span>
+              {c.billed_by.map((b, i) => {
+                const paid = Number(b.received) >= Number(b.amount) - 0.01;
+                return (
+                  <span key={b.id}>
+                    {i > 0 && " · "}
+                    {b.pdf_url
+                      ? <a href={b.pdf_url} target="_blank" rel="noreferrer"
+                           style={{ color: "var(--navy)", fontWeight: 600 }}>
+                          ⬇ {b.invoice_no}</a>
+                      : <b>{b.invoice_no}</b>}
+                    <span style={{ color: paid ? "#1a7f37" : "#b26a00",
+                                   fontSize: 12 }}>
+                      {" "}({b.currency} {Number(b.amount).toLocaleString(
+                        undefined, { minimumFractionDigits: 2 })}
+                      {paid ? ", paid" : Number(b.received) > 0
+                        ? `, ${Number(b.received).toLocaleString(undefined,
+                            { minimumFractionDigits: 2 })} received`
+                        : ", outstanding"})</span>
+                  </span>);
+              })}
+            </span>
           )}
         </div>
       )}
