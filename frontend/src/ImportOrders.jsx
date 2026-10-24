@@ -2660,7 +2660,15 @@ export function StoreLots({ me, onOpenIrn }) {
                   <td style={td}>{s.doc_date}</td>
                   <td style={td}><StatusChip status={s.status} /></td>
                   <td style={td}>
-                    {s.status === "ISSUED" && (
+                    {s.status === "ISSUED" && !(s.lms || []).length && (
+                      <div style={{ fontSize: 11.5, color: "#b26a00" }}>
+                        Put it on a Loading Manifest for {s.to_site} — the
+                        site receives it on the GRN.</div>)}
+                    {s.status === "ISSUED" && (s.lms || []).length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                        On {s.lms.join(", ")}</div>)}
+                    {s.status === "ISSUED" && !(s.lms || []).length
+                      && ["DIRECTOR", "ADMIN"].includes(me?.role) && (
                       <button style={{ ...ghostButton, padding: "2px 10px",
                                        fontSize: 12 }} disabled={busy}
                               onClick={() => {
@@ -2678,8 +2686,9 @@ export function StoreLots({ me, onOpenIrn }) {
             </tbody>
           </table>
           <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0" }}>
-            Receiving a store issue posts the material to the site project at
-            landed cost.</p>
+            The site receives a store issue on the GRN of the manifest it
+            travels on, which posts the material to the site project at landed
+            cost. Every issue, received or not, is in Store issues (SIN).</p>
         </section>
       )}
     </section>

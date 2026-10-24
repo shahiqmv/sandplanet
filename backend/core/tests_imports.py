@@ -2843,3 +2843,101 @@ class ShipmentDocumentRemoveTests(ShipmentDeleteTests):
             f"/api/v1/ipr/{ref}/shipments/{sid}/documents/{docs[0]['id']}/remove")
         self.assertEqual(r.status_code, 400)
         self.assertIn("cleared", r.data["detail"])
+
+
+class StoreIssueReceiptReversalTests(MrFromStoreTests):
+    """Purchasing issued SIN-002 and received it itself a minute later, so it
+    could not travel on a Loading Manifest (owner 2026-10-24). The sender no
+    longer receives; a direct receipt can be reversed; registers show it."""
+
+    def _issued(self):
+        self._stock()
+        mr = self._mr(qty_to_order=3)
+        self.client.force_authenticate(self.ho)
+        return self.client.post(f"/api/v1/mr/{mr['ref']}/store-fulfil",
+                                {"line_ids": [mr["lines"][0]["id"]]},
+                                format="json").data
+
+    def test_purchasing_cannot_receive_its_own_issue(self):
+        sin = self._issued()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/sin/{sin['ref']}/receive", {},
+                             format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_a_direct_receipt_reverses_and_can_then_ride_a_manifest(self):
+        from .models import CostPosting, StockLot
+        sin = self._issued()
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/sin/{sin['ref']}/receive", {},
+                         format="json")
+        general = StockLot.objects.get(item=self.item, project__isnull=True)
+        self.assertEqual(float(general.qty_in_transit), 0.0)
+        # purchasing may not reverse; a reason is required
+        self.client.force_authenticate(self.ho)
+        url = f"/api/v1/sin/{sin['ref']}/reverse-receipt"
+        self.assertEqual(self.client.post(url, {"reason": "x"},
+                                          format="json").status_code, 403)
+        self.client.force_authenticate(self.director)
+        self.assertEqual(self.client.post(url, {}, format="json")
+                         .status_code, 400)
+        r = self.client.post(url, {"reason": "goes on the manifest"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "ISSUED")
+        general.refresh_from_db()
+        self.assertEqual(float(general.qty_in_transit), 3.0)
+        inc = CostPosting.objects.filter(site=self.site, state="INCURRED",
+                                         source="STORE_ISSUE")
+        self.assertEqual(float(sum(x.amount for x in inc)), 0.0)
+        self.assertEqual(inc.filter(reversal_of__isnull=False).count(), 1)
+        # now it loads onto a manifest for the site
+        self.client.force_authenticate(self.ho)
+        lm = self.client.post("/api/v1/documents", {
+            "doc_type": "LM", "site_id": self.site.id, "lines": []},
+            format="json").data
+        loaded = self.client.post(f"/api/v1/documents/{lm['ref']}/load-store",
+                                  {}, format="json")
+        self.assertEqual(loaded.data["loaded_store_lines"], 1)
+        # and the register shows where it is
+        reg = self.client.get("/api/v1/store/issues?register=1").data
+        row = next(x for x in reg["rows"] if x["ref"] == sin["ref"])
+        self.assertEqual(row["lms"], [lm["ref"]])
+        self.assertEqual(float(row["value"]), 4500.0)
+        self.assertFalse(reg["can_receive"])            # purchasing
+
+    def test_a_receipt_on_a_grn_is_not_reversed_here(self):
+        from . import imports
+        from .models import DocumentLine, Document as D
+        sin = self._issued()
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/sin/{sin['ref']}/receive", {},
+                         format="json")
+        doc = D.objects.get(ref=sin["ref"])
+        grn = D.objects.create(doc_type="GRN", ref="GRN-T-1", site=self.site,
+                               doc_date=doc.doc_date, created_by=self.sa)
+        from .models import DocumentRevision
+        rev = DocumentRevision.objects.create(document=grn, payload={},
+                                              created_by=self.sa)
+        DocumentLine.objects.create(
+            revision=rev, line_no=1, item=self.item,
+            store_issue_line=doc.store_issue.lines.first())
+        err = imports.reverse_store_issue_receipt(doc, self.director, "x")
+        self.assertIn("GRN-T-1", err)
+
+    def test_the_irn_register_shows_received_issued_and_on_hand(self):
+        self._issued()
+        self.client.force_authenticate(self.ho)
+        rows = self.client.get("/api/v1/irn-register").data["rows"]
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertTrue(r["ref"].startswith("IRN-"))
+        # 10 received @ 1500; 3 issued; 7 still on the shelf
+        self.assertEqual(float(r["value_received"]), 15000.0)
+        self.assertEqual(float(r["value_out"]), 4500.0)
+        self.assertEqual(float(r["value_on_sins"]), 4500.0)
+        self.assertEqual(float(r["value_on_hand"]), 10500.0)
+        self.assertEqual(len(r["sins"]), 1)
+        self.client.force_authenticate(self.sa)
+        self.assertEqual(self.client.get("/api/v1/irn-register").status_code,
+                         403)

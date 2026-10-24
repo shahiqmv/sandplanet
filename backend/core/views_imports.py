@@ -754,18 +754,147 @@ def store_issues(request):
 
     if request.user.role not in VIEW_ROLES:
         return Response({"detail": "Head Office store view."}, status=403)
+    from django.db.models import Q
+
+    from .models import DocumentLine
     qs = Document.objects.filter(doc_type="SIN").select_related(
-        "store_issue__to_site", "store_issue__to_project").order_by("-id")
+        "store_issue__to_site", "store_issue__to_project",
+        "store_issue__issued_by", "created_by").order_by("-id")
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
-    rows = [{
-        "ref": d.ref, "status": d.status, "doc_date": d.doc_date,
-        "to_site": d.store_issue.to_site.code,
-        "to_project": (d.store_issue.to_project.code
-                       if d.store_issue.to_project_id else None),
-        "lines": d.store_issue.lines.count(),
-    } for d in qs[:200]]
+    if request.GET.get("site"):
+        qs = qs.filter(store_issue__to_site_id=request.GET["site"])
+    qs = _in_range(qs, request)
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        qs = qs.filter(Q(ref__icontains=q)
+                       | Q(store_issue__to_site__code__icontains=q)
+                       | Q(store_issue__to_project__code__icontains=q)
+                       | Q(store_issue__lines__lot__source_receipt__document__ref__icontains=q)
+                       ).distinct()
+    rows = []
+    for d in qs[:500]:
+        issue = d.store_issue
+        lines = list(issue.lines.select_related("lot__source_receipt__document"))
+        carried = (DocumentLine.objects
+                   .filter(store_issue_line__in=lines,
+                           revision__document__is_void=False)
+                   .values_list("revision__document__doc_type",
+                                "revision__document__ref").distinct())
+        lms = sorted({r for t, r in carried if t == "LM"})
+        grns = sorted({r for t, r in carried if t == "GRN"})
+        value = sum((ln.qty * ln.unit_landed_cost for ln in lines),
+                    Decimal("0"))
+        received = sum(((ln.received_qty or 0) * ln.unit_landed_cost
+                        for ln in lines), Decimal("0"))
+        rows.append({
+            "ref": d.ref, "status": d.status, "doc_date": d.doc_date,
+            "to_site": issue.to_site.code, "to_site_id": issue.to_site_id,
+            "to_project": (issue.to_project.code
+                           if issue.to_project_id else None),
+            "lines": len(lines),
+            "value": _d(value), "value_received": _d(received),
+            "irns": sorted({ln.lot.source_receipt.document.ref for ln in lines
+                            if ln.lot.source_receipt_id}),
+            "created_by": getattr(d.created_by, "full_name", None),
+            "issued_by": (issue.issued_by.full_name if issue.issued_by_id
+                          else None),
+            "issued_at": issue.issued_at,
+            "lms": lms, "grns": grns,
+            # received with no GRN behind it = marked received directly
+            "received_direct": d.status == "RECEIVED" and not grns,
+        })
+    if request.GET.get("register") == "1":
+        return Response({
+            "rows": rows,
+            "can_receive": request.user.role in SIN_RECEIVE_ROLES,
+            "can_reverse": request.user.role in SIN_REVERSE_ROLES})
     return Response(rows)
+
+
+def _d(v):
+    return Decimal(v or 0).quantize(Decimal("0.01"))
+
+
+def _in_range(qs, request, field="doc_date"):
+    if request.GET.get("from"):
+        qs = qs.filter(**{f"{field}__gte": request.GET["from"]})
+    if request.GET.get("to"):
+        qs = qs.filter(**{f"{field}__lte": request.GET["to"]})
+    return qs
+
+
+@api_view(["GET"])
+def irn_register(request):
+    """Every import receipt into the HO store, with what came in, what has
+    gone out to site and what is still on the shelf (owner 2026-10-24: a
+    receipt whose stock was all issued straight out could not be found)."""
+    from django.db.models import Q
+    from .models import ImportReceipt, StockLot, StoreIssueLine
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office store view."}, status=403)
+    qs = (ImportReceipt.objects.select_related(
+        "document__created_by", "shipment").order_by("-document__id"))
+    qs = _in_range(qs, request, "document__doc_date")
+    if request.GET.get("status"):
+        qs = qs.filter(document__status=request.GET["status"])
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        qs = qs.filter(Q(document__ref__icontains=q)
+                       | Q(shipment__ref__icontains=q)
+                       | Q(lines__ipr_line__order__document__ref__icontains=q)
+                       | Q(lines__ipr_line__order__supplier__name__icontains=q)
+                       ).distinct()
+    rows = []
+    for r in qs[:500]:
+        doc = r.document
+        lots = list(StockLot.objects.filter(source_receipt=r))
+        iprs = sorted({rl.ipr_line.order.document.ref for rl in
+                       r.lines.select_related("ipr_line__order__document")})
+        suppliers = sorted({rl.ipr_line.order.supplier.name for rl in
+                            r.lines.select_related("ipr_line__order__supplier")})
+        sils = (StoreIssueLine.objects.filter(lot__source_receipt=r)
+                .exclude(issue__document__status__in=("DRAFT", "CANCELLED"))
+                .select_related("issue__document"))
+        rows.append({
+            "ref": doc.ref, "status": doc.status, "doc_date": doc.doc_date,
+            "created_by": getattr(doc.created_by, "full_name", None),
+            "shipment_id": r.shipment_id,
+            "shipment": r.shipment.ref or f"#{r.shipment.seq}",
+            "iprs": iprs, "suppliers": suppliers,
+            "location": r.location, "lines": r.lines.count(),
+            "value_received": _d(sum((lot.qty_received * lot.unit_landed_cost
+                                      for lot in lots), Decimal("0"))),
+            "value_on_hand": _d(sum((lot.qty_on_hand * lot.unit_landed_cost
+                                     for lot in lots), Decimal("0"))),
+            # everything that has left the shelf — store issues, trading
+            # deliveries, anything else — so the three figures reconcile
+            "value_out": _d(sum(((lot.qty_received - lot.qty_on_hand)
+                                 * lot.unit_landed_cost for lot in lots),
+                                Decimal("0"))),
+            "value_on_sins": _d(sum((sl.qty * sl.unit_landed_cost
+                                     for sl in sils), Decimal("0"))),
+            "sins": sorted({sl.issue.document.ref for sl in sils}),
+        })
+    return Response({"rows": rows})
+
+
+@api_view(["POST"])
+def sin_reverse_receipt(request, ref):
+    """Put a directly-received store issue back in transit (Director/Admin)
+    so it can travel on a Loading Manifest (owner 2026-10-24)."""
+    doc, err = _get_sin(request, ref)
+    if err:
+        return err
+    if request.user.role not in SIN_REVERSE_ROLES:
+        return Response({"detail": "The Director or Admin reverses a "
+                                   "receipt."}, status=403)
+    msg = ipr_svc.reverse_store_issue_receipt(
+        doc, request.user, request.data.get("reason"))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    doc.refresh_from_db()
+    return Response(_sin_payload(doc, request))
 
 
 @api_view(["GET"])
@@ -809,8 +938,12 @@ def sin_cancel(request, ref):
     return Response(_sin_payload(doc, request))
 
 
-SIN_RECEIVE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "HO_PURCHASING", "DIRECTOR",
-                     "ADMIN")
+# The receiving site confirms a store issue — normally on the GRN of the
+# Loading Manifest it travelled on. Purchasing issued SIN-002 and received
+# it a minute later, so it could never go on a manifest (owner 2026-10-24):
+# the sender no longer receives its own issue.
+SIN_RECEIVE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR", "ADMIN")
+SIN_REVERSE_ROLES = ("DIRECTOR", "ADMIN")
 
 
 @api_view(["POST"])

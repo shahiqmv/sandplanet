@@ -2324,6 +2324,65 @@ def receive_store_issue(sin_doc, actor):
     return None
 
 
+@transaction.atomic
+def reverse_store_issue_receipt(sin_doc, actor, reason):
+    """Undo a DIRECT receipt of a store issue, putting it back in transit
+    (owner 2026-10-24, SIN-002).
+
+    Purchasing issued SIN-002 and pressed Receive a minute later, so the
+    goods counted as delivered and could no longer travel on a Loading
+    Manifest to be received on the site's GRN. This puts the issue back as
+    it stood after issuing: the receipt's Incurred cost is reversed (a
+    negative mirror, never a delete), each line returns to in transit, and a
+    cleared project shipment re-carries its share. A line received on a GRN
+    is the site's own count and is never undone here. Returns an error or
+    None.
+    """
+    from . import costing
+    from .models import DocumentLine
+    reason = (reason or "").strip()
+    if not reason:
+        return "Say why the receipt is being reversed."
+    if sin_doc.status != "RECEIVED":
+        return "Only a received store issue can have its receipt reversed."
+    issue = sin_doc.store_issue
+    lines = list(issue.lines.select_related("lot__source_receipt__shipment"))
+    on_grn = (DocumentLine.objects
+              .filter(store_issue_line__in=lines,
+                      revision__document__doc_type="GRN",
+                      revision__document__is_void=False)
+              .values_list("revision__document__ref", flat=True).first())
+    if on_grn:
+        return (f"{sin_doc.ref} was received on {on_grn} — that is the "
+                "site's count; correct it there.")
+    reversed_rows = costing.reverse_document(sin_doc, actor=actor,
+                                             states=["INCURRED"])
+    shipments = {}
+    for sil in lines:
+        took = sil.received_qty or ZERO
+        if took <= ZERO:
+            continue
+        lot = sil.lot
+        lot.qty_in_transit = (lot.qty_in_transit or ZERO) + took
+        lot.save(update_fields=["qty_in_transit"])
+        sil.received_qty = ZERO
+        sil.save(update_fields=["received_qty"])
+        if lot.project_id and lot.source_receipt_id:
+            shipments[lot.source_receipt.shipment_id] = \
+                lot.source_receipt.shipment
+    sin_doc.status = "ISSUED"
+    sin_doc.save(update_fields=["status", "updated_at"])
+    for sh in shipments.values():
+        sync_cleared_incurred(sh, actor)
+    audit("document", sin_doc.id, "SIN_RECEIPT_REVERSED", actor=actor,
+          from_state="RECEIVED", to_state="ISSUED",
+          detail={"ref": sin_doc.ref, "reason": reason,
+                  "reversed": str(-sum((r.amount for r in reversed_rows),
+                                       ZERO)),
+                  "lines": len(lines)})
+    return None
+
+
 def loadable_store_lines(lm):
     """Issued SIN lines bound for the LM's site, not yet loaded onto a live LM
     nor received — available to load onto this manifest (P1B-f3)."""

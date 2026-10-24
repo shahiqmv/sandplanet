@@ -19,6 +19,7 @@ import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import ClearancePage from "./ClearancePage.jsx";
 import ShipmentsPage from "./ShipmentsPage.jsx";
+import { IrnRegister, SinRegister } from "./StoreRegisters.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import HsePage from "./HsePage.jsx";
@@ -175,6 +176,11 @@ const NAV_GROUPS = [
            ["shipments", "Shipments", IMPORT_CHAIN],
            ["clearance", "Cargo Clearance", IMPORT_CHAIN],
            ["store", "HO Store", IMPORT_CHAIN],
+           // every receipt and store issue, including stock already gone
+           // out — the HO Store page lists only what is on the shelf
+           // (owner 2026-10-24)
+           ["irn-register", "Receipts (IRN)", IMPORT_CHAIN],
+           ["sin-register", "Store issues (SIN)", IMPORT_CHAIN],
            ["suppliers", "Suppliers",
             ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA",
              "SIGNATORY"]],
@@ -1580,6 +1586,13 @@ export default function App() {
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>
               setDocView({ mode: "irn-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "irn-register" && (
+            <IrnRegister onOpenIrn={(ref) =>
+              setDocView({ mode: "irn-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "sin-register" && (
+            <SinRegister sites={sites} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "shipments" && (
             <ShipmentsPage me={me}
