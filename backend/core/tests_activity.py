@@ -82,3 +82,7 @@ class LoginActivityTests(TestCase):
         self.assertEqual([i["event"] for i in d["items"]], ["DOC_SUBMIT"])
         d = self.client.get(f"{url}?event=approve").data
         self.assertEqual([i["event"] for i in d["items"]], ["DOC_APPROVE"])
+        # each area and person once, not once per entry
+        self.assertEqual(len(d["entities"]), len(set(d["entities"])))
+        ids = [a["id"] for a in d["actors"]]
+        self.assertEqual(len(ids), len(set(ids)))

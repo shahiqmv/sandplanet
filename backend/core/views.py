@@ -881,7 +881,9 @@ def audit_trail(request):
         "detail": a.detail,
     } for a in qs[offset:offset + limit]]
     # distinct entity / actor lists power the filter dropdowns
-    actor_ids = (AuditLog.objects.exclude(actor__isnull=True)
+    # order_by() clears the model's "-at" ordering, which otherwise joins the
+    # DISTINCT and returns every one of ~100k rows (a 1 s query each)
+    actor_ids = (AuditLog.objects.exclude(actor__isnull=True).order_by()
                  .values_list("actor_id", flat=True).distinct())
     actors = [{"id": u.id, "name": u.full_name or u.username,
                "role": u.role, "active": u.is_active}
@@ -889,8 +891,9 @@ def audit_trail(request):
               .order_by("full_name", "username")]
     return Response({"items": rows, "total": total, "limit": limit,
                      "offset": offset, "actors": actors,
-                     "entities": sorted(AuditLog.objects.values_list(
-                         "entity", flat=True).distinct())})
+                     "entities": sorted(AuditLog.objects.order_by()
+                                        .values_list("entity", flat=True)
+                                        .distinct())})
 
 
 @api_view(["GET", "PUT"])
