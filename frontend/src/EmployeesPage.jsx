@@ -67,10 +67,16 @@ export default function EmployeesPage({ me, sites }) {
   const seesPay = ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role);
 
   function load(includeSub = withSub) {
-    api(`/employees${includeSub ? "?include_subcontract=1" : ""}`)
+    // active=all: the Status filter below works on what was loaded, and the
+    // API sends active staff only unless asked — so "Inactive" showed an
+    // empty list and nobody could reach a man who had left to bring him back
+    // (owner 2026-10-24).
+    api(`/employees?active=all${includeSub ? "&include_subcontract=1" : ""}`)
       // A list, or nothing: a body that is not a list must not reach the
       // filter below and take the whole screen down.
-      .then((d) => setEmployees(Array.isArray(d) ? d : []))
+      .then((d) => setEmployees((Array.isArray(d) ? d : [])
+        // a cancelled hire's placeholder is not a person on the register
+        .filter((e) => !(e.full_name || "").includes("(cancelled hire)"))))
       .catch((e) => setError(e.message));
     api("/permits/alerts").then(setAlerts).catch(() => setAlerts(null));
   }
@@ -286,6 +292,12 @@ export default function EmployeesPage({ me, sites }) {
                 <td style={td} onClick={() => isHr && !isSub(emp)
                                          && setEditing(emp)}>
                   {emp.full_name}
+                  {!emp.is_active && !isSub(emp) && (
+                    <div style={{ fontSize: 11, color: emp.hire_pending
+                                  ? "#b26a00" : "var(--muted)" }}>
+                      {emp.hire_pending ? "pending hire — awaiting approval"
+                        : `left${emp.left_on ? ` ${emp.left_on}` : ""}`
+                          + (isHr ? " · open to bring back" : "")}</div>)}
                   {isSub(emp) && (
                     <div style={{ fontSize: 11, color: "var(--muted)" }}>
                       SUB · {emp.subcontractor_name || "subcontractor"}
@@ -1066,7 +1078,8 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
           </div>
         )}
 
-        {isHr && !creating && employee.is_active === false && (
+        {isHr && !creating && employee.is_active === false
+          && !employee.hire_pending && (
           <BringBack employee={employee} sites={sites}
                      onDone={() => { onChanged?.(); onClose?.(); }} />)}
 

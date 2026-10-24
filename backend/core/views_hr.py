@@ -149,10 +149,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "permit_days", "permit_pending", "emergency_contact",
                   "bank_name", "bank_branch", "bank_account_name",
                   "bank_account_no", "bank_swift",
-                  "join_date", "is_active", "left_on", "site_id",
+                  "join_date", "is_active", "left_on", "hire_pending",
+                  "site_id",
                   "site_code", "engagement_type", "subcontractor_name"]
         read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_currency",
-                            "left_on",
+                            "left_on", "hire_pending",
                             "ot_effective",
                             "permit_state", "permit_days", "permit_pending",
                             "engagement_type", "subcontractor_name"]
