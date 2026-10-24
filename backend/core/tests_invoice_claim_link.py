@@ -218,3 +218,35 @@ class ClaimBilledByInvoicesTests(TestCase):
     def test_invoices_that_do_not_add_up_are_refused(self):
         err = mi_svc.bill_claim_by(self.claim, [self.first], self.qs)
         self.assertIn("must match", err)
+
+    def test_the_claim_page_links_and_unlinks_them(self):
+        from rest_framework.test import APIClient
+        c = APIClient()
+        url = f"/api/v1/claims/{self.claim.id}/billing"
+        c.force_authenticate(self.qs)
+        d = c.get(url).data
+        self.assertEqual({i["invoice_no"] for i in d["invoices"]},
+                         {"INV-2026-0029", "INV-2026-0055"})
+        self.assertTrue(d["can_manage"])
+        own = d["claim_invoice_no"]
+        r = c.post(url, {"invoice_ids": [self.first.id, self.balance.id],
+                         "drop_claim_invoice": True}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["claim_invoice_no"], "")
+        self.assertTrue(all(i["linked"] for i in r.data["invoices"]))
+        meta = c.get(f"/api/v1/claims/{self.claim.id}").data
+        billed = meta.get("billed_by") or meta.get("claim", {}).get("billed_by")
+        self.assertEqual([b["invoice_no"] for b in billed],
+                         ["INV-2026-0029", "INV-2026-0055"])
+        # a PM reads the claim but does not link invoices
+        pm = make_user("pm_bil", User.Role.PM, site=self.site)
+        c.force_authenticate(pm)
+        self.assertEqual(c.post(url, {"invoice_ids": []}, format="json")
+                         .status_code, 403)
+        # unlinking all: the claim bills itself again, with a NEW number
+        c.force_authenticate(self.qs)
+        r = c.post(url, {"invoice_ids": []}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["claim_invoice_no"])
+        self.assertNotEqual(r.data["claim_invoice_no"], own)
+        self.assertFalse(any(i["linked"] for i in r.data["invoices"]))

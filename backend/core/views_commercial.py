@@ -775,6 +775,37 @@ def deduction_presets(request):
                      for p in DeductionPreset.objects.filter(is_active=True)])
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def claim_billing(request, pk):
+    """Which manual invoices bill this certified claim (owner 2026-10-24).
+    POST {invoice_ids, drop_claim_invoice} sets the whole set; an empty list
+    unlinks them and the claim bills itself again."""
+    from . import manual_invoices as mi_svc
+    from .models import ManualInvoice
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if request.method == "POST":
+        if request.user.role not in mi_svc.CREATE_ROLES:
+            return Response({"detail": "QS, Finance or the Director links "
+                                       "invoices to a claim."}, status=403)
+        ids = [int(i) for i in (request.data.get("invoice_ids") or [])]
+        invs = list(ManualInvoice.objects.filter(pk__in=ids,
+                                                 project=c.project))
+        if len(invs) != len(set(ids)):
+            return Response({"detail": "An invoice is not on this project."},
+                            status=400)
+        msg = mi_svc.bill_claim_by(
+            c, invs, request.user,
+            drop_claim_invoice=bool(request.data.get("drop_claim_invoice")))
+        if msg:
+            return Response({"detail": msg}, status=400)
+        c.refresh_from_db()
+    return Response({**mi_svc.billing_options(c),
+                     "can_manage": request.user.role in mi_svc.CREATE_ROLES})
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def claim_status(request, pk):

@@ -16,6 +16,7 @@ the number is never silently reused.
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Q as models_Q
 from django.db.models import Sum
 
 from .audit import audit
@@ -275,7 +276,7 @@ def bill_claim_by(claim, invoices, actor, drop_claim_invoice=False):
     if claim.status not in ("CERTIFIED", "PAID"):
         return "Only a certified claim is billed."
     if not invoices:
-        return "Name the invoices that billed it."
+        return unbill_claim(claim, actor)
     for m in invoices:
         if m.project_id != claim.project_id:
             return f"{m.invoice_no} is on another project."
@@ -291,6 +292,12 @@ def bill_claim_by(claim, invoices, actor, drop_claim_invoice=False):
     if abs(total - due) > Decimal("0.05"):
         return (f"The invoices total {total}, but {claim.ref} bills {due} — "
                 "they must match.")
+    # the set given is the whole billing: anything linked before and left
+    # out stands on its own again
+    keep = {m.id for m in invoices}
+    for old in claim.billing_invoices.exclude(pk__in=keep):
+        old.bills_claim = None
+        old.save(update_fields=["bills_claim", "updated_at"])
     for m in invoices:
         m.bills_claim = claim
         m.save(update_fields=["bills_claim", "updated_at"])
@@ -307,3 +314,47 @@ def bill_claim_by(claim, invoices, actor, drop_claim_invoice=False):
                   "total": str(total), "claim_due": str(due),
                   "dropped_invoice_no": dropped})
     return None
+
+
+@transaction.atomic
+def unbill_claim(claim, actor):
+    """Undo billing through manual invoices: they stand on their own again
+    and the claim bills itself — with a fresh invoice number if its own was
+    withdrawn (a withdrawn number is never reissued)."""
+    from .receipts import _settle
+    nos = list(claim.billing_invoices.values_list("invoice_no", flat=True))
+    if not nos:
+        return "This claim is not billed through manual invoices."
+    claim.billing_invoices.update(bills_claim=None)
+    issued = ""
+    if not claim.invoice_no and claim.status in ("CERTIFIED", "PAID"):
+        claim.invoice_no = issued = _next_invoice_no()
+        claim.save(update_fields=["invoice_no"])
+    _settle(claim, actor)
+    audit("project", claim.project_id, "CLAIM_UNBILLED", actor=actor,
+          detail={"claim": claim.ref, "invoices": nos,
+                  "new_invoice_no": issued})
+    return None
+
+
+def billing_options(claim):
+    """For the claim page: what bills it now, what could, and its total."""
+    from django.db.models import Sum as _Sum
+
+    from .commercial import claim_valuation
+
+    def row(m):
+        got = m.receipts.aggregate(s=_Sum("amount"))["s"] or ZERO
+        return {"id": m.id, "invoice_no": m.invoice_no,
+                "invoice_date": m.invoice_date, "amount": m.amount,
+                "currency": m.currency, "description": m.description,
+                "received": got, "linked": m.bills_claim_id == claim.id}
+    qs = (ManualInvoice.objects.filter(project=claim.project, is_void=False,
+                                       superseded_at__isnull=True)
+          .filter(models_Q(bills_claim__isnull=True) | models_Q(
+              bills_claim=claim))
+          .order_by("invoice_date", "id"))
+    return {"claim_ref": claim.ref, "claim_invoice_no": claim.invoice_no,
+            "claim_total": _q2(claim_valuation(claim)["waterfall"]
+                               ["net_to_pay"]),
+            "invoices": [row(m) for m in qs]}

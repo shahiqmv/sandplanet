@@ -5,6 +5,8 @@ import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
 const EDIT_ROLES = ["PM", "ADMIN", "DIRECTOR", "QS"];
+// who links manual invoices to a claim — the people who record them
+const BILL_ROLES = ["QS", "FINANCE", "DIRECTOR", "ADMIN"];
 // Certifying an IPA is the Director's clearance (the QS prepares + submits).
 const CERTIFY_ROLES = ["DIRECTOR", "ADMIN"];
 // BOQ + claim (IPA) values carry 3 dp — the QS working precision; the tax
@@ -153,6 +155,7 @@ export default function ClaimsPanel({ projectId, me }) {
                       <ClaimEditor claimId={c.id} ccy={ccy} canEdit={canEdit}
                                    canCertify={canCertify}
                                    isAdmin={me.role === "ADMIN"}
+                                   canBill={BILL_ROLES.includes(me.role)}
                                    onChange={(d) => d && setData(d)}
                                    reloadList={load} />
                     </td></tr>
@@ -272,8 +275,9 @@ function ReceiptForm({ form, setForm, ccy, claims, busy, onSave }) {
 const numCell = { ...inputStyle, width: 84, padding: "3px 5px", fontSize: 12,
   textAlign: "right" };
 
-function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
-                       reloadList }) {
+function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, canBill,
+                       onChange, reloadList }) {
+  const [billing, setBilling] = useState(false);
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -760,8 +764,19 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
               })}
             </span>
           )}
+          {canBill && ["CERTIFIED", "PAID"].includes(c.status) && (
+            <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}
+                    onClick={() => setBilling((v) => !v)}>
+              {(c.billed_by || []).length ? "Change billing invoices…"
+                : "Billed by manual invoices…"}</button>)}
         </div>
       )}
+      {billing && (
+        <BillingInvoices claimId={claimId}
+          onClose={() => setBilling(false)}
+          onSaved={() => { setBilling(false); reloadList?.();
+                           api(`/claims/${claimId}`).then(hydrate)
+                             .catch(() => {}); }} />)}
 
       {/* Workflow */}
       {canEdit && (
@@ -829,5 +844,109 @@ function W({ label, v, ccy, strong, big, neg }) {
                    color: neg ? "#b0402f" : (big ? "var(--navy)" : "inherit") }}>
         {ccy} {signed(v)}</td>
     </tr>
+  );
+}
+
+
+/* Which manual invoices bill a certified claim (owner 2026-10-24). An
+ * advance often goes to the client as more than one invoice — SFR CASUAL's
+ * 40% went as 20% at the LOA and the balance later — so the claim keeps its
+ * certificate and the invoices carry the money. Their total must match the
+ * claim's. */
+function BillingInvoices({ claimId, onClose, onSaved }) {
+  const [d, setD] = useState(null);
+  const [pick, setPick] = useState({});
+  const [drop, setDrop] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    api(`/claims/${claimId}/billing`).then((r) => {
+      setD(r);
+      const p = {};
+      r.invoices.forEach((i) => { if (i.linked) p[i.id] = true; });
+      setPick(p);
+    }).catch((e) => setError(e.message));
+  }, [claimId]);
+  if (!d) return <div style={{ ...card, marginTop: 10 }}>{error || "Loading…"}</div>;
+
+  const money = (v) => Number(v || 0).toLocaleString(undefined,
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const chosen = d.invoices.filter((i) => pick[i.id]);
+  const total = chosen.reduce((s, i) => s + Number(i.amount), 0);
+  const diff = total - Number(d.claim_total);
+  const matches = chosen.length > 0 && Math.abs(diff) <= 0.05;
+  const wasLinked = d.invoices.some((i) => i.linked);
+
+  async function save(ids) {
+    setBusy(true); setError(null);
+    try {
+      await api(`/claims/${claimId}/billing`, { method: "POST",
+        body: { invoice_ids: ids, drop_claim_invoice: drop } });
+      onSaved();
+    } catch (e) { setError(e.message); setBusy(false); }
+  }
+
+  return (
+    <div style={{ ...card, marginTop: 10, background: "var(--paper, #fafbfc)" }}>
+      <div style={{ fontWeight: 600, color: "var(--navy)", marginBottom: 4 }}>
+        Manual invoices that bill {d.claim_ref}</div>
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
+        Tick the invoices the client was actually sent for this claim. The
+        claim keeps its certificate; receivables counts these invoices
+        instead of the claim, and the claim turns Paid when they are.</p>
+      {d.invoices.length === 0 ? (
+        <p style={{ fontSize: 13 }}>No manual invoices on this project are
+          free to link (void ones, ones a claim took over, and ones billing
+          another claim are left out).</p>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr>
+            <th style={th} /><th style={th}>Invoice</th><th style={th}>Date</th>
+            <th style={th}>Description</th>
+            <th style={{ ...th, textAlign: "right" }}>Amount</th>
+            <th style={{ ...th, textAlign: "right" }}>Received</th>
+          </tr></thead>
+          <tbody>
+            {d.invoices.map((i) => (
+              <tr key={i.id}>
+                <td style={td}><input type="checkbox" checked={!!pick[i.id]}
+                  onChange={(e) => setPick({ ...pick, [i.id]: e.target.checked })} /></td>
+                <td style={{ ...td, fontWeight: 600 }}>{i.invoice_no}</td>
+                <td style={td}>{i.invoice_date}</td>
+                <td style={td}>{i.description}</td>
+                <td style={{ ...td, textAlign: "right" }}>{i.currency} {money(i.amount)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{money(i.received)}</td>
+              </tr>))}
+          </tbody>
+        </table>)}
+      <div style={{ fontSize: 13, margin: "8px 0", fontVariantNumeric: "tabular-nums" }}>
+        Ticked {money(total)} · claim {money(d.claim_total)}{" "}
+        {chosen.length > 0 && (matches
+          ? <span style={{ color: "#1a7f37", fontWeight: 600 }}>✓ matches</span>
+          : <span style={{ color: "#c0392b", fontWeight: 600 }}>
+              {diff > 0 ? `${money(diff)} over` : `${money(-diff)} short`} —
+              they must match</span>)}
+      </div>
+      {d.claim_invoice_no && (
+        <label style={{ fontSize: 12.5, display: "flex", gap: 6, marginBottom: 8 }}>
+          <input type="checkbox" checked={drop}
+                 onChange={(e) => setDrop(e.target.checked)} />
+          Withdraw the claim&apos;s own invoice {d.claim_invoice_no} — the
+          client never received it (kept in the audit, never reused)</label>)}
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style={buttonStyle} disabled={busy || !matches}
+                onClick={() => save(chosen.map((i) => i.id))}>Save</button>
+        {wasLinked && (
+          <button style={ghostButton} disabled={busy}
+                  onClick={() => {
+                    if (window.confirm(`Unlink every invoice from ${d.claim_ref}? `
+                      + "They stand on their own again and the claim bills itself"
+                      + (d.claim_invoice_no ? "." : " with a new invoice number.")))
+                      save([]);
+                  }}>Unlink all</button>)}
+        <button style={ghostButton} onClick={onClose}>Cancel</button>
+      </div>
+    </div>
   );
 }

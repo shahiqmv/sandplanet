@@ -634,6 +634,8 @@ urlpatterns = [
          name="claim-deductions"),
     path("deduction-presets", commercial.deduction_presets,
          name="deduction-presets"),
+    path("claims/<int:pk>/billing", commercial.claim_billing,
+         name="claim-billing"),
     path("claims/<int:pk>/status", commercial.claim_status,
          name="claim-status"),
     path("claims/<int:pk>/delete", commercial.claim_delete,
