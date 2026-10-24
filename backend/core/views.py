@@ -851,11 +851,19 @@ def audit_trail(request):
     if request.user.role != User.Role.ADMIN:
         return Response({"detail": "Administrators only."}, status=403)
     qs = AuditLog.objects.select_related("actor")
-    for field in ("entity", "event"):
-        if request.GET.get(field):
-            qs = qs.filter(**{field: request.GET[field]})
-    if request.GET.get("actor_id"):
+    if request.GET.get("entity"):
+        qs = qs.filter(entity=request.GET["entity"])
+    # part of the name is enough: "APPROVE" finds DOC_APPROVE
+    if request.GET.get("event"):
+        qs = qs.filter(event__icontains=request.GET["event"].strip())
+    # who did it (owner 2026-10-24) — "none" is the system's own jobs
+    if request.GET.get("actor_id") == "none":
+        qs = qs.filter(actor__isnull=True)
+    elif request.GET.get("actor_id"):
         qs = qs.filter(actor_id=request.GET["actor_id"])
+    # a reference or any text in the record — SIN-002, EMP-0867, a name
+    if request.GET.get("q"):
+        qs = qs.filter(detail__icontains=request.GET["q"].strip())
     if request.GET.get("entity_id"):
         qs = qs.filter(entity_id=request.GET["entity_id"])
     if request.GET.get("since"):
@@ -868,12 +876,19 @@ def audit_trail(request):
         "id": a.id, "at": a.at, "entity": a.entity, "entity_id": a.entity_id,
         "event": a.event, "from_state": a.from_state, "to_state": a.to_state,
         "actor": a.actor.full_name if a.actor_id else "",
+        "actor_id": a.actor_id,
         "actor_role": a.actor.role if a.actor_id else "",
         "detail": a.detail,
     } for a in qs[offset:offset + limit]]
-    # distinct entity/event lists power the filter dropdowns
+    # distinct entity / actor lists power the filter dropdowns
+    actor_ids = (AuditLog.objects.exclude(actor__isnull=True)
+                 .values_list("actor_id", flat=True).distinct())
+    actors = [{"id": u.id, "name": u.full_name or u.username,
+               "role": u.role, "active": u.is_active}
+              for u in User.objects.filter(pk__in=actor_ids)
+              .order_by("full_name", "username")]
     return Response({"items": rows, "total": total, "limit": limit,
-                     "offset": offset,
+                     "offset": offset, "actors": actors,
                      "entities": sorted(AuditLog.objects.values_list(
                          "entity", flat=True).distinct())})
 

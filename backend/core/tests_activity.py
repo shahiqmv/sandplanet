@@ -63,3 +63,22 @@ class LoginActivityTests(TestCase):
         self.assertTrue(d["items"])
         self.assertTrue(all(i["entity"] == "document" for i in d["items"]))
         self.assertIn("document", d["entities"])
+
+    def test_audit_trail_by_person_reference_and_part_of_an_event(self):
+        """'i want user based search too' (owner 2026-10-24)."""
+        audit("document", 1, "DOC_APPROVE", actor=self.pm,
+              detail={"ref": "SIN-002"})
+        audit("document", 2, "DOC_SUBMIT", actor=self.admin,
+              detail={"ref": "IPR-057"})
+        audit("site", 3, "HEALTH_DAILY", actor=None, detail={"ref": "SJR"})
+        self.client.force_authenticate(self.admin)
+        url = "/api/v1/admin/audit-trail"
+        d = self.client.get(f"{url}?actor_id={self.pm.id}").data
+        self.assertEqual([i["event"] for i in d["items"]], ["DOC_APPROVE"])
+        self.assertIn(self.pm.id, [a["id"] for a in d["actors"]])
+        d = self.client.get(f"{url}?actor_id=none").data
+        self.assertEqual([i["event"] for i in d["items"]], ["HEALTH_DAILY"])
+        d = self.client.get(f"{url}?q=IPR-057").data
+        self.assertEqual([i["event"] for i in d["items"]], ["DOC_SUBMIT"])
+        d = self.client.get(f"{url}?event=approve").data
+        self.assertEqual([i["event"] for i in d["items"]], ["DOC_APPROVE"])

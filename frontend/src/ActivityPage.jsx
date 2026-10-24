@@ -131,8 +131,14 @@ function LoginActivity() {
 
 function AuditTrail() {
   const [data, setData] = useState(null);
-  const [f, setF] = useState({ entity: "", event: "", entity_id: "",
-    since: "", until: "" });
+  const [f, setF] = useState({ actor_id: "", q: "", entity: "", event: "",
+    entity_id: "", since: "", until: "" });
+  // typed filters wait for a pause; the dropdowns and dates apply at once
+  const [typed, setTyped] = useState({ q: "", event: "", entity_id: "" });
+  useEffect(() => {
+    const t = setTimeout(() => setF((cur) => ({ ...cur, ...typed })), 350);
+    return () => clearTimeout(t);
+  }, [typed]);
   const [offset, setOffset] = useState(0);
   const [err, setErr] = useState(null);
   const [open, setOpen] = useState({});
@@ -147,6 +153,21 @@ function AuditTrail() {
     <div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
         marginBottom: 10, alignItems: "flex-end" }}>
+        {/* who did it (owner 2026-10-24) */}
+        <label style={label}>Who
+          <select value={f.actor_id} style={{ ...inputStyle, display: "block",
+                                              maxWidth: 230 }}
+            onChange={(e) => setF({ ...f, actor_id: e.target.value })}>
+            <option value="">Everyone</option>
+            <option value="none">System (automatic jobs)</option>
+            {(data?.actors || []).map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name} · {u.role}{u.active ? "" : " (inactive)"}</option>))}
+          </select></label>
+        <label style={label}>Reference / text
+          <input value={typed.q} placeholder="e.g. SIN-002, EMP-0867"
+            style={{ ...inputStyle, display: "block", width: 170 }}
+            onChange={(e) => setTyped({ ...typed, q: e.target.value })} /></label>
         <label style={label}>Area
           <select value={f.entity} style={{ ...inputStyle, display: "block" }}
             onChange={(e) => setF({ ...f, entity: e.target.value })}>
@@ -154,13 +175,13 @@ function AuditTrail() {
             {(data?.entities || []).map((x) =>
               <option key={x} value={x}>{x}</option>)}</select></label>
         <label style={label}>Event
-          <input value={f.event} placeholder="e.g. APPROVE"
+          <input value={typed.event} placeholder="e.g. APPROVE"
             style={{ ...inputStyle, display: "block" }}
-            onChange={(e) => setF({ ...f, event: e.target.value })} /></label>
+            onChange={(e) => setTyped({ ...typed, event: e.target.value })} /></label>
         <label style={label}>Record ID
-          <input value={f.entity_id} placeholder="entity id"
+          <input value={typed.entity_id} placeholder="entity id"
             style={{ ...inputStyle, display: "block", width: 90 }}
-            onChange={(e) => setF({ ...f, entity_id: e.target.value })} /></label>
+            onChange={(e) => setTyped({ ...typed, entity_id: e.target.value })} /></label>
         <label style={label}>From
           <input type="date" value={f.since}
             style={{ ...inputStyle, display: "block" }}
@@ -185,7 +206,15 @@ function AuditTrail() {
               return (
                 <tr key={a.id}>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>{fmt(a.at)}</td>
-                  <td style={td}>{a.actor || "—"}
+                  <td style={td}>
+                    {a.actor_id ? (
+                      <button title="Show only this person's activity"
+                        onClick={() => setF({ ...f, actor_id: String(a.actor_id) })}
+                        style={{ border: "none", background: "none", padding: 0,
+                                 cursor: "pointer", color: "var(--sp-navy)",
+                                 textDecoration: "underline dotted",
+                                 font: "inherit" }}>{a.actor}</button>
+                    ) : "System"}
                     {a.actor_role && <span style={{ color: "var(--muted)" }}>
                       {" "}· {a.actor_role}</span>}</td>
                   <td style={td}>{a.entity}
