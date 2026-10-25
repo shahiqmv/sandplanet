@@ -51,7 +51,11 @@ def source_currency(doc):
     """The currency a requisition would be vouchered / paid in."""
     if doc.doc_type == "PYR":
         return doc.payment_request.currency
-    return "MVR"        # procurement (PR) settles in MVR
+    if doc.doc_type == "PR":
+        # a local purchase pays in the currency it was bought in
+        from .procurement import pr_currency
+        return pr_currency(doc)
+    return "MVR"
 
 
 def milestone_amount(m):
@@ -79,7 +83,7 @@ def payable_currency(p):
         return p.rent_due.currency
     if p.bill_charge_id:
         return p.bill_charge.currency
-    return "MVR"
+    return p.currency or "MVR"
 
 
 def _on_live_payable():

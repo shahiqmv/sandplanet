@@ -48,7 +48,13 @@ export default function PayablesPage({ me, onOpenDoc }) {
   const rows = onSalaries ? salaries : credit;
   const pickedRows = rows.filter((r) => picked[r.payable_id]);
   const pickedTotal = pickedRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const tabTotal = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  // one total per currency — a USD purchase, rent or salary beside rufiyaa
+  // ones does not add up (owner 2026-10-25)
+  const tabTotals = rows.reduce((t, r) => {
+    const c = r.currency || "MVR";
+    t[c] = (t[c] || 0) + Number(r.amount || 0);
+    return t;
+  }, {});
   // A voucher is single-currency, so the batch's currency is the one the debit
   // account has to be in.
   const currency = pickedRows[0]?.currency || rows[0]?.currency || "MVR";
@@ -64,7 +70,10 @@ export default function PayablesPage({ me, onOpenDoc }) {
 
   function pickAllPayable() {
     const next = {};
-    for (const r of rows) next[r.payable_id] = true;
+    // a voucher pays in one currency: all of the batch's currency
+    for (const r of rows) {
+      if ((r.currency || "MVR") === currency) next[r.payable_id] = true;
+    }
     setPicked(next);
   }
 
@@ -121,7 +130,9 @@ export default function PayablesPage({ me, onOpenDoc }) {
         <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 18 }}>
           Outstanding payables</h2>
         <span style={{ fontSize: 13, color: "var(--muted)" }}>
-          {rows.length} · {currency} {money(tabTotal)} total
+          {rows.length} ·{" "}
+          {Object.entries(tabTotals).map(([c, v]) => `${c} ${money(v)}`)
+            .join(" · ") || "MVR 0.00"} total
           {data?.overdue && !onSalaries ? ` · ${data.overdue} overdue` : ""}</span>
         <form onSubmit={(e) => { e.preventDefault(); load(); }}
               style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
@@ -219,6 +230,12 @@ export default function PayablesPage({ me, onOpenDoc }) {
                     <td style={{ ...td, textAlign: "center" }}>
                       <input type="checkbox"
                         checked={!!picked[r.payable_id]}
+                        disabled={pickedRows.length > 0 && !picked[r.payable_id]
+                          && (r.currency || "MVR") !== currency}
+                        title={pickedRows.length > 0
+                          && (r.currency || "MVR") !== currency
+                          ? `A voucher pays in one currency — this is ${r.currency || "MVR"}`
+                          : undefined}
                         onChange={(e) => setPicked({ ...picked,
                           [r.payable_id]: e.target.checked })} /></td>
                   )}

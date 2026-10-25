@@ -486,7 +486,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                                     color: "var(--muted)" }}>{l.purpose}</span>
                                   <span style={{ marginLeft: "auto",
                                     fontFamily: "var(--mono, monospace)" }}>
-                                    MVR {money(l.amount)}</span>
+                                    {l.currency || "MVR"} {money(l.amount)}</span>
                                 </div>
                                 {payKey === `pay:${l.payable_id}`
                                   ? payFormFields({ onSave: () =>
@@ -1135,7 +1135,7 @@ function PayLinePr({ l, payKey, startPay, fields }) {
                 </td>
                 <td style={{ ...td, borderTop: "none", textAlign: "right",
                              fontFamily: "var(--font-mono)" }}>
-                  MVR {money(gross)}
+                  {row.currency || l.currency || "MVR"} {money(gross)}
                   {gstv > 0 && (
                     <div style={{ fontSize: 11, color: "var(--muted)" }}>
                       net {money(net)} + GST {money(gstv)}</div>

@@ -97,7 +97,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                   "priority", "urgent_reason", "rate", "amount",
                   "amount_cash", "amount_credit", "vendor", "quotation_ref",
                   "payment_terms", "credit_days", "action_taken", "po_ref",
-                  "balance_before_collection",
+                  "balance_before_collection", "currency",
                   "po_status", "is_changed",
                   "fulfil_source", "store_issue_line", "spec", "mar_ref",
                   "remarks", "ordered_pr_ref"]
@@ -162,6 +162,8 @@ class DocumentSerializer(serializers.ModelSerializer):
     payment_request = serializers.SerializerMethodField()
     subcontract_agreement = serializers.SerializerMethodField()
     payable = serializers.SerializerMethodField()
+    # what a local purchase is bought / ordered in (owner 2026-10-25)
+    currency = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -171,7 +173,17 @@ class DocumentSerializer(serializers.ModelSerializer):
                   "links", "revisions", "is_void", "void_reason",
                   "previous_ir_ref", "resubmitted_as", "supplier_name",
                   "payment_request", "subcontract_agreement", "payable",
-                  "attachments", "approvals", "created_by_name", "created_at"]
+                  "attachments", "approvals", "created_by_name", "created_at",
+                  "currency"]
+
+    def get_currency(self, obj):
+        if obj.doc_type == "PR" and obj.current_revision_id:
+            from .procurement import pr_currency
+            return pr_currency(obj)
+        if obj.doc_type == "PO" and obj.current_revision_id:
+            return (obj.current_revision.payload or {}).get("currency") \
+                or "MVR"
+        return None
 
     def get_payable(self, obj):
         """The money a signed credit order put on the books — what we owe the
@@ -187,7 +199,8 @@ class DocumentSerializer(serializers.ModelSerializer):
         p = Payable.objects.filter(document_line=ln).order_by("-id").first()
         if p is None:
             return None
-        return {"id": p.id, "amount": p.amount, "due_date": p.due_date,
+        return {"id": p.id, "amount": p.amount, "currency": p.currency,
+                "due_date": p.due_date,
                 "terms": p.terms, "status": p.status,
                 "settled_on": p.settled_on, "settled_ref": p.settled_ref}
 

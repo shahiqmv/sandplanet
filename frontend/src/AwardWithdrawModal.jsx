@@ -101,11 +101,11 @@ export default function AwardWithdrawModal({ prRef, row, onClose, onDone }) {
             </table>
             <div style={{ margin: "12px 0", fontSize: 13.5, lineHeight: 1.6 }}>
               <div><strong>Withdrawing:</strong> {out.length} item
-                {out.length === 1 ? "" : "s"} · MVR {money(outAmt)}
+                {out.length === 1 ? "" : "s"} · {row.currency || "MVR"} {money(outAmt)}
                 {info.gst_applicable ? " + GST" : ""}</div>
               <div><strong>Staying with {row.vendor}:</strong>{" "}
                 {leftCount === 0 ? "nothing — no order will be raised"
-                  : `${leftCount} item${leftCount === 1 ? "" : "s"} · MVR ${money(leftAmt)}`
+                  : `${leftCount} item${leftCount === 1 ? "" : "s"} · ${row.currency || "MVR"} ${money(leftAmt)}`
                     + (info.gst_applicable ? " + GST" : "")}</div>
             </div>
             <input value={reason} onChange={(e) => setReason(e.target.value)}

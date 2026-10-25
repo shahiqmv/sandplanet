@@ -243,8 +243,10 @@ def _pr_mobile_payload(doc, request):
     """A concise 'what am I awarding' summary of a PR for the Director: the
     quoted vendors with amounts, the cash/credit/GST split, and which MRs it
     covers — not the full quotation comparison (that stays on desktop)."""
-    from .procurement import pr_cash_total, pr_gst_total, pr_grand_total
+    from .procurement import (pr_cash_total, pr_currency, pr_grand_total,
+                              pr_gst_total)
     base = _base_header(doc, request)
+    ccy = pr_currency(doc)
     lines, credit = [], Decimal("0")
     rev = doc.current_revision
     if rev is not None:
@@ -263,19 +265,19 @@ def _pr_mobile_payload(doc, request):
             lines.append({
                 "ref": "", "kind": terms, "title": ln.vendor
                 or ln.free_text_desc or "Vendor",
-                "subtitle": "", "amount": float(net + gst), "currency": "MVR",
+                "subtitle": "", "amount": float(net + gst), "currency": ccy,
                 "site_code": ""})
     mr_refs = [l.to_document.ref for l in doc.links_from.filter(
         link_type="MR_PR").select_related("to_document")]
     summary = [
-        {"k": "Cash", "v": _money(pr_cash_total(doc))},
-        {"k": "Credit", "v": _money(credit)},
-        {"k": "GST (input)", "v": _money(pr_gst_total(doc))},
-        {"k": "Total", "v": _money(pr_grand_total(doc))},
+        {"k": "Cash", "v": _money(pr_cash_total(doc), ccy)},
+        {"k": "Credit", "v": _money(credit, ccy)},
+        {"k": "GST (input)", "v": _money(pr_gst_total(doc), ccy)},
+        {"k": "Total", "v": _money(pr_grand_total(doc), ccy)},
     ]
     if mr_refs:
         summary.append({"k": "For", "v": ", ".join(mr_refs)})
-    base.update({"amount": float(pr_grand_total(doc)), "currency": "MVR",
+    base.update({"amount": float(pr_grand_total(doc)), "currency": ccy,
                  "line_label": "Quoted vendors", "summary": summary,
                  "lines": lines})
     return base
@@ -434,7 +436,8 @@ def _po_mobile_payload(doc, request):
             "title": (ln.item.description if ln.item_id
                       else ln.free_text_desc) or "Item",
             "subtitle": f"{qty:g} {ln.unit or ''} × {rate:,.2f}".strip(),
-            "amount": amount, "currency": "MVR", "site_code": ""})
+            "amount": amount, "currency": payload.get("currency") or "MVR",
+            "site_code": ""})
     pr, row, _err = po_commitment(doc)
     summary = [{"k": "Supplier", "v": (doc.supplier.name if doc.supplier_id
                                        else payload.get("supplier_name", ""))},
@@ -443,11 +446,13 @@ def _po_mobile_payload(doc, request):
         days, terms = credit_period_for(row)
         summary += [{"k": "Credit period", "v": f"{days} days"},
                     {"k": "Commits (incl. GST)",
-                     "v": _money(po_credit_total(doc))},
+                     "v": _money(po_credit_total(doc),
+                                 payload.get("currency") or "MVR")},
                     {"k": "From", "v": pr.ref}]
     base.update({"supplier_name": summary[0]["v"],
                  "line_label": "Order lines",
                  "amount": float(po_credit_total(doc)) if pr else None,
+                 "currency": payload.get("currency") or "MVR",
                  "lines": lines, "summary": summary})
     return base
 

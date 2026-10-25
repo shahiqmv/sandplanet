@@ -722,6 +722,10 @@ def generate_pos_for_pr(pr, actor):
                     "supplier_contact": supplier.contact_person,
                     "quote_ref": quotation.quote_ref,
                     "payment_terms": quotation_terms_text(quotation),
+                    "currency": (quotation.currency or "MVR").upper(),
+                    # what the order adds: none for a vendor not registered
+                    "tax_rate": str(company_gst_rate()
+                                    if quotation.gst_applicable else 0),
                     "expected_delivery": (pr.current_revision.payload or {})
                     .get("requested_delivery", ""),
                 },
@@ -771,7 +775,10 @@ def _po_from_pr_row(pr, ln, actor):
             document=po, rev_label="R0", created_by=actor,
             payload={"pr_ref": pr.ref,        # internal only — not on the PDF
                      "supplier_name": ln.vendor,
-                     "payment_terms": ln.payment_terms or "Credit"})
+                     "payment_terms": ln.payment_terms or "Credit",
+                     "currency": row_currency(ln),
+                     "tax_rate": str(company_gst_rate()
+                                     if (ln.gst_amount or 0) > 0 else 0)})
         po.current_revision = revision
         po.save(update_fields=["current_revision"])
         DocumentLine.objects.create(
@@ -879,6 +886,59 @@ def quotation_terms_text(quotation):
     return f"{base} — {pct.normalize():f}% advance, {tail}"
 
 
+# ===== Currency of a local purchase (owner 2026-10-25) =====
+#
+# Some local suppliers quote in dollars. The quote's currency follows the
+# purchase all the way: PR vendor row → order → payable → voucher, and the
+# cost ledger keeps it in that currency (reports convert at the company rate,
+# as for USD rent and bills). A PR buys in ONE currency — its cash side is
+# vouchered as a whole and a voucher pays in one currency — so quotes in
+# either may be compared, but the awards must share one.
+
+LOCAL_CURRENCIES = ("MVR", "USD")
+
+
+def supplier_currency(supplier):
+    """A new quotation's currency: the supplier's own, if it is one we buy
+    in locally, else rufiyaa."""
+    c = (getattr(supplier, "default_currency", "") or "").upper()
+    return c if c in LOCAL_CURRENCIES else "MVR"
+
+
+def row_currency(ln):
+    """The currency of a PR vendor row (blank on older rows = MVR)."""
+    return (getattr(ln, "currency", "") or "MVR").upper()
+
+
+def awarded_currencies(pr):
+    """The currencies of the quotations this PR has awarded anything on."""
+    return {(q.currency or "MVR").upper() for q in pr.quotations.all()
+            if q.lines.filter(awarded=True).exists()}
+
+
+def mixed_currency_error(pr):
+    found = awarded_currencies(pr)
+    if len(found) > 1:
+        return ("A request buys in one currency — this one has awards in "
+                f"{' and '.join(sorted(found))}. Put the "
+                f"{'USD' if 'MVR' in found else sorted(found)[-1]} purchase "
+                "on its own request.")
+    return None
+
+
+def pr_currency(pr):
+    """The currency a PR buys — and is vouchered — in."""
+    rev = pr.current_revision
+    rows = ([ln for ln in rev.lines.all()
+             if (ln.amount_cash or 0) + (ln.amount_credit or 0) > 0]
+            if rev is not None else [])
+    found = {row_currency(ln) for ln in rows}
+    if not found:
+        found = awarded_currencies(pr)
+    # one, unless the guard on awards was bypassed; never blank
+    return sorted(found)[0] if found else "MVR"
+
+
 def vendor_row_money(quotation, total):
     """How an awarded value is paid: the fields of the PR vendor row.
 
@@ -959,6 +1019,7 @@ def sync_pr_vendor_rows(pr):
             credit_days=(quotation.supplier.credit_days
                          if is_credit else None),
             gst_amount=gst,
+            currency=(quotation.currency or "MVR").upper(),
             remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
             **vendor_row_money(quotation, total),
         )
@@ -1050,14 +1111,16 @@ def _post_pr_line(pr, ln, amount, gst, actor):
     gst_head = costing.by_code(costing.INPUT_GST)
     # Net is the project cost; GST is recoverable input tax (not a project
     # cost) — posted to the Input GST account at HO (owner 2026-07-13).
+    ccy = row_currency(ln)
     for state in ("COMMITTED", "INCURRED"):
         costing.post(site=pr.site, cost_head=head, state=state,
                      source="PR", amount=amount, document=pr,
-                     document_line=ln, actor=actor)
+                     document_line=ln, actor=actor, currency=ccy)
         if gst > 0 and gst_head is not None:
             costing.post(site=_ho_site(), cost_head=gst_head, state=state,
                          source="PR", amount=gst, document=pr,
-                         document_line=ln, is_stock_pool=True, actor=actor)
+                         document_line=ln, is_stock_pool=True, actor=actor,
+                         currency=ccy)
 
 
 def authorise_pr(pr, actor):
@@ -1090,6 +1153,7 @@ def authorise_pr(pr, actor):
                     vendor=ln.vendor or ln.free_text_desc,
                     terms="Balance — pay before collection",
                     amount=Decimal(str(balance)) + gst,
+                    currency=row_currency(ln),
                     due_date=date.today())
 
 
@@ -1206,7 +1270,7 @@ def issue_po(po, actor):
         Payable.objects.create(
             document=pr, document_line=ln, site=pr.site,
             vendor=ln.vendor or ln.free_text_desc,
-            terms=terms, amount=credit + gst,
+            terms=terms, amount=credit + gst, currency=row_currency(ln),
             due_date=date.today() + timedelta(days=days))
     audit("document", po.id, "PO_AUTHORISED", actor=actor,
           detail={"ref": po.ref, "pr": pr.ref, "amount": str(credit + gst)})
@@ -1246,14 +1310,16 @@ def post_pr_vendor_paid(pr, line, actor, ref, side=None):
         settle = side == "credit"
     if net > 0:
         materials = costing.by_code(costing.MATERIALS)
+        ccy = row_currency(line)
         costing.post(site=pr.site, cost_head=line.cost_head or materials,
                      state="PAID", source="PR", amount=net, document=pr,
-                     document_line=line, actor=actor)
+                     document_line=line, actor=actor, currency=ccy)
         gst_head = costing.by_code(costing.INPUT_GST)
         if gst > 0 and gst_head is not None:
             costing.post(site=_ho_site(), cost_head=gst_head, state="PAID",
                          source="PR", amount=gst, document=pr,
-                         document_line=line, is_stock_pool=True, actor=actor)
+                         document_line=line, is_stock_pool=True, actor=actor,
+                         currency=ccy)
     if settle:
         Payable.objects.filter(document=pr, document_line=line,
                                status="OUTSTANDING").update(

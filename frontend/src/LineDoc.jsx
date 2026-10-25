@@ -84,7 +84,7 @@ function PayableBlock({ p, me, onChanged }) {
                       textTransform: "uppercase", letterSpacing: ".04em" }}>
           Payable to supplier</div>
         <div style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>
-          MVR {Number(p.amount || 0).toLocaleString("en-US",
+          {p.currency || "MVR"} {Number(p.amount || 0).toLocaleString("en-US",
             { minimumFractionDigits: 2 })}</div>
       </div>
       <div>
@@ -971,8 +971,8 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                 <>
                   <th style={th}>Vendor</th><th style={th}>Quotation Ref</th>
                   <th style={th}>Terms · Credit days</th>
-                  <th style={th}>Amount Cash (MVR)</th>
-                  <th style={th}>Amount Credit (MVR)</th>
+                  <th style={th}>Amount Cash ({existing?.currency || "MVR"})</th>
+                  <th style={th}>Amount Credit ({existing?.currency || "MVR"})</th>
                 </>
               ) : (
                 <>
@@ -1932,7 +1932,8 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                     Total incl. GST</td>
                   <td style={{ ...right, ...bold }} />
                   <td style={{ ...right, ...bold }} />
-                  <td style={{ ...right, ...bold }}>MVR {fmt(untaxed + gst)}</td>
+                  <td style={{ ...right, ...bold }}>
+                    {doc.currency || "MVR"} {fmt(untaxed + gst)}</td>
                 </tr>
               </tfoot>
             );

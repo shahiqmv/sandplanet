@@ -1151,6 +1151,9 @@ class DocumentLine(models.Model):
         "CostHead", on_delete=models.PROTECT, null=True, blank=True,
         related_name="+")
     purchase_type = models.CharField(max_length=6, blank=True)  # CASH|CREDIT
+    # PR vendor row: the currency its amounts are in (blank = MVR, as every
+    # row before 2026-10-25 was)
+    currency = models.CharField(max_length=3, blank=True)
     # How an MR line is fulfilled (P1B-f): blank = local purchase (PR);
     # "STORE" = issued from HO store stock via a SIN (owner 2026-07-13).
     fulfil_source = models.CharField(max_length=8, blank=True)
@@ -2421,6 +2424,10 @@ class Quotation(models.Model):
     # This supplier charges GST — off for unregistered vendors (owner
     # 2026-07-13). Applied at the company rate on the awarded net.
     gst_applicable = models.BooleanField(default=True)
+    # Some local suppliers quote in dollars (owner 2026-10-25). The quote's
+    # currency rides the PR vendor row, the order, the payable and the
+    # voucher; the cost ledger keeps it in that currency.
+    currency = models.CharField(max_length=3, default="MVR")
     notes = models.TextField(blank=True)
     file = models.FileField(upload_to=quotation_path, null=True, blank=True)
     # the MR's request for quotation this quote answers, when picked from it
@@ -6067,6 +6074,8 @@ class Payable(models.Model):
     vendor = models.TextField()
     terms = models.TextField(blank=True)  # e.g. '30 days'
     amount = models.DecimalField(max_digits=14, decimal_places=2)
+    # a local purchase owed in dollars is a dollar payable (owner 2026-10-25)
+    currency = models.CharField(max_length=3, default="MVR")
     due_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=12, default="OUTSTANDING")  # /SETTLED
     settled_on = models.DateField(null=True, blank=True)

@@ -125,7 +125,7 @@ class QuotationSerializer(serializers.ModelSerializer):
         model = Quotation
         fields = ["id", "supplier", "supplier_name", "quote_ref", "quote_date",
                   "valid_until", "payment_terms", "advance_percent",
-                  "terms_text", "gst_applicable", "notes",
+                  "terms_text", "gst_applicable", "currency", "notes",
                   "file_url", "total", "lines", "rfq_ref"]
 
     def get_total(self, obj):
@@ -175,6 +175,31 @@ def _advance_percent(raw):
     if not 0 < pct < 100:
         return None, "The advance is between 0 and 100 percent."
     return pct, None
+
+
+def _currency(raw, supplier=None):
+    """(currency, error) for a quotation: MVR or USD; blank = the
+    supplier's own currency (owner 2026-10-25)."""
+    from .procurement import LOCAL_CURRENCIES, supplier_currency
+    if raw in (None, ""):
+        return supplier_currency(supplier), None
+    c = str(raw).upper()
+    if c not in LOCAL_CURRENCIES:
+        return None, "A local quotation is in MVR or USD."
+    return c, None
+
+
+def _guard_currency(pr):
+    """Refuse a change that would leave this PR buying in two currencies —
+    raise inside the request's transaction so nothing is kept."""
+    from .procurement import mixed_currency_error
+    msg = mixed_currency_error(pr)
+    if msg:
+        raise _MixedCurrency(msg)
+
+
+class _MixedCurrency(Exception):
+    pass
 
 
 def _resync_pr(pr):
@@ -234,8 +259,25 @@ def pr_quotations(request, ref):
     advance, msg = _advance_percent(request.data.get("advance_percent"))
     if msg:
         return Response({"detail": msg}, status=400)
+    ccy, msg = _currency(request.data.get("currency"), supplier)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    try:
+        with transaction.atomic():
+            quotation = _create_quotation(request, pr, supplier, advance, ccy)
+    except _MixedCurrency as e:
+        return Response({"detail": str(e)}, status=400)
+    audit("quotation", quotation.id, "QUOTATION_ADDED", actor=request.user,
+          detail={"pr": pr.ref, "supplier": supplier.name})
+    return Response(QuotationSerializer(quotation,
+                                        context={"request": request}).data,
+                    status=201)
+
+
+def _create_quotation(request, pr, supplier, advance, ccy):
     quotation = Quotation.objects.create(
         document=pr, supplier=supplier, advance_percent=advance,
+        currency=ccy,
         quote_ref=request.data.get("quote_ref", ""),
         quote_date=request.data.get("quote_date") or None,
         valid_until=request.data.get("valid_until") or None,
@@ -245,12 +287,9 @@ def pr_quotations(request, ref):
         created_by=request.user,
     )
     _save_quote_lines(quotation, request.data.get("lines") or [])
+    _guard_currency(pr)
     _resync_pr(pr)
-    audit("quotation", quotation.id, "QUOTATION_ADDED", actor=request.user,
-          detail={"pr": pr.ref, "supplier": supplier.name})
-    return Response(QuotationSerializer(quotation,
-                                        context={"request": request}).data,
-                    status=201)
+    return quotation
 
 
 @api_view(["PATCH", "DELETE"])
@@ -283,10 +322,20 @@ def quotation_detail(request, pk):
         if msg:
             return Response({"detail": msg}, status=400)
         quotation.advance_percent = advance
-    quotation.save()
-    if "lines" in request.data:
-        _save_quote_lines(quotation, request.data["lines"])
-    _resync_pr(quotation.document)
+    if "currency" in request.data:
+        ccy, msg = _currency(request.data["currency"], quotation.supplier)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        quotation.currency = ccy
+    try:
+        with transaction.atomic():
+            quotation.save()
+            if "lines" in request.data:
+                _save_quote_lines(quotation, request.data["lines"])
+            _guard_currency(quotation.document)
+            _resync_pr(quotation.document)
+    except _MixedCurrency as e:
+        return Response({"detail": str(e)}, status=400)
     return Response(QuotationSerializer(quotation,
                                         context={"request": request}).data)
 

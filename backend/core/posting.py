@@ -644,8 +644,14 @@ def _purchases(ctx, hold):
             if state == "PAID":
                 paid = e.out_of_balance()
                 if paid:
+                    # a dollar purchase is paid in dollars from a dollar
+                    # account: carry what actually left it, not the rufiyaa
+                    # back-worked at the rate (owner 2026-10-25)
+                    ccy = (rows[0].currency or BASE).upper()
+                    native = (sum((r.amount for r in rows), Decimal("0"))
+                              if ccy != BASE else paid)
                     e.bank(_voucher_bank(ctx, what, document=doc), -paid,
-                           BASE, -paid, ctx)
+                           ccy, -native, ctx)
             if e.lines():
                 yield e
         except Hold as h:

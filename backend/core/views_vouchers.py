@@ -147,6 +147,7 @@ def _line_info(line):
                          "is_advance": (ln.amount_credit or 0) > 0,
                          "amount_cash": cash, "amount_credit": 0,
                          "gst_amount": gst, "gross": cash + gst,
+                         "currency": (ln.currency or "MVR"),
                          "is_credit": False, "po_ref": ln.po_ref,
                          "payment_ref": ln.action_taken,
                          "paid": bool((ln.action_taken or "").strip())})
@@ -331,9 +332,16 @@ def payables(request):
         row = _payable_row(p, today)
         row.update({"ref": ref, "po_ref": po_ref, "pr_ref": p.ref_label})
         rows.append(row)
-    total = sum((Decimal(str(r["amount"] or 0)) for r in rows), Decimal("0"))
+    # one total per currency — USD purchases, rent and salaries sit beside
+    # rufiyaa ones, and adding them together meant nothing (owner 2026-10-25)
+    totals = {}
+    for r in rows:
+        c = r.get("currency") or "MVR"
+        totals[c] = totals.get(c, Decimal("0")) + Decimal(str(r["amount"] or 0))
     overdue = sum(1 for r in rows if r["overdue"])
-    return Response({"payables": rows, "total": total,
+    return Response({"payables": rows,
+                     "total": totals.get("MVR", Decimal("0")),
+                     "totals": totals,
                      "count": len(rows), "overdue": overdue})
 
 
@@ -548,8 +556,11 @@ def finance_dashboard(request):
     pyr_total = sum((_mvr(d.payment_request.amount_requested,
                           d.payment_request.currency) for d in pyr_pay
                      if hasattr(d, "payment_request")), Decimal("0"))
-    payables = Payable.objects.filter(status="OUTSTANDING")
-    pay_total = sum((p.amount for p in payables), Decimal("0"))
+    payables = Payable.objects.filter(status="OUTSTANDING").select_related(
+        "payroll_line__run", "rent_due", "bill_charge")
+    # in rufiyaa: a USD payable at the company rate, as the PYRs above
+    pay_total = sum((_mvr(p.amount, vouchers.payable_currency(p))
+                     for p in payables), Decimal("0"))
     floats = []
     for fl in PettyCashFloat.objects.filter(
             is_active=True).select_related("site", "custodian"):

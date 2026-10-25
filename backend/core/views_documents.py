@@ -889,8 +889,13 @@ def queue_currency(ref, doc_type):
     if doc_type == "SVC" and hasattr(d, "subcontract_valuation"):
         agreement = d.subcontract_valuation.agreement
         return agreement.currency or "MVR"
-    # PR is local procurement and has no currency of its own; everything else
-    # falls back rather than guessing.
+    # a local purchase is in the currency it was quoted in (owner
+    # 2026-10-25); a PO carries its order's
+    if doc_type == "PR":
+        from .procurement import pr_currency
+        return pr_currency(d)
+    if doc_type == "PO" and d.current_revision_id:
+        return (d.current_revision.payload or {}).get("currency") or "MVR"
     return "MVR"
 
 
@@ -1501,6 +1506,10 @@ def _do_submit(request, doc, comment):
         return Response({"detail": "Add at least one scope line before "
                                    "submitting."}, status=400)
     if doc.doc_type == "PR" and doc.quotations.exists():
+        # one purchase currency per request (owner 2026-10-25)
+        from .procurement import mixed_currency_error
+        if (msg := mixed_currency_error(doc)):
+            return Response({"detail": msg}, status=400)
         # Coverage tally (R2): every MR line quoted AND awarded, or an
         # explicit override with a reason.
         rows = pr_coverage_data(doc)

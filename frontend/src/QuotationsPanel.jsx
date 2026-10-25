@@ -263,7 +263,7 @@ export function QuotationsSummary({ doc, me, onOpenWorkspace }) {
             <strong style={{ color: "var(--sp-navy)" }}>{q.supplier_name}</strong>
             <span style={{ fontSize: 12, color: "#5a6b78" }}>
               {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
-              MVR {Number(q.total).toLocaleString()} ·
+              {q.currency || "MVR"} {Number(q.total).toLocaleString()} ·
               {" "}{matched}/{q.lines.length} lines matched ·
               {" "}{q.lines.filter((l) => l.awarded).length} awarded
             </span>
@@ -293,6 +293,8 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
   const [newTerms, setNewTerms] = useState("Cash");
   const [newGst, setNewGst] = useState(true);
   const [newAdvance, setNewAdvance] = useState("");
+  // blank = the supplier's own currency (owner 2026-10-25)
+  const [newCurrency, setNewCurrency] = useState("");
   const [newFile, setNewFile] = useState(null);
   const [newLines, setNewLines] = useState([]);
   const [notice, setNotice] = useState(null);
@@ -317,7 +319,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
         method: "POST",
         body: { supplier: +newSupplier, quote_ref: newRef,
                 payment_terms: newTerms, gst_applicable: newGst,
-                advance_percent: newAdvance,
+                advance_percent: newAdvance, currency: newCurrency,
                 lines: newLines.filter((l) => l.supplier_desc) },
       });
       if (newFile) {
@@ -336,6 +338,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
       setNewTerms("Cash");
       setNewAdvance("");
       setNewGst(true);
+      setNewCurrency("");
       setNewFile(null);
       setNewLines([]);
       load();
@@ -452,7 +455,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                   from {q.rfq_ref}</span>}
               <span style={{ fontSize: 12, color: "#5a6b78" }}>
                 {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
-                net MVR {Number(q.total).toLocaleString()}
+                net {q.currency || "MVR"} {Number(q.total).toLocaleString()}
               </span>
               {canEdit && (
                 <span style={{ fontSize: 12, display: "flex", gap: 4,
@@ -463,6 +466,13 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                           style={{ ...inputStyle, width: 82, padding: "2px 4px",
                                    fontSize: 12 }}>
                     <option>Cash</option><option>Credit</option>
+                  </select>
+                  <select value={q.currency || "MVR"}
+                          onChange={(e) => saveTerms(q, { currency: e.target.value })}
+                          title="What the supplier quotes in — a request buys in one currency"
+                          style={{ ...inputStyle, width: 68, padding: "2px 4px",
+                                   fontSize: 12 }}>
+                    <option>MVR</option><option>USD</option>
                   </select>
                   advance
                   <input type="number" min="0" max="99" step="any"
@@ -597,6 +607,20 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
               <input type="checkbox" checked={newGst}
                      onChange={(e) => setNewGst(e.target.checked)} />
               GST-registered</label>
+            <label style={{ fontSize: 13, display: "flex", gap: 4,
+                            alignItems: "center" }}
+                   title="What the supplier quotes in. A request buys in one currency.">
+              Currency
+              <select value={newCurrency}
+                      onChange={(e) => setNewCurrency(e.target.value)}
+                      style={{ ...inputStyle, width: 150 }}>
+                <option value="">
+                  Supplier&apos;s ({(suppliers.find((x) => String(x.id)
+                    === String(newSupplier))?.default_currency || "MVR")
+                    .toUpperCase() === "USD" ? "USD" : "MVR"})</option>
+                <option value="MVR">MVR</option>
+                <option value="USD">USD</option>
+              </select></label>
             <label style={{ fontSize: 13 }}>
               Quotation file (PDF):{" "}
               <input type="file" accept=".pdf,image/*"

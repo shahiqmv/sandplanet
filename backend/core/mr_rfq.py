@@ -224,10 +224,12 @@ def take_into_pr(pr, rfq, actor):
         return None, "The supplier's quote has not been uploaded yet."
     if pr.quotations.filter(rfq=rfq).exists():
         return None, "This PR already has that quote."
+    from .procurement import supplier_currency
     q = Quotation.objects.create(
         document=pr, supplier=rfq.supplier, rfq=rfq,
         quote_ref=rfq.quote_ref or rfq.ref, quote_date=rfq.quote_date,
-        payment_terms="Cash", notes=f"From {rfq.ref}", created_by=actor)
+        payment_terms="Cash", notes=f"From {rfq.ref}", created_by=actor,
+        currency=supplier_currency(rfq.supplier))
     # the same file, under the quotation
     from django.core.files.base import ContentFile
     rfq.quote_file.open("rb")

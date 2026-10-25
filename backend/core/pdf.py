@@ -712,14 +712,20 @@ def _lines_context(document, revision):
     # PR totals as footer rows aligned under Cash/Credit/Total; GST is
     # applied once, on the grand total only (owner, 2026-07-08)
     tax_footer = None
+    _pr_ccy = None
     if document.doc_type == "PR":
+        from .procurement import pr_currency
+        _pr_ccy = pr_currency(document)
         cash = sum((ln.amount_cash or 0)
                    for ln in revision.lines.all()) or Decimal("0")
         credit = sum((ln.amount_credit or 0)
                      for ln in revision.lines.all()) or Decimal("0")
         untaxed = cash + credit
         gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
-        gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
+        # the GST each vendor actually charges — none for one not registered
+        # (the screen has always summed it so; this footer charged everyone)
+        gst = sum((ln.gst_amount or 0)
+                  for ln in revision.lines.all()) or Decimal("0")
         tax_footer = {
             # No. + Vendor + Quotation + Terms + PO/Payment = 5 label cells
             "label_colspan": 5,
@@ -742,7 +748,10 @@ def _lines_context(document, revision):
         "form_title": config["title"],
         "form_subline": f"Form No: {config['form_no'].split(' ·')[0]}  |  "
                         f"Rev: {revision.rev_label}",
-        "columns": [{"label": c[0], "num": c[2]} for c in config["columns"]],
+        # a PR is in the currency it buys in (owner 2026-10-25)
+        "columns": [{"label": (c[0].replace("(MVR)", f"({_pr_ccy})")
+                               if _pr_ccy else c[0]), "num": c[2]}
+                    for c in config["columns"]],
         "header_rows": header_rows,
         "links_line": " · ".join(sorted(set(links))),
         "lines": lines,
