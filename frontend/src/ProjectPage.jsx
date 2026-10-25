@@ -453,6 +453,8 @@ function ContractTermsCard({ project }) {
     ["Payment terms", project.payment_terms],
     ["Client credit period", project.client_credit_days != null
       ? `${project.client_credit_days} days` : null],
+    ["Back charges on IPC", project.ipc_shows_back_charges === false
+      ? "No — on the tax invoice only" : null],
     ["Advance payment", pct(project.advance_payment_pct)],
     ["Advance guarantee", project.advance_guarantee],
     ["Retention", pct(project.retention_pct)],
@@ -504,6 +506,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
     contract_type: project.contract_type || "",
     payment_terms: project.payment_terms || "",
     client_credit_days: project.client_credit_days ?? "",
+    ipc_shows_back_charges: project.ipc_shows_back_charges ?? true,
     advance_payment_pct: project.advance_payment_pct ?? "",
     advance_guarantee: project.advance_guarantee || "",
     retention_pct: project.retention_pct ?? "",
@@ -541,6 +544,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
         contract_type: form.contract_type,
         payment_terms: form.payment_terms,
         client_credit_days: num(form.client_credit_days),
+        ipc_shows_back_charges: !!form.ipc_shows_back_charges,
         advance_payment_pct: num(form.advance_payment_pct),
         advance_guarantee: form.advance_guarantee,
         retention_pct: num(form.retention_pct),
@@ -638,6 +642,14 @@ function EditProjectModal({ project, onClose, onSaved }) {
             <input type="number" min="0" value={form.client_credit_days}
                    onChange={set("client_credit_days")}
                    placeholder="e.g. 30" style={inputStyle} /></label>
+          <label style={{ ...full, display: "flex", gap: 6,
+                          alignItems: "center", fontSize: 13 }}
+                 title="Back charges taken off after GST are a payment deduction, not part of what is certified">
+            <input type="checkbox" checked={!!form.ipc_shows_back_charges}
+                   onChange={(e) => setForm({ ...form,
+                     ipc_shows_back_charges: e.target.checked })} />
+            Show back charges (after GST) on the payment certificate (IPC)
+            — untick to show them on the tax invoice only</label>
           <label style={field}>Advance payment %
             <input type="number" min="0" value={form.advance_payment_pct}
                    onChange={set("advance_payment_pct")}

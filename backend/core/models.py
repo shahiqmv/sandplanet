@@ -3795,6 +3795,11 @@ class Project(models.Model):
     # Client credit period (days) — a certified claim's tax invoice falls due
     # this many days after its issue date; drives the receivables aging.
     client_credit_days = models.PositiveIntegerField(null=True, blank=True)
+    # Back charges deducted AFTER GST are a payment-side contra, not part of
+    # what is certified: some clients want them on the invoice only (owner
+    # 2026-10-25, 17POOL IPA-04). Off = the IPC stops at Total with GST; the
+    # tax invoice still deducts them.
+    ipc_shows_back_charges = models.BooleanField(default=True)
     advance_payment_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                               null=True, blank=True)
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,

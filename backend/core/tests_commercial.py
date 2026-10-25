@@ -875,6 +875,41 @@ class ProgressClaimTests(TestCase):
                          round(float(w["total"]) - 112.52, 2))
         self.assertEqual(d["deduction_lines"][0]["label"], "Materials from store")
 
+    def test_a_project_can_keep_back_charges_off_the_ipc(self):
+        """17POOL's client wanted the after-GST back charges off the payment
+        certificate but still on the invoice (owner 2026-10-25)."""
+        from . import commercial
+        from .models import ProgressClaim, Project
+        c = self._create()
+        self._value_pct(c["id"], {"A": "65", "B": "65"})
+        self.client.post(f"/api/v1/claims/{c['id']}/deductions",
+                         {"rows": [{"label": "Food Cost",
+                                    "cumulative_amount": "112.52"}]},
+                         format="json")
+        claim = ProgressClaim.objects.get(pk=c["id"])
+        w = commercial.claim_valuation(claim)["waterfall"]
+
+        def net_row(rows):
+            return next(r for r in rows if r["label"] == "Net amount to pay")
+        # default: on both
+        ipc = commercial.claim_pdf_context(claim)
+        self.assertTrue(any("Food Cost" in r["label"] for r in ipc["summary"]))
+        Project.objects.filter(pk=claim.project_id).update(
+            ipc_shows_back_charges=False)
+        claim = ProgressClaim.objects.get(pk=c["id"])
+        ipc = commercial.claim_pdf_context(claim)
+        self.assertFalse(any("back charge" in r["label"]
+                             for r in ipc["summary"]))
+        self.assertEqual(ipc["deductions"], [])
+        # the certificate's net is the total with GST
+        self.assertEqual(net_row(ipc["summary"])["present"],
+                         commercial._fmt_money(w["total"], 3))
+        # the invoice still deducts it
+        inv = commercial.invoice_pdf_context(claim)
+        self.assertTrue(any("Food Cost" in r["label"] for r in inv["summary"]))
+        self.assertEqual(float(inv["net_to_pay"]),
+                         round(float(w["total"]) - 112.52, 2))
+
     def test_an_amount_withheld_is_its_own_line_and_is_released_later(self):
         """The client withholds a sum against a pending snag — not retention,
         not a back charge (owner 2026-10-07). It comes off the certified

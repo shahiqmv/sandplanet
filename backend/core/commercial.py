@@ -1471,7 +1471,7 @@ def _fmt_money(v, dp=2):
     return f"({-v:,.{dp}f})" if v < 0 else f"{v:,.{dp}f}"
 
 
-def claim_payment_summary(claim, dp=2):
+def claim_payment_summary(claim, dp=2, for_ipc=False):
     """The 4-column Payment Summary (Contract / Cumulative / Previous / Present)
     the client's IPC uses — present = this claim's cumulative less the previous
     claim's. Amounts pre-formatted (dash for zero, parens for negatives). The IPA
@@ -1525,7 +1525,12 @@ def claim_payment_summary(claim, dp=2):
     add("Total with GST", revised + contract_gst, w["total_cumulative"],
         P("total_cumulative"), style="total")
     # The rest are a GST-inclusive client contra, deducted after GST — not
-    # part of the certified claim above.
+    # part of the certified claim above. A project can keep them off its
+    # certificate and on the invoice alone (owner 2026-10-25).
+    if for_ipc and not claim.project.ipc_shows_back_charges:
+        add("Net amount to pay", revised + contract_gst,
+            w["total_cumulative"], P("total_cumulative"), style="net")
+        return rows
     for d in val["deduction_lines"]:
         if d["before_gst"]:
             continue
@@ -1582,9 +1587,14 @@ def claim_pdf_context(claim):
         "waterfall": w, "approved_vos": w["revised"] - w["original"],
         "lines": val["lines"], "sections": val["section_summary"],
         "detail_sections": detail_sections, "detail_totals": detail_totals,
-        "deductions": val["deduction_lines"],
-        "summary": claim_payment_summary(claim, dp=3),
-        "amount_words": amount_in_words(w["net_to_pay"], ccy),
+        "summary": claim_payment_summary(claim, dp=3, for_ipc=True),
+        "amount_words": amount_in_words(
+            w["net_to_pay"] if project.ipc_shows_back_charges
+            else w["total"], ccy),
+        # the after-GST back charges, when the certificate leaves them out
+        "deductions": (val["deduction_lines"]
+                       if project.ipc_shows_back_charges else
+                       [d for d in val["deduction_lines"] if d["before_gst"]]),
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),
         "is_certified": certified,
