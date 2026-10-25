@@ -414,6 +414,8 @@ urlpatterns = [
     path("sin/<str:ref>/reverse-receipt", imports_api.sin_reverse_receipt,
          name="sin-reverse-receipt"),
     path("irn-register", imports_api.irn_register, name="irn-register"),
+    path("store/loadable", imports_api.store_loadable,
+         name="store-loadable"),
     path("mr/<str:ref>/store-availability", imports_api.mr_store_availability,
          name="mr-store-availability"),
     path("mr/<str:ref>/store-fulfil", imports_api.mr_store_fulfil,

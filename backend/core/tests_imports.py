@@ -2941,3 +2941,17 @@ class StoreIssueReceiptReversalTests(MrFromStoreTests):
         self.client.force_authenticate(self.sa)
         self.assertEqual(self.client.get("/api/v1/irn-register").status_code,
                          403)
+
+    def test_a_new_manifest_is_told_what_store_items_are_waiting(self):
+        sin = self._issued()
+        self.client.force_authenticate(self.ho)
+        d = self.client.get(f"/api/v1/store/loadable?site={self.site.id}").data
+        self.assertEqual((d["count"], d["sins"]), (1, [sin["ref"]]))
+        lm = self.client.post("/api/v1/documents", {
+            "doc_type": "LM", "site_id": self.site.id, "lines": []},
+            format="json").data
+        self.client.post(f"/api/v1/documents/{lm['ref']}/load-store", {},
+                         format="json")
+        # once on a manifest it is no longer waiting
+        d = self.client.get(f"/api/v1/store/loadable?site={self.site.id}").data
+        self.assertEqual(d["count"], 0)

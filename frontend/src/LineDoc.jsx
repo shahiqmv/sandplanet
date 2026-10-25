@@ -473,6 +473,11 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   const [pickLine, setPickLine] = useState({});   // line id -> bool
 
   const isRefForm = (docType === "PR" || docType === "LM") && !existing;
+  // Store-issued items waiting for this site: a new manifest carries them
+  // when it is saved (owner 2026-10-25 — the form never said they were
+  // there, and the Load button only appears on a saved manifest).
+  const [storeWaiting, setStoreWaiting] = useState(null);
+  const [loadStoreToo, setLoadStoreToo] = useState(true);
 
   useEffect(() => {
     if (!isRefForm) return;
@@ -514,6 +519,12 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
     api(`/mr/${first}/related`).then(setRelated)
       .catch(() => setRelated({ prs: [], pos: [] }));
   }, [docType, existing, mrRefs]);
+
+  useEffect(() => {
+    if (docType !== "LM" || existing || !siteId) { setStoreWaiting(null); return; }
+    api(`/store/loadable?site=${siteId}`).then(setStoreWaiting)
+      .catch(() => setStoreWaiting(null));
+  }, [docType, existing, siteId]);
 
   // Picking an MR pins the site (PR/LM follow the MR's site)
   useEffect(() => {
@@ -724,6 +735,10 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
           else if (projectId) body.project_id = projectId;
         }
         doc = await api("/documents", { method: "POST", body });
+        if (docType === "LM" && loadStoreToo && storeWaiting?.count > 0) {
+          doc = await api(`/documents/${doc.ref}/load-store`,
+                          { method: "POST" });
+        }
       }
       onSaved(doc);
     } catch (e) {
@@ -853,6 +868,22 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
           References are optional — for a <strong>direct dispatch</strong> pick
           the site, leave MR/PR/PO blank, and add the items below.
         </p>
+      )}
+      {docType === "LM" && !existing && storeWaiting?.count > 0 && (
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start",
+                        marginTop: 10, padding: "8px 10px", borderRadius: 6,
+                        background: "#eef6fb", border: "1px solid #c9dfee",
+                        fontSize: 13 }}>
+          <input type="checkbox" checked={loadStoreToo}
+                 onChange={(e) => setLoadStoreToo(e.target.checked)}
+                 style={{ marginTop: 3 }} />
+          <span>
+            🏬 <strong>{storeWaiting.count} store item(s)</strong> issued to
+            this site are waiting to travel ({storeWaiting.sins.join(", ")}).
+            Load them onto this manifest when it is saved — the site receives
+            them on the GRN.
+          </span>
+        </label>
       )}
 
       {docType === "PR" && !existing ? (

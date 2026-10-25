@@ -879,6 +879,26 @@ def irn_register(request):
     return Response({"rows": rows})
 
 
+@api_view(["GET"])
+def store_loadable(request):
+    """Store-issued items waiting to travel to a site (?site=) — what a new
+    Loading Manifest for it would carry (owner 2026-10-25: the new-manifest
+    form never said they were there)."""
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office store view."}, status=403)
+    site = Site.objects.filter(pk=request.GET.get("site") or None).first()
+    if site is None:
+        return Response({"count": 0, "sins": [], "lines": []})
+    lines = ipr_svc.loadable_store_lines(Document(doc_type="LM", site=site))
+    return Response({
+        "count": len(lines),
+        "sins": sorted({sl.issue.document.ref for sl in lines}),
+        "lines": [{"sin": sl.issue.document.ref,
+                   "description": sl.lot.description,
+                   "qty": sl.qty - (sl.received_qty or 0),
+                   "unit": sl.lot.unit} for sl in lines]})
+
+
 @api_view(["POST"])
 def sin_reverse_receipt(request, ref):
     """Put a directly-received store issue back in transit (Director/Admin)
