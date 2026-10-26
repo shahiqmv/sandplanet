@@ -49,6 +49,7 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
   }, [men, language]); // eslint-disable-line react-hooks/exhaustive-deps
   const langLabel = (c) => (c ? meta.languages.find((l) => l.code === c)?.label || c : "English / not set");
   const [q, setQ] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const toggle = (id) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   // bulk tick / untick acts on the men shown, so "untick all, search the
   // subcontractor, tick all shown" picks one gang
@@ -92,9 +93,14 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
           <Btn type="button" variant="secondary" onClick={() => tickShown(true)}>Tick all{q.trim() ? " shown" : ""}</Btn>
           <Btn type="button" variant="secondary" onClick={() => tickShown(false)}>Untick all{q.trim() ? " shown" : ""}</Btn>
           <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{picked.size} of {men.length} ticked{q.trim() ? ` · ${shown.length} shown` : ""}</span>
+          <Btn type="button" variant="secondary" onClick={() => setExpanded((x) => !x)} style={{ marginLeft: "auto" }}>
+            {expanded ? "Shorten the list" : "Show the whole list"}</Btn>
         </div>
       )}
-      <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, marginTop: 6, background: "var(--paper)" }}>
+      {/* a big site has hundreds of men: the list can be dragged taller
+          (bottom-right corner) or opened out in full */}
+      <div style={{ ...(expanded ? {} : { height: 320, resize: "vertical", minHeight: 160 }),
+                    overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, marginTop: 6, background: "var(--paper)" }}>
         {[...new Set(shown.map(langOf))]
           .sort((a, b) => (a === language ? -1 : b === language ? 1 : shown.filter((m) => langOf(m) === b).length - shown.filter((m) => langOf(m) === a).length))
           .map((g) => {
