@@ -173,7 +173,8 @@ def session_pdf(request, pk):
              "trade": e.job_category.name if e.job_category_id else "",
              "language": dict(LANGUAGES).get(e.preferred_language or "", "")}
             for i, e in enumerate(att)]
-    rows += [{"n": len(rows) + i + 1} for i in range(max(0, 20 - len(rows)))]
+    # exactly the men on the session (owner 2026-10-26): a man added by hand
+    # would never get his record — add him to the session and reprint
     employers = sorted({r["employer"] for r in rows if r.get("employer")})
     trades = sorted({r["trade"] for r in rows if r.get("trade")})
     ctx = {
