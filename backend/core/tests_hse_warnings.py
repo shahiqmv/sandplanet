@@ -2,7 +2,6 @@
 C.2): raised by the site, approved by the PM (never the raiser), printed,
 served and made active by the signed copy; the level climbs with his active
 warnings; a removal uses the existing flows; no link to fines."""
-import io
 from datetime import date, timedelta
 
 from django.core.files.uploadedfile import SimpleUploadedFile
