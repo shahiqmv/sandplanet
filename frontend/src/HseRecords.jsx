@@ -30,61 +30,9 @@ function Err({ children }) {
 }
 
 // ------------------------------------------------------------ toolbox talks
-// The attendance sheet printed before the talk; signed and uploaded, it
-// counts as the talk's photograph (HSE forms brief D, owner 2026-10-26).
-function sheetUrl({ site, day, topic, presenter, location, employees }) {
-  const p = new URLSearchParams({ site, day });
-  if (topic) p.set("topic", topic);
-  if (presenter) p.set("presenter", presenter);
-  if (location) p.set("location", location);
-  if (employees?.length) p.set("employees", employees.join(","));
-  return `/api/v1/hse/toolbox-talks/sheet.pdf?${p}`;
-}
-
-function today() {
-  const t = new Date();
-  return new Date(t.getTime() - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-}
-
-function PrintSheet({ sites, siteFilter, onClose }) {
-  const [site, setSite] = useState(siteFilter || "");
-  const [day, setDay] = useState(today());
-  const [topic, setTopic] = useState("");
-  return (
-    <div style={box}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-        {!siteFilter && (
-          <label style={{ fontSize: 13 }}>Site
-            <select value={site} onChange={(e) => setSite(e.target.value)} style={{ ...inputStyle, width: 120 }}>
-              <option value="">— choose —</option>
-              {(sites || []).map((s) => <option key={s.id} value={s.id}>{s.code}</option>)}
-            </select>
-          </label>
-        )}
-        <label style={{ fontSize: 13 }}>Date
-          <input type="date" value={day} onChange={(e) => setDay(e.target.value)} style={{ ...inputStyle, width: 150 }} />
-        </label>
-        <label style={{ fontSize: 13, flex: 1, minWidth: 220 }}>Topic (or leave it to write in)
-          <input value={topic} onChange={(e) => setTopic(e.target.value)} style={inputStyle} />
-        </label>
-        {site
-          ? <a href={sheetUrl({ site, day, topic })} target="_blank" rel="noreferrer" style={{ ...BTN.primary, textDecoration: "none" }}>⬇ Print the sheet</a>
-          : <span style={{ fontSize: 12.5, color: "#8a97a1" }}>Choose the site</span>}
-        <button onClick={onClose} style={ghostButton}>Close</button>
-      </div>
-      <p style={{ fontSize: 12, color: "#5a6b78", margin: "8px 0 0" }}>
-        Lists the men marked present that day — or, before the register is marked, everyone on the site —
-        with a signature column and blank rows. After the talk, record it and upload the signed sheet
-        instead of a photo.
-      </p>
-    </div>
-  );
-}
-
 export function ToolboxTab({ me, sites, siteFilter }) {
   const [rows, setRows] = useState([]);
   const [adding, setAdding] = useState(false);
-  const [printing, setPrinting] = useState(false);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(null);
 
@@ -99,13 +47,9 @@ export function ToolboxTab({ me, sites, siteFilter }) {
       <div style={{ marginBottom: 12 }}>
         <button onClick={() => setAdding(true)} style={BTN.primary}>
           Record a toolbox talk
-        </button>{" "}
-        <button onClick={() => setPrinting(true)} style={ghostButton}>
-          Print an attendance sheet
         </button>
       </div>
       <Err>{error}</Err>
-      {printing && <PrintSheet sites={sites} siteFilter={siteFilter} onClose={() => setPrinting(false)} />}
       {adding && (
         <TalkForm sites={sites} siteFilter={siteFilter}
                   onClose={() => setAdding(false)}
@@ -117,14 +61,13 @@ export function ToolboxTab({ me, sites, siteFilter }) {
           <th style={{ ...th, width: 130 }}>When</th>
           <th style={{ ...th, width: 60 }}>Site</th>
           <th style={th}>Topic</th>
-          <th style={{ ...th, width: 90 }}>Attended</th>
           <th style={{ ...th, width: 70 }}>Photos</th>
           <th style={{ ...th, width: 150 }}>Given by</th>
           <th style={{ ...th, width: 120 }} />
         </tr></thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={8} style={{ ...td, color: "#8a97a1" }}>
+            <tr><td colSpan={7} style={{ ...td, color: "#8a97a1" }}>
               No talks recorded yet.</td></tr>
           )}
           {rows.map((r) => (
@@ -148,16 +91,13 @@ export function ToolboxTab({ me, sites, siteFilter }) {
                   <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
                     {r.key_points && <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap", marginTop: 6 }}>{r.key_points}</div>}
                     <Discussion threadKey={`ref:${r.ref}`} me={me} inline />
-                    <SheetBlock talk={r} onChanged={(t) => setRows((all) => all.map((x) => (x.id === r.id ? t : x)))} />
                     <HsePhotos base={`/hse/toolbox-talks/${r.ref}`} photos={r.photos || []} canAdd canRemove
                                onChanged={(photos) => setRows((all) => all.map((x) => (x.id === r.id ? { ...x, photos } : x)))}
-                               emptyNote={r.sheet_url ? "No photos — the signed sheet is the record." : "This talk was recorded before photos were asked for — add one."} />
+                               emptyNote="This talk was recorded before photos were asked for — add one." />
                   </div>
                 )}
               </td>
-              <td style={td}>{r.attendee_count}</td>
-              <td style={{ ...td, color: (r.photos || []).length || r.sheet_url ? undefined : "#b3261e" }}>
-                {(r.photos || []).length || (r.sheet_url ? "" : "none")}{r.sheet_url && <>{(r.photos || []).length ? " + " : ""}sheet</>}</td>
+              <td style={{ ...td, color: (r.photos || []).length ? undefined : "#b3261e" }}>{(r.photos || []).length || "none"}</td>
               <td style={td}>{r.presenter_name || r.delivered_by_name}</td>
               <td style={td}><ReportButton base={`/hse/toolbox-talks/${r.ref}`} label="Record" /></td>
             </tr>
@@ -165,32 +105,6 @@ export function ToolboxTab({ me, sites, siteFilter }) {
         </tbody>
       </table>
     </>
-  );
-}
-
-function SheetBlock({ talk, onChanged }) {
-  const [files, setFiles] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  async function upload() {
-    if (!files.length) return setError("Choose the signed sheet — a PDF or a photo of each page.");
-    setBusy(true); setError(null);
-    const fd = new FormData();
-    [...files].forEach((f) => fd.append("files", f));
-    try { onChanged(await apiUpload(`/hse/toolbox-talks/${talk.ref}/sheet`, fd, "POST")); }
-    catch (e) { setError(e.message); } finally { setBusy(false); }
-  }
-  return (
-    <div style={{ marginTop: 8, fontSize: 13 }}>
-      {talk.sheet_url
-        ? <a href={talk.sheet_url} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>Signed attendance sheet</a>
-        : <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <b>Signed attendance sheet</b>
-            <input type="file" multiple accept="application/pdf,image/*" capture="environment" onChange={(e) => setFiles(e.target.files)} />
-            <button onClick={upload} disabled={busy} style={ghostButton}>{busy ? "Uploading…" : "Upload"}</button>
-          </span>}
-      <Err>{error}</Err>
-    </div>
   );
 }
 
@@ -202,43 +116,22 @@ function TalkForm({ sites, siteFilter, onClose, onSaved }) {
     site_id: siteFilter || "", topic: "", delivered_at: local,
     duration_min: 15, location: "", key_points: "", presenter_name: "",
   });
-  const [present, setPresent] = useState([]);
-  const [picked, setPicked] = useState(new Set());
   const [photos, setPhotos] = useState([]);
-  const [sheet, setSheet] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
 
-  // The attendance register is already the list of men who were there.
-  useEffect(() => {
-    if (!f.site_id) return setPresent([]);
-    const day = f.delivered_at.slice(0, 10);
-    api(`/hse/present?site=${f.site_id}&day=${day}`)
-      .then((list) => { setPresent(list); setPicked(new Set(
-        list.map((p) => p.employee_id))); })
-      .catch(() => setPresent([]));
-  }, [f.site_id, f.delivered_at.slice(0, 10)]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggle = (id) => setPicked((s) => {
-    const next = new Set(s);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-
   async function save() {
     if (!f.site_id) return setError("Choose the site.");
     if (!f.topic.trim()) return setError("What was the talk about?");
-    if (!photos.length && !sheet.length) return setError("Add the signed attendance sheet or at least one photo of the talk.");
+    if (!photos.length) return setError("Add at least one photo of the talk.");
     setBusy(true); setError(null);
     try {
       // the fields travel as one JSON string beside the photos
       const fd = new FormData();
       fd.append("payload", JSON.stringify({ ...f,
-        delivered_at: new Date(f.delivered_at).toISOString(),
-        attendees: [...picked].map((id) => ({ employee_id: id })) }));
+        delivered_at: new Date(f.delivered_at).toISOString() }));
       photos.forEach((p) => fd.append("photos", p));
-      [...sheet].forEach((p) => fd.append("sheet", p));
       await apiUpload("/hse/toolbox-talks", fd, "POST");
       onSaved();
     } catch (e) {
@@ -297,62 +190,8 @@ function TalkForm({ sites, siteFilter, onClose, onSaved }) {
                   onChange={(e) => set("key_points", e.target.value)}
                   style={{ ...inputStyle, resize: "vertical" }} />
       </label>
-      <label style={{ fontSize: 13, display: "block", marginTop: 10 }}>
-        Signed attendance sheet — a PDF or a photo of each page
-        {f.site_id && (
-          <a href={sheetUrl({ site: f.site_id, day: f.delivered_at.slice(0, 10), topic: f.topic,
-                              presenter: f.presenter_name, location: f.location, employees: [...picked] })}
-             target="_blank" rel="noreferrer" style={{ marginLeft: 10, fontWeight: 600 }}>⬇ Print it for the men ticked below</a>
-        )}
-        <input type="file" multiple accept="application/pdf,image/*" capture="environment"
-               onChange={(e) => setSheet(e.target.files)} style={{ display: "block", marginTop: 4 }} />
-      </label>
       <PhotoPicker files={photos} setFiles={setPhotos}
-                   label="Photos of the talk — at least one, unless the signed sheet is uploaded" />
-
-      <div style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10,
-                      flexWrap: "wrap" }}>
-          <strong style={{ fontSize: 13 }}>
-            Who attended ({picked.size} of {present.length})</strong>
-          <span style={{ fontSize: 12, color: "#5a6b78" }}>
-            everyone marked present that day, already ticked — untick anyone
-            who wasn't there
-          </span>
-          {present.length > 0 && (
-            <button onClick={() => setPicked(picked.size === present.length
-              ? new Set()
-              : new Set(present.map((p) => p.employee_id)))}
-                    style={{ ...ghostButton, padding: "3px 10px",
-                             fontSize: 12 }}>
-              {picked.size === present.length ? "Untick all" : "Tick all"}
-            </button>
-          )}
-        </div>
-        {present.length === 0 ? (
-          <p style={{ fontSize: 12.5, color: "#8a97a1", margin: "6px 0 0" }}>
-            Nobody is marked present at that site on that date — mark the
-            attendance register first, or add names by hand later.
-          </p>
-        ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6,
-                        marginTop: 8, maxHeight: 200, overflowY: "auto" }}>
-            {present.map((p) => (
-              <label key={p.employee_id}
-                     style={{ display: "flex", gap: 5, alignItems: "center",
-                              fontSize: 12.5, padding: "3px 8px",
-                              borderRadius: 6, cursor: "pointer",
-                              background: picked.has(p.employee_id)
-                                ? "#e7f2ea" : "var(--paper)",
-                              border: "1px solid var(--line)" }}>
-                <input type="checkbox" checked={picked.has(p.employee_id)}
-                       onChange={() => toggle(p.employee_id)} />
-                {p.full_name}
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+                   label="Photos of the talk — at least one, showing the men gathered for it; the photo is the record of who was there" />
 
       <Err>{error}</Err>
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>

@@ -114,10 +114,6 @@ urlpatterns = [
          name="hse-incident-photo"),
     path("hse/incidents/<str:ref>/report.pdf", hse_api.incident_report,
          name="hse-incident-report"),
-    path("hse/toolbox-talks/sheet.pdf", hse_api.toolbox_sheet_pdf,
-         name="hse-toolbox-sheet-pdf"),
-    path("hse/toolbox-talks/<str:ref>/sheet", hse_api.toolbox_sheet,
-         name="hse-toolbox-sheet"),
     path("hse/toolbox-talks/<str:ref>/photos", hse_api.toolbox_photos,
          name="hse-toolbox-photos"),
     path("hse/toolbox-talks/<str:ref>/photos/<int:pk>", hse_api.toolbox_photo,
@@ -132,7 +128,6 @@ urlpatterns = [
     path("hse/actions/<int:pk>/verify", hse_api.action_verify,
          name="hse-action-verify"),
     path("hse/toolbox-talks", hse_api.toolbox_talks, name="hse-toolbox"),
-    path("hse/present", hse_api.present_today, name="hse-present"),
     # Worker health log (SOP-HR-04)
     path("health/summary", health_api.summary, name="health-summary"),
     path("health/cases", health_api.cases, name="health-cases"),

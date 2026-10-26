@@ -5,7 +5,6 @@ site's records, Head Office sees all of them.
 """
 from datetime import timedelta
 
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.decorators import api_view, parser_classes
@@ -365,16 +364,10 @@ class ToolboxTalkSerializer(serializers.ModelSerializer):
         fields = ["id", "ref", "site_code", "topic", "delivered_at",
                   "delivered_by_name", "presenter_name", "duration_min",
                   "location", "key_points", "attendees", "attendee_count",
-                  "photos", "sheet_url"]
-
-    sheet_url = serializers.SerializerMethodField()
+                  "photos"]
 
     def get_photos(self, obj):
         return _photos(obj.document)
-
-    def get_sheet_url(self, obj):
-        att = hse.sheet_of(obj.document)
-        return att.file.url if att and att.file else None
 
     def get_attendee_count(self, obj):
         return obj.attendees.count()
@@ -463,8 +456,7 @@ def toolbox_talks(request):
             return err
         talk, problem = hse.create_toolbox_talk(
             site=site, data=data, user=request.user,
-            photos=request.FILES.getlist("photos"),
-            sheet=request.FILES.getlist("sheet"))
+            photos=request.FILES.getlist("photos"))
         if problem:
             return Response({"detail": problem}, status=400)
         return Response(ToolboxTalkSerializer(talk).data, status=201)
@@ -480,21 +472,6 @@ def toolbox_talks(request):
     if request.GET.get("from"):
         qs = qs.filter(delivered_at__date__gte=request.GET["from"])
     return Response(ToolboxTalkSerializer(qs[:200], many=True).data)
-
-
-@api_view(["GET"])
-def present_today(request):
-    """Who was marked present at a site on a day — the attendance register is
-    already the list of men who were there for the talk."""
-    site, err = _site_or_error(request, request.GET.get("site"))
-    if err:
-        return err
-    day = request.GET.get("day") or str(timezone.localdate())
-    people = hse.workers_present(site, day)
-    return Response([{"employee_id": e.id, "emp_no": e.emp_no,
-                      "full_name": e.full_name,
-                      "trade": getattr(e.job_category, "name", "")}
-                     for e in people])
 
 
 @api_view(["GET", "POST"])
@@ -852,67 +829,6 @@ def toolbox_photos(request, ref):
     return _photo_change(request, talk.document, hse.RECORDER_ROLES)
 
 
-@api_view(["POST"])
-@parser_classes([MultiPartParser, FormParser])
-def toolbox_sheet(request, ref):
-    """The signed attendance sheet, added to a talk already recorded."""
-    talk, err = _get_talk(request, ref)
-    if err:
-        return err
-    if request.user.role not in hse.RECORDER_ROLES:
-        return Response({"detail": "Not allowed."}, status=403)
-    _, problem = hse.add_toolbox_sheet(talk.document,
-                                       request.FILES.getlist("files"),
-                                       request.user)
-    if problem:
-        return Response({"detail": problem}, status=400)
-    return Response(ToolboxTalkSerializer(talk).data)
-
-
-@api_view(["GET"])
-def toolbox_sheet_pdf(request):
-    """The attendance sheet printed before the talk (HSE forms brief D):
-    the men marked present that day — or, before the register is marked,
-    the men on the site — with a signature column, and blank rows for
-    anyone else. The topic and the presenter print if given, else are left
-    to write in."""
-    from datetime import date as _date
-
-    from .models import EmployeeSiteAllocation
-    site, err = _site_or_error(request, request.GET.get("site"))
-    if err:
-        return err
-    try:
-        day = _date.fromisoformat(request.GET.get("day") or "")
-    except ValueError:
-        day = timezone.localdate()
-    ids = [int(i) for i in (request.GET.get("employees") or "").split(",")
-           if i.strip().isdigit()]
-    if ids:
-        men = list(Employee.objects.filter(id__in=ids))
-    else:
-        men = hse.workers_present(site, day)
-        if not men:
-            men = [a.employee for a in EmployeeSiteAllocation.objects
-                   .filter(site=site, from_date__lte=day)
-                   .filter(Q(to_date__isnull=True) | Q(to_date__gte=day))
-                   .select_related("employee", "employee__subcontractor")]
-    men = sorted({e.id: e for e in men}.values(),
-                 key=lambda e: (e.engagement_type or "", e.emp_no or ""))
-    rows = [{"n": i + 1, "emp_no": e.emp_no, "name": e.full_name,
-             "employer": (e.subcontractor.name if e.is_subcontract
-                          and e.subcontractor_id else "Sand Planet")}
-            for i, e in enumerate(men)]
-    rows += [{"n": len(rows) + i + 1} for i in range(10)]
-    return _report("pdf/hse_toolbox_sheet.html", {
-        "site": site, "day": day, "rows": rows,
-        "topic": (request.GET.get("topic") or "").strip(),
-        "presenter": (request.GET.get("presenter") or "").strip(),
-        "location": (request.GET.get("location") or "").strip(),
-        "subline": f"{site.code} · {day:%d %b %Y}",
-    }, f"toolbox-sheet-{site.code}-{day}.pdf")
-
-
 @api_view(["DELETE"])
 def toolbox_photo(request, ref, pk):
     talk, err = _get_talk(request, ref)
@@ -977,7 +893,6 @@ def toolbox_report(request, ref):
         "attendees": list(talk.attendees.select_related("employee")),
         "presenter": talk.presenter_name or talk.delivered_by.full_name,
         "photos": _pdf_photos(doc),
-        "has_sheet": hse.sheet_of(doc) is not None,
         "subline": f"{doc.ref} · {doc.site.code}",
     }, f"{doc.ref}-toolbox-talk.pdf")
 
