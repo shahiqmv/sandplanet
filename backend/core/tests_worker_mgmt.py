@@ -781,3 +781,40 @@ class TransferGateTests(WorkerBatchTests):
         self.assertEqual(r.status_code, 400, r.data)
         emp.refresh_from_db()
         self.assertEqual(emp.current_site_id(), self.site.id)
+
+
+class WorkerLanguageTests(TestCase):
+    """The site team corrects the language a worker's forms print in for
+    the men on their own site (owner 2026-10-26)."""
+
+    def test_the_site_team_sets_it_for_their_own_men(self):
+
+        mine = Site.objects.create(code="LNG", name="Lang Isle",
+                                   status=Site.Status.ACTIVE)
+        other = Site.objects.create(code="OTH", name="Other Isle",
+                                    status=Site.Status.ACTIVE)
+        se = make_user("lng_se", User.Role.SITE_ENGINEER, mine)
+        emp = Employee.objects.create(emp_no="EMP-7101", full_name="Kumar",
+                                      nationality="Sri Lankan",
+                                      preferred_language="SI", is_active=True)
+        EmployeeSiteAllocation.objects.create(employee=emp, site=mine,
+                                              from_date=date(2026, 1, 1))
+        stranger = Employee.objects.create(emp_no="EMP-7102", full_name="X",
+                                           is_active=True)
+        EmployeeSiteAllocation.objects.create(employee=stranger, site=other,
+                                              from_date=date(2026, 1, 1))
+        c = APIClient()
+        c.force_authenticate(se)
+        r = c.patch(f"/api/v1/workers/{emp.id}/language", {"language": "TA"},
+                    format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        emp.refresh_from_db()
+        self.assertEqual(emp.preferred_language, "TA")
+        self.assertEqual(c.patch(f"/api/v1/workers/{stranger.id}/language",
+                                 {"language": "TA"}, format="json")
+                         .status_code, 403)
+        self.assertEqual(c.patch(f"/api/v1/workers/{emp.id}/language",
+                                 {"language": "XX"}, format="json")
+                         .status_code, 400)
+        rows = c.get(f"/api/v1/sites/{mine.id}/direct-workers").data
+        self.assertEqual(rows[0]["preferred_language"], "TA")

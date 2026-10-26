@@ -105,6 +105,7 @@ def site_direct_workers(request, site_id):
             "id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
             "photo_url": e.photo.url if e.photo else None,
             "nationality": e.nationality,
+            "preferred_language": e.preferred_language or "",
             "job_title": e.job_category.name if e.job_category_id else "",
             "join_date": e.join_date,
             "basic_pay": None if hide_pay else e.basic_pay,
@@ -299,6 +300,35 @@ def worker_join_date(request, emp_id):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(_emp_json(emp, request.user))
+
+
+@api_view(["PATCH"])
+def worker_language(request, emp_id):
+    """Set the language a worker's forms print in. Everyone was given a
+    default from his nationality; the site team corrects it for the men on
+    their site — a Tamil-speaking Sri Lankan, a Hindi-speaking Indian
+    (owner 2026-10-26). Direct and subcontract workers alike."""
+    from .audit import audit
+    from .form_i18n import check_language
+    if request.user.role not in (*wm.SITE_MANAGE_ROLES, "HO_HR"):
+        return Response({"detail": "Site / HR only."}, status=403)
+    emp = Employee.objects.filter(pk=emp_id).filter(
+        Q(is_active=True) | Q(hire_pending=True) | Q(sub_pending=True)).first()
+    if emp is None:
+        return Response({"detail": "Not found."}, status=404)
+    ids = scoped_site_ids(request.user)
+    if ids is not None and not emp.site_allocations.filter(
+            to_date__isnull=True, site_id__in=ids).exists():
+        return Response({"detail": "Not one of your sites."}, status=403)
+    code, err = check_language(request.data.get("language"))
+    if err:
+        return Response({"detail": err}, status=400)
+    was = emp.preferred_language
+    emp.preferred_language = code
+    emp.save(update_fields=["preferred_language"])
+    audit("employee", emp.id, "LANGUAGE_SET", actor=request.user,
+          detail={"emp": emp.emp_no, "from": was, "to": code})
+    return Response({"id": emp.id, "preferred_language": code})
 
 
 @api_view(["POST"])

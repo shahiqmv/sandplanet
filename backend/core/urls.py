@@ -919,6 +919,8 @@ urlpatterns = [
     path("worker-hires/<int:emp_id>", worker_api.hire_edit, name="hire-edit"),
     path("workers/<int:emp_id>/join-date", worker_api.worker_join_date,
          name="worker-join-date"),
+    path("workers/<int:emp_id>/language", worker_api.worker_language,
+         name="worker-language"),
     path("salary-revisions", worker_api.salary_revisions,
          name="salary-revisions"),
     path("salary-revisions/<int:pk>/action",

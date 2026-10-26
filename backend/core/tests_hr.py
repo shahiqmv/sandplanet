@@ -1352,7 +1352,9 @@ class SetWorkerLanguagesCommandTests(TestCase):
         emp("EMP-9003", "Male")
         emp("EMP-9004", "Sri Lankan")          # from the sheet: suggested
         emp("EMP-9005", "Indian")              # from the sheet: confirmed
-        emp("EMP-9006", "Indian")              # not on the sheet: stays blank
+        emp("EMP-9006", "Indian")              # not on the sheet: Tamil
+        emp("EMP-9008", "Sri Lankan")          # not on the sheet: Sinhala
+        emp("EMP-9009", "Filipino")            # no default: stays blank
         emp("EMP-9007", "Bangladeshi", "EN")   # already set: left alone
         wb = Workbook()
         ws = wb.active
@@ -1366,12 +1368,13 @@ class SetWorkerLanguagesCommandTests(TestCase):
         call_command("set_worker_languages", sheet=path, stdout=out)
         self.assertIn("Dry run", out.getvalue())
         self.assertFalse(Employee.objects.exclude(preferred_language="")
-                         .exclude(emp_no="EMP-9007").exists())
+                         .exclude(emp_no="EMP-9007").exists())   # dry run
         call_command("set_worker_languages", sheet=path, apply=True,
                      stdout=StringIO())
         got = dict(Employee.objects.values_list("emp_no",
                                                 "preferred_language"))
         self.assertEqual(got, {"EMP-9001": "BN", "EMP-9002": "NE",
                                "EMP-9003": "DV", "EMP-9004": "TA",
-                               "EMP-9005": "HI", "EMP-9006": "",
-                               "EMP-9007": "EN"})
+                               "EMP-9005": "HI", "EMP-9006": "TA",
+                               "EMP-9007": "EN", "EMP-9008": "SI",
+                               "EMP-9009": ""})

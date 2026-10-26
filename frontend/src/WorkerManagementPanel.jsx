@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { WORKER_LANGUAGES } from "./languages.js";
+import LanguageCell from "./LanguageCell.jsx";
 import { api, apiUpload } from "./api.js";
 import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
@@ -166,6 +167,7 @@ export default function WorkerManagementPanel({ site, me }) {
               <th style={{ ...th, width: 52 }}>Photo</th>
               <th style={th}>Emp No</th><th style={th}>Name</th>
               <th style={th}>Category</th><th style={th}>Nationality</th>
+              <th style={th} title="The language his warning and induction forms print in">Forms in</th>
               <th style={th}>Joined</th>
               <th style={{ ...th, textAlign: "right" }}>Salary</th>
               {canManage && <th style={th}></th>}
@@ -180,6 +182,7 @@ export default function WorkerManagementPanel({ site, me }) {
                   <td style={td}>{w.full_name}</td>
                   <td style={td}>{w.job_title || "—"}</td>
                   <td style={td}>{w.nationality || "—"}</td>
+                  <td style={td}><LanguageCell worker={w} canEdit={canManage} /></td>
                   <td style={td}>
                     {canManage
                       ? <JoinDateCell worker={w} onSaved={load} />

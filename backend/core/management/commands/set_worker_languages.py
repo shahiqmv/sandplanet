@@ -1,9 +1,10 @@
 """Fill in the language a worker's forms print in (owner 2026-10-26).
 
-From nationality where it settles it — Bangladeshi → Bengali, Nepali →
-Nepali, Maldivian → Dhivehi (the English form) — and, with --sheet, from the
-reviewed spreadsheet for the Sri Lankans and Indians (column A emp no,
-F the suggested language, I the confirmed one, which wins).
+From nationality — Bangladeshi → Bengali, Nepali → Nepali, Maldivian →
+Dhivehi (the English form), and by default Sri Lankan → Sinhala and Indian →
+Tamil, which the site team corrects on the Workforce page (owner
+2026-10-26). With --sheet, a reviewed spreadsheet overrides the default for
+the men on it (column A emp no, F the suggestion, I the confirmed one).
 
 Only a blank language is filled; a language already on a record is left
 alone. A dry run unless --apply.
@@ -31,6 +32,12 @@ def from_nationality(nat):
         return "NE"
     if n.startswith("maldiv") or n == "male":
         return "DV"
+    # the defaults the site team then corrects (owner 2026-10-26): most
+    # Sri Lankans speak Sinhala, most of our Indians Tamil
+    if "lank" in n:
+        return "SI"
+    if n.startswith("india"):
+        return "TA"
     return None
 
 

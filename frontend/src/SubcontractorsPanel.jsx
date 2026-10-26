@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { WORKER_LANGUAGES } from "./languages.js";
+import LanguageCell from "./LanguageCell.jsx";
 import HireForm from "./HireWorkerForm.jsx";
 import AgreementsPanel from "./AgreementsPanel.jsx";
 import { api } from "./api.js";
@@ -162,6 +163,7 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
   const [editingW, setEditingW] = useState(null);  // worker being corrected
 
   const canSiteManage = SITE_MANAGE.includes(me.role);
+  const canEditLang = canSiteManage || me.role === "HO_HR";
   const isPM = ["PM", "ADMIN"].includes(me.role);
   const isDirector = ["DIRECTOR", "ADMIN"].includes(me.role);
   const canSuspend = ["PM", "DIRECTOR", "ADMIN"].includes(me.role);
@@ -269,7 +271,7 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
                         marginTop: 8 }}>
           <thead><tr>
             <th style={th}>Worker</th><th style={th}>Trade</th>
-            <th style={th}>Nationality</th><th style={th}>Joined</th>
+            <th style={th}>Nationality</th><th style={th}>Forms in</th><th style={th}>Joined</th>
             <th style={{ ...th, textAlign: "right" }}>Monthly rate</th>
             <th style={th}>Status</th><th style={th}></th>
           </tr></thead>
@@ -281,6 +283,7 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
                     {" "}· {w.emp_no}</span></td>
                 <td style={td}>{w.job_title || "—"}</td>
                 <td style={td}>{w.nationality || "—"}</td>
+                <td style={td}><LanguageCell worker={w} canEdit={w.state !== "REMOVED" && canEditLang} /></td>
                 <td style={td}>{w.join_date
                   || <span style={{ color: "var(--red-fg)" }}>not set</span>}</td>
                 <td style={{ ...td, textAlign: "right",
