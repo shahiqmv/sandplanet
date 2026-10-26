@@ -139,6 +139,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         fields = ["id", "emp_no", "full_name", "photo", "photo_url",
                   "date_of_birth", "gender", "marital_status",
                   "passport_no", "passport_expiry", "nationality",
+                  "preferred_language",
                   "job_category", "job_category_name", "job_title",
                   "basic_pay",
                   "usd_basic_pay", "currency",

@@ -2,16 +2,17 @@ import { useState } from "react";
 import SubcontractorsPanel from "./SubcontractorsPanel.jsx";
 import WorkerManagementPanel from "./WorkerManagementPanel.jsx";
 import FinesPanel from "./FinesPanel.jsx";
+import WarningsPanel from "./WarningsPanel.jsx";
 import { ghostButton } from "./ui.jsx";
 
 // Dedicated site workforce page (owner: keep this off the site dashboard,
 // which was getting too long). Two tabs: direct salaried workers and
 // subcontractor teams — and the site's fines (owner 2026-09-29).
 const TABS = [["direct", "Direct workers"], ["subcontract", "Subcontractors"],
-              ["fines", "Fines"]];
+              ["fines", "Fines"], ["warnings", "Warnings"]];
 
 export default function WorkforcePage({ site, me, onClose, onAttendance,
-                                        initialTab, fineId }) {
+                                        initialTab, fineId, warningId }) {
   const [tab, setTab] = useState(initialTab || "direct");
   return (
     <div>
@@ -36,6 +37,8 @@ export default function WorkforcePage({ site, me, onClose, onAttendance,
       {tab === "subcontract" && (
         <SubcontractorsPanel site={site} me={me} onAttendance={onAttendance} />)}
       {tab === "fines" && <FinesPanel site={site} me={me} openId={fineId} />}
+      {/* warning notices, SP-HSE-F02 — beside fines, never linked to them */}
+      {tab === "warnings" && <WarningsPanel site={site} me={me} openId={warningId} />}
     </div>
   );
 }

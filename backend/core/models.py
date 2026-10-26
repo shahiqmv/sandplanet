@@ -2567,6 +2567,9 @@ class Employee(models.Model):
     passport_no = models.TextField(blank=True)          # sensitive
     passport_expiry = models.DateField(null=True, blank=True)
     nationality = models.TextField(blank=True)
+    # The language his forms print in beside English — warnings, inductions,
+    # PPE sheets (owner 2026-10-26, HSE forms brief C.5). Blank = English.
+    preferred_language = models.CharField(max_length=2, blank=True)
     job_category = models.ForeignKey(  # company-wide DPR list (spec §6A.1)
         ManpowerCategory, on_delete=models.PROTECT, null=True, blank=True,
         related_name="employees",
@@ -9051,6 +9054,96 @@ def fine_evidence_path(instance, filename):
     import uuid
     ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
     return f"fines/{instance.ref or 'new'}/{uuid.uuid4().hex[:12]}{ext}"
+
+
+def signed_sheet_path(instance, filename):
+    """Unique per record: S3 file_overwrite would otherwise let two signed
+    sheets of the same name replace each other."""
+    import uuid
+    return (f"hse/signed/{getattr(instance, 'ref', '') or 'new'}/"
+            f"{uuid.uuid4().hex[:12]}.pdf")
+
+
+class WarningNotice(models.Model):
+    """An employee warning notice, SP-HSE-F02 (owner 2026-10-26, HSE forms
+    brief C.2).
+
+    Raised by the site team for a direct or subcontract worker, approved by
+    the site PM (never the person who raised it), printed, served, and made
+    ACTIVE by uploading the signed copy. Kept on the worker's record beside
+    fines and deliberately NOT linked to them: a warning never creates a
+    fine and a fine never needs a warning (owner 2026-09-29)."""
+
+    class Level(models.TextChoices):
+        VERBAL = "VERBAL", "Verbal warning (recorded)"
+        FIRST = "FIRST", "First written warning"
+        FINAL = "FINAL", "Final written warning"
+        REMOVAL = "REMOVAL", "Removal from site"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Awaiting PM approval"
+        RETURNED = "RETURNED", "Returned to the site"
+        APPROVED = "APPROVED", "Approved — to serve"
+        ACTIVE = "ACTIVE", "Served — active"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    ref = models.CharField(max_length=24, unique=True)
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="warnings")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="warning_notices")
+    incident = models.ForeignKey("SafetyIncident", on_delete=models.SET_NULL,
+                                 null=True, blank=True,
+                                 related_name="warnings")
+    event_date = models.DateField()
+    # codes from the form's list (core/hse_warnings.OFFENCES) + free text
+    offences = models.JSONField(default=list)
+    other_offence = models.CharField(max_length=200, blank=True)
+    what_happened = models.TextField()
+    corrective_action = models.TextField(blank=True)
+    supervisor = models.CharField(max_length=120, blank=True)
+    level = models.CharField(max_length=8, choices=Level.choices)
+    suggested_level = models.CharField(max_length=8, choices=Level.choices)
+    level_reason = models.CharField(max_length=300, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.PENDING)
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=300, blank=True)
+    # the printed form and its signed copy (the signed-sheet pattern)
+    form_rev = models.CharField(max_length=20, default="F02 Rev 0")
+    language = models.CharField(max_length=2, blank=True)
+    printed_at = models.DateTimeField(null=True, blank=True)
+    served_on = models.DateField(null=True, blank=True)
+    refused_to_sign = models.BooleanField(default=False)
+    witness_name = models.CharField(max_length=120, blank=True)
+    signed_copy = models.FileField(upload_to=signed_sheet_path, null=True,
+                                   blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    # counts toward the next level until this day; kept on file for good
+    active_until = models.DateField(null=True, blank=True)
+    # a removal opens the existing Remove batch for a direct worker
+    removal_batch = models.ForeignKey("WorkerChangeRequest",
+                                      on_delete=models.SET_NULL, null=True,
+                                      blank=True, related_name="+")
+    cancelled_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     null=True, blank=True, related_name="+")
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["-event_date", "-id"]
+        indexes = [models.Index(fields=["employee", "status"]),
+                   models.Index(fields=["site", "status"])]
+
+    def __str__(self):
+        return f"{self.ref} {self.employee.emp_no} {self.level}"
 
 
 class WorkerFine(models.Model):

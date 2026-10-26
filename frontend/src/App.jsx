@@ -67,6 +67,7 @@ import PayablesPage from "./PayablesPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
 import FinesPanel, { OffencesPanel } from "./FinesPanel.jsx";
+import WarningsPanel from "./WarningsPanel.jsx";
 import StockPage from "./StockPage.jsx";
 import TransfersPanel from "./TransfersPanel.jsx";
 import ToolsPage from "./ToolsPage.jsx";
@@ -241,6 +242,9 @@ const NAV_GROUPS = [
            ["fines", "Worker Fines",
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA", "SIGNATORY"]],
            ["fine-offences", "Fine Offences", ["HO_HR", "ADMIN", "PA"]],
+           // every site's warning notices, SP-HSE-F02 (owner 2026-10-26)
+           ["warnings", "Worker Warnings",
+            ["HO_HR", "DIRECTOR", "ADMIN", "PA", "SIGNATORY"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN", "SIGNATORY"]]] },
   // "Company", not "Admin": Company Profile folds in here, and MARKETING is a
   // minimal role that sees ONLY that page — labelling their whole app "Admin"
@@ -524,6 +528,7 @@ export default function App() {
   // one run that is waiting on them (owner 2026-08-12).
   const [payrollRunId, setPayrollRunId] = useState(null);
   const [fineId, setFineId] = useState(null);   // a fine opened from My Tasks
+  const [warningId, setWarningId] = useState(null);   // a warning notice, likewise
   const [healthCaseId, setHealthCaseId] = useState(null);  // a case from My Tasks
   const [pscOpenId, setPscOpenId] = useState(null);  // a schedule opened by ref
   const [healthSite, setHealthSite] = useState(null);      // from a site dashboard
@@ -940,6 +945,21 @@ export default function App() {
       setOpenSite(null);
       setPayrollRunId(item.run_id);
       setHoPage("payroll");
+      return;
+    }
+    // A warning notice opens on the site's Workforce → Warnings tab for the
+    // site team and its PM; head office on the all-sites page.
+    if (item.doc_type === "WARNING") {
+      const site = sites.find((s) => s.code === item.site_code);
+      setWarningId(item.warning_id);
+      if (site && ["PM", "SITE_ADMIN", "SITE_ENGINEER"].includes(me.role)) {
+        setOpenSite(site);
+        setDocView({ mode: "workforce", tab: "warnings" });
+      } else {
+        setDocView(null);
+        setOpenSite(null);
+        setHoPage("warnings");
+      }
       return;
     }
     // A fine is not a Document either. The site's PM decides it on the
@@ -1671,6 +1691,10 @@ export default function App() {
             <FinesPanel sites={sites} me={me} openId={fineId} />
           )}
           {!docView && !openSite &&
+            hoPage === "warnings" && (
+            <WarningsPanel sites={sites} me={me} openId={warningId} />
+          )}
+          {!docView && !openSite &&
             hoPage === "fine-offences" && (
             <OffencesPanel />
           )}
@@ -1718,7 +1742,7 @@ export default function App() {
           )}
           {docView?.mode === "workforce" && openSite && (
             <WorkforcePage site={openSite} me={me} onClose={closeDoc}
-              initialTab={docView.tab} fineId={fineId}
+              initialTab={docView.tab} fineId={fineId} warningId={warningId}
               onAttendance={(sub, tab) => setDocView({ mode: "attendance",
                                                        tab: tab || "day",
                                                        sub })} />

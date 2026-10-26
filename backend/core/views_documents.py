@@ -1248,6 +1248,24 @@ def pending_groups(user):
             "hint": (f"{f.employee.emp_no} {f.employee.full_name} · "
                      f"{f.offence.name if f.offence_id else f.get_category_display()}")[:120],
         } for f in pending_for(user)[:50]])
+    # Warning notices (owner 2026-10-26): the PM approves; the site serves
+    # an approved one and uploads the signed copy within 48 hours.
+    from . import hse_warnings
+    if user.role in ("PM", "DIRECTOR", "ADMIN"):
+        add("To approve — warning notices", [{
+            "ref": w.ref, "warning_id": w.id, "doc_type": "WARNING",
+            "site_code": w.site.code, "project_code": None,
+            "doc_date": w.event_date, "status": "PENDING",
+            "hint": (f"{w.employee.emp_no} {w.employee.full_name} · "
+                     f"{w.get_level_display()}")[:120],
+        } for w in hse_warnings.pending_for(user)[:50]])
+    add("To serve — warning notices (signed copy not uploaded)", [{
+        "ref": w.ref, "warning_id": w.id, "doc_type": "WARNING",
+        "site_code": w.site.code, "project_code": None,
+        "doc_date": w.event_date, "status": "APPROVED",
+        "hint": (f"{w.employee.emp_no} {w.employee.full_name} · print, "
+                 "serve, upload the signed copy")[:120],
+    } for w in hse_warnings.unserved_for(user)[:50]])
     if user.role in ("DIRECTOR", "ADMIN"):
         add("To approve — salary drafts", payroll_rows(
             PayrollRun.objects.filter(status="PD_REVIEW").select_related("site"),

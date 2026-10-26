@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
-    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_discussion as discussion_api, views_bills as bills_api, views_cameras as cameras_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_hse_warnings as hse_warnings_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_discussion as discussion_api, views_bills as bills_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
@@ -825,6 +825,17 @@ urlpatterns = [
     path("ledger/reports/pnl", ledger_api.report_pnl, name="ledger-pnl"),
     path("ledger/reports/balance-sheet", ledger_api.report_balance_sheet,
          name="ledger-balance-sheet"),
+    path("hse-warnings", hse_warnings_api.warnings, name="hse-warnings"),
+    path("hse-warnings/meta", hse_warnings_api.warning_meta,
+         name="hse-warning-meta"),
+    path("hse-warnings/workers", hse_warnings_api.warning_workers,
+         name="hse-warning-workers"),
+    path("hse-warnings/<int:pk>", hse_warnings_api.warning_detail,
+         name="hse-warning"),
+    path("hse-warnings/<int:pk>/pdf", hse_warnings_api.warning_pdf,
+         name="hse-warning-pdf"),
+    path("hse-warnings/<int:pk>/<str:action>", hse_warnings_api.warning_action,
+         name="hse-warning-action"),
     path("fines", fines_api.fines, name="fines"),
     path("fines/workers", fines_api.fine_workers, name="fine-workers"),
     path("fines/offences", fines_api.offences, name="fine-offences"),
