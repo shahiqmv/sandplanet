@@ -9,7 +9,7 @@
   body { font-family: Helvetica, Arial, "Noto Sans Bengali", "Noto Sans Tamil",
          "Noto Sans Sinhala", "Noto Sans Devanagari", "Bangla Sangam MN",
          "Tamil Sangam MN", "Sinhala Sangam MN", "Devanagari Sangam MN", sans-serif; }
-  .loc { color: #4a5763; font-size: 7.6pt; font-weight: 400; line-height: 1.5; }
+  .loc { color: #4a5763; font-size: 7.2pt; font-weight: 400; line-height: 1.4; }
   h2 .loc { color: #4a5763; font-size: 8pt; }
   .tick { display: inline-block; width: 9px; height: 9px; border: 0.8px solid #1c1c1c;
           margin-right: 5px; text-align: center; line-height: 9px; font-size: 8pt;
@@ -18,12 +18,12 @@
   table.opts .grp { font-weight: 700; color: {% brand "primary" %}; padding-top: 4px; }
   .box { border: 0.6px solid #A9B6C0; padding: 4px 6px; margin-bottom: 6px; }
   .box .h { font-weight: 700; color: {% brand "primary" %}; }
-  .box .txt { white-space: pre-wrap; min-height: 34px; padding-top: 3px; }
+  .box .txt { white-space: pre-wrap; min-height: 26px; padding-top: 3px; }
   .box.tall .txt { min-height: 56px; }
   .warn { color: #b3261e; font-weight: 700; font-size: 8.4pt; margin: 4px 0 2px; }
   table.sig td { border: none; vertical-align: top; width: 25%; padding: 2px 6px; font-size: 8pt; }
-  .sigline { border-bottom: 0.8px solid #1c1c1c; height: 28px; margin: 2px 0 2px; }
-  .sighead { height: 36px; }
+  .sigline { border-bottom: 0.8px solid #1c1c1c; height: 24px; margin: 2px 0 2px; }
+  .sighead { min-height: 30px; }
   .small { font-size: 7.4pt; color: #6a7681; }
   .stamp { font-size: 7.4pt; color: #6a7681; text-align: right; }
 </style>
@@ -68,7 +68,7 @@
 </tr></table>
 
 <h2>3. DETAILS{% if L %} <span class="loc">/ {{ L.wn_details }}</span>{% endif %}</h2>
-<div class="box tall"><div class="h">What happened (date, time, location){% if L %} <span class="loc">/ {{ L.wn_what_happened }}</span>{% endif %}</div>
+<div class="box"><div class="h">What happened (date, time, location){% if L %} <span class="loc">/ {{ L.wn_what_happened }}</span>{% endif %}</div>
   <div class="txt">{{ w.what_happened }}{% if w.incident %}
 
 Linked incident: {{ w.incident.document.ref }}{% endif %}</div></div>
@@ -79,6 +79,7 @@ Linked incident: {{ w.incident.document.ref }}{% endif %}</div></div>
 <div class="warn">A further offence may lead to the next warning level or removal from site.</div>
 {% if L %}<div class="loc" style="color:#b3261e">{{ L.wn_further }}</div>{% endif %}
 
+<div style="page-break-inside: avoid">
 <h2>4. ACKNOWLEDGEMENT{% if L %} <span class="loc">/ {{ L.wn_ack_heading }}</span>{% endif %}</h2>
 <div style="font-size:8.2pt">By signing, I confirm this warning was explained to me in a language I understand. Signing does not mean I agree. The warning stands even if I do not sign.</div>
 {% if L %}<div class="loc">{{ L.wn_ack_text }}</div>{% endif %}
@@ -98,8 +99,9 @@ Linked incident: {{ w.incident.document.ref }}{% endif %}</div></div>
       <div class="sigline"></div><span class="small">Signature{% if L %} / {{ L.signature }}{% endif %}</span><br>
       Name: {{ w.decided_by.get_full_name|default:w.decided_by.username }}<br>Date: {{ w.decided_at|date:"d M Y" }}</td>
 </tr></table>
+</div>
 
-<div class="small" style="text-align:center;margin-top:6px">Copies: Employee · Site file · HR, Head Office{% if L %} &nbsp;/&nbsp; <span class="loc">{{ L.wn_copies }}</span>{% endif %}</div>
-<div class="stamp">Printed {{ printed_at|date:"d M Y H:i" }} from Planet · {{ w.form_rev }} · upload the signed copy to complete the record</div>
+<div class="small" style="margin-top:5px">Copies: Employee · Site file · HR, Head Office{% if L %} &nbsp;/&nbsp; <span class="loc">{{ L.wn_copies }}</span>{% endif %}
+  <span style="float:right">Printed {{ printed_at|date:"d M Y H:i" }} from Planet · {{ w.form_rev }} · upload the signed copy to complete the record</span></div>
 </body>
 </html>

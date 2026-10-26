@@ -185,11 +185,9 @@ class WarningNoticeTests(TestCase):
         self.assertEqual(len(self.as_(self.hr).get(
             "/api/v1/hse-warnings").data["results"]), 1)
 
-
-class FormLanguageTests(WarningNoticeTests):
-    """The warning and induction forms print English and, under it, Bengali,
-    Tamil, Sinhala, Hindi or Nepali (owner 2026-10-26); any other language
-    prints English and says to explain it verbally."""
+    # The warning and induction forms print English and, under it, Bengali,
+    # Tamil, Sinhala, Hindi or Nepali (owner 2026-10-26); any other language
+    # prints English and says to explain it verbally.
 
     def test_every_language_file_has_every_line(self):
         from . import form_i18n
@@ -217,3 +215,33 @@ class FormLanguageTests(WarningNoticeTests):
             self.assertIn("Not wearing required PPE", text)
             self.assertEqual("explain the warning to him verbally" in text,
                              lang == "DV", lang)
+
+    def test_a_warning_the_pm_raised_goes_to_the_director(self):
+        """It used to wait for nobody: the PM cannot approve his own and the
+        Director only stood in where there was no PM (owner 2026-10-26)."""
+        director = make_user("wn_dir", User.Role.DIRECTOR)
+        r = self.raise_(user=self.pm)
+        self.assertEqual(r.status_code, 201, r.data)
+        wid = r.data["id"]
+        self.assertIn("wn_dir", r.data["waiting_for"])
+        self.assertEqual(self.approve(wid, self.pm).status_code, 400)
+        tasks = self.as_(director).get("/api/v1/approvals/pending").data
+        refs = [i["ref"] for g in tasks["groups"] for i in g["items"]]
+        self.assertIn(r.data["ref"], refs)
+        self.assertEqual(self.approve(wid, director).data["status"],
+                         "APPROVED")
+        # one the site engineer raised is still the PM's, not the Director's
+        r = self.raise_()
+        self.assertFalse(self.as_(director).get(
+            f"/api/v1/hse-warnings/{r.data['id']}").data["can_decide"])
+        self.assertTrue(self.as_(self.pm).get(
+            f"/api/v1/hse-warnings/{r.data['id']}").data["can_decide"])
+
+    def test_the_form_language_is_chosen_on_the_warning(self):
+        r = self.raise_(language="TA")
+        self.assertEqual(r.data["language"], "TA", r.data)
+        r = self.raise_(language="")          # English only
+        self.assertEqual(r.data["language"], "")
+        r = self.raise_()                     # not given: his own language
+        self.assertEqual(r.data["language"], "BN")
+        self.assertEqual(self.raise_(language="XX").status_code, 400)

@@ -63,9 +63,16 @@ def can_record(user, site):
     return user.role in RECORD_ROLES and _site_ok(user, site)
 
 
+def _other_pms(w):
+    return [u for u in w.site.current_pms() if u.id != w.raised_by_id]
+
+
 def can_approve(user, w):
-    """The site's PM (any co-PM); the Director where a site has no PM, and
-    for head office; Admin. Never the person who raised it."""
+    """The site's PM (any co-PM); the Director where a site has no PM, for
+    head office, and where the site's only PM raised it himself; Admin.
+    Never the person who raised it. (A warning the PM raised used to wait
+    for nobody: he could not approve his own, and the Director only stood
+    in where there was no PM — owner 2026-10-26.)"""
     if user.id == w.raised_by_id:
         return False
     if user.role == "ADMIN":
@@ -73,7 +80,7 @@ def can_approve(user, w):
     if user.role == "PM":
         return w.site.is_current_pm(user)
     if user.role == "DIRECTOR":
-        return w.site.is_head_office or not w.site.current_pms()
+        return w.site.is_head_office or not _other_pms(w)
     return False
 
 
@@ -160,7 +167,13 @@ def _clean(data, employee, event_date, exclude_id=None):
                       f"{dict(WarningNotice.Level.choices)[suggested].lower()}"
                       " from his active warnings — give the reason for a "
                       "different level.")
-    return {"offences": offences, "other_offence": other,
+    lang = {}
+    if "language" in data:      # the language the form prints in
+        code = (data.get("language") or "").upper()
+        if code and code not in dict(LANGUAGES):
+            return None, "Pick a language from the list."
+        lang = {"language": "" if code == "EN" else code}
+    return {**lang, "offences": offences, "other_offence": other,
             "what_happened": what,
             "corrective_action": (data.get("corrective_action")
                                   or "").strip(),
@@ -182,11 +195,10 @@ def raise_warning(*, user, employee, site, event_date, data, incident=None):
         return None, err
     from .numbering import next_ref
     with transaction.atomic():
+        fields.setdefault("language", employee.preferred_language or "")
         w = WarningNotice(employee=employee, site=site, incident=incident,
                           event_date=event_date, raised_by=user,
-                          form_rev=FORM_REV,
-                          language=employee.preferred_language or "",
-                          **fields)
+                          form_rev=FORM_REV, **fields)
         w.ref = next_ref("WN", site)
         w.save()
     audit("warning_notice", w.id, "WARNING_RAISED", actor=user,
@@ -335,10 +347,15 @@ def _add_months(day, months):
 
 def _approvers(w):
     from .notify import _role_users
-    who = w.site.current_pms()
+    who = _other_pms(w)
     if not who or w.site.is_head_office:
         who = list(_role_users("DIRECTOR"))
     return [u for u in who if u.id != w.raised_by_id]
+
+
+def approver_names(w):
+    """Who the warning waits for, for the screen."""
+    return ", ".join((u.get_full_name() or u.username) for u in _approvers(w))
 
 
 def _notify_approvers(w):

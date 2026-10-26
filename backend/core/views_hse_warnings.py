@@ -46,6 +46,10 @@ def _row(w, user, full=False):
         "active_until": w.active_until, "form_rev": w.form_rev,
         "removal_batch": w.removal_batch_id,
         "cancel_reason": w.cancel_reason,
+        "language": w.language or "",
+        "language_label": dict(svc.LANGUAGES).get(w.language or "", "English"),
+        "waiting_for": (svc.approver_names(w) if w.status == "PENDING"
+                        else ""),
         "can_decide": w.status == "PENDING" and svc.can_approve(user, w),
         "can_edit": (w.status in ("PENDING", "RETURNED")
                      and (user.id == w.raised_by_id

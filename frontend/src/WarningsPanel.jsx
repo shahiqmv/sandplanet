@@ -48,6 +48,12 @@ function WarningFields({ meta, f, setF, suggested }) {
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, alignItems: "flex-end" }}>
         <label style={lbl}>Supervisor
           <input style={{ ...inputStyle, width: 200 }} value={f.supervisor} onChange={(e) => setF({ ...f, supervisor: e.target.value })} /></label>
+        <label style={lbl}>Form printed in
+          <select style={{ ...inputStyle, width: 200 }} value={f.language ?? ""} onChange={(e) => setF({ ...f, language: e.target.value })}>
+            <option value="">English only</option>
+            {meta.languages.filter((l) => l.code !== "EN").map((l) => (
+              <option key={l.code} value={l.code}>{l.label}{meta.translated.includes(l.code) ? " + English" : " (English form, explain verbally)"}</option>))}
+          </select></label>
         <label style={lbl}>Level
           <select style={{ ...inputStyle, width: 230 }} value={f.level || suggested || ""} onChange={(e) => setF({ ...f, level: e.target.value })}>
             {meta.levels.map((l) => <option key={l.code} value={l.code}>{l.label}{l.code === suggested ? " (suggested)" : ""}</option>)}
@@ -78,6 +84,9 @@ function RaiseForm({ site, sites, meta, onSaved, onCancel, preset }) {
       .catch((e) => { setWorkers([]); setError(e.message); });
   }, [siteId, day]);
   const worker = workers.find((w) => String(w.id) === String(emp));
+  useEffect(() => {      // a preset worker (from an incident) brings his language
+    if (worker && f.language === undefined) setF((x) => ({ ...x, language: worker.language || "" }));
+  }, [worker]); // eslint-disable-line react-hooks/exhaustive-deps
   async function save(e) {
     e.preventDefault(); setBusy(true); setError(null);
     try {
@@ -105,7 +114,7 @@ function RaiseForm({ site, sites, meta, onSaved, onCancel, preset }) {
       <div style={{ maxHeight: 170, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, marginTop: 6, background: "var(--paper)" }}>
         {shown.map((w) => (
           <label key={w.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 8px", fontSize: 13, borderBottom: "1px solid var(--line)", background: String(emp) === String(w.id) ? "var(--sky-soft)" : undefined }}>
-            <input type="radio" name="wn-emp" checked={String(emp) === String(w.id)} onChange={() => { setEmp(w.id); setF({ ...f, level: "" }); }} />
+            <input type="radio" name="wn-emp" checked={String(emp) === String(w.id)} onChange={() => { setEmp(w.id); setF({ ...f, level: "", language: w.language || "" }); }} />
             <b>{w.emp_no}</b> {w.full_name}
             <span style={{ color: "var(--muted)", fontSize: 12 }}>{w.trade}{w.subcontractor ? ` · ${w.subcontractor}` : ""}</span>
             {w.active > 0 && <Chip tone="warn">{w.active} active warning{w.active > 1 ? "s" : ""}</Chip>}
@@ -184,6 +193,7 @@ function WarningCard({ w, meta, onChanged }) {
         {line("Decided by", w.decided_by ? `${w.decided_by} · ${new Date(w.decided_at).toLocaleString()}` : "")}
         {line("PM's note", w.decision_note)}
         {w.level !== w.suggested_level && line("Level reason", `${w.level_reason} (Planet suggested ${meta.levels.find((l) => l.code === w.suggested_level)?.label.toLowerCase()})`)}
+        {line("Form in", w.language_label)}
         {line("Supervisor", w.supervisor)}
         {line("Incident", w.incident_ref)}
         {line("Served", w.served_on ? `${fmtDay(w.served_on)}${w.refused_to_sign ? ` · refused to sign, witness ${w.witness_name}` : ""}` : "")}
@@ -209,6 +219,10 @@ function WarningCard({ w, meta, onChanged }) {
           <a href={`/api/v1/hse-warnings/${w.id}/pdf`} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>⬇ Print the form (F02)</a>)}
         {w.signed_copy_url && <a href={w.signed_copy_url} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>Signed copy</a>}
       </div>
+      {w.status === "PENDING" && !w.can_decide && (
+        <div style={{ marginTop: 8, color: "var(--amber-fg, #8a5a00)" }}>
+          Waiting for {w.waiting_for || "the site PM"} to approve it.</div>
+      )}
       {w.can_decide && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
           <input style={{ ...inputStyle, flex: 1, minWidth: 220 }} placeholder="Note (required to return it)" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -217,7 +231,7 @@ function WarningCard({ w, meta, onChanged }) {
         </div>
       )}
       {w.can_edit && !editing && (
-        <div style={{ marginTop: 8 }}><Btn variant="secondary" onClick={() => { setF({ offences: w.offences, other_offence: w.other_offence, what_happened: w.what_happened, corrective_action: w.corrective_action, supervisor: w.supervisor, level: w.level, level_reason: w.level_reason }); setEditing(true); }}>Correct it</Btn></div>
+        <div style={{ marginTop: 8 }}><Btn variant="secondary" onClick={() => { setF({ offences: w.offences, other_offence: w.other_offence, what_happened: w.what_happened, corrective_action: w.corrective_action, supervisor: w.supervisor, level: w.level, level_reason: w.level_reason, language: w.language }); setEditing(true); }}>Correct it</Btn></div>
       )}
       {editing && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
