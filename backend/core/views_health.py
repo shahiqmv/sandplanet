@@ -446,7 +446,10 @@ def employee_health(request, pk):
 PLAN_FIELDS = ("focal_point_backup", "hotline", "hse_lead", "first_aiders",
                "nearest_health_centre", "travel_time", "resort_clinic",
                "male_hospitals", "boat_arrangement", "sick_bay",
-               "emergency_contacts")
+               "emergency_contacts",
+               # the site safety box the induction prints (SP-HSE-F01)
+               "safety_officer", "site_engineer_contact", "admin_officer",
+               "assembly_point", "resort_rules")
 
 
 def _plan(p):

@@ -415,6 +415,11 @@ export default function AttendancePage({ site, me, onClose,
             `${u.full_name || `ID ${u.device_user_id}`} (${u.punched_at} — ${
               u.why})`).join(" · ")}
         </p>)}
+      {grid?.device_not_inducted?.length > 0 && (
+        <p style={{ fontSize: 12.5, color: "#8a5a00", marginTop: 8 }}>
+          At the gate with no safety induction on this site:{" "}
+          {grid.device_not_inducted.join(" · ")} — run an induction (HSE → Inductions).
+        </p>)}
       {grid?.locked && (
         <div style={{ background: "#fdeceb", borderRadius: 8,
                       padding: "8px 12px", fontSize: 13, display: "flex",
@@ -483,6 +488,13 @@ export default function AttendancePage({ site, me, onClose,
                       👤</span>}
                 {row.full_name}
                 <RepeatChip n={row.repeat_sick} />
+                {row.not_inducted && (
+                  <span title="No safety induction on this site — add him to an induction session (HSE → Inductions). Marking him is still allowed."
+                        style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700,
+                                 color: "#8a5a00", background: "#fff3d6",
+                                 borderRadius: 999, padding: "1px 7px",
+                                 whiteSpace: "nowrap" }}>
+                    Not inducted</span>)}
                 {row.open_health_case && (
                   <span title="He has an open health case — see the Health page"
                         style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 700,

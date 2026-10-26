@@ -544,6 +544,12 @@ const PLAN_FIELDS = [
   ["boat_arrangement", "Emergency boat — ours, the resort's or contracted; leaves within 30 minutes at any hour"],
   ["sick_bay", "Sick bay — separate, ventilated, bed, water, toilet nearby"],
   ["emergency_contacts", "Emergency contacts (ambulance, Coast Guard, police 119, Director escalation)"],
+  // the site box printed on the safety induction (SP-HSE-F01)
+  ["safety_officer", "Safety Officer — name and phone (printed on the safety induction)"],
+  ["site_engineer_contact", "Site Engineer — name and phone (printed on the safety induction)"],
+  ["admin_officer", "Admin Officer — name and phone (printed on the safety induction)"],
+  ["assembly_point", "Emergency assembly point (printed on the safety induction)"],
+  ["resort_rules", "Resort rules — restricted areas, guest areas, work hours (printed on the safety induction)"],
 ];
 
 function PlanTab({ me, siteId, sites }) {

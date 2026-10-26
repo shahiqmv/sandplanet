@@ -7863,6 +7863,75 @@ class ToolboxAttendee(models.Model):
         return self.name or "—"
 
 
+def induction_sheet_path(instance, filename):
+    """Unique per record — S3 file_overwrite would otherwise let two signed
+    sheets of the same name replace each other."""
+    import uuid
+    return (f"hse/inductions/{instance.ref or 'new'}/"
+            f"{uuid.uuid4().hex[:12]}.pdf")
+
+
+class InductionSession(models.Model):
+    """A safety induction given on a site, SP-HSE-F01 (owner 2026-10-26, HSE
+    forms brief C.1). Printed with the men picked from those not yet
+    inducted on the site, signed by them, the trainer and the verifier, and
+    uploaded — the upload gives each man his induction on this site. The PM
+    verifies the session."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Being prepared"
+        PRINTED = "PRINTED", "Printed — signed copy to upload"
+        SIGNED = "SIGNED", "Signed copy uploaded — PM to verify"
+        VERIFIED = "VERIFIED", "Verified"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    ref = models.CharField(max_length=24, unique=True)
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="induction_sessions")
+    held_on = models.DateField()
+    language = models.CharField(max_length=2, blank=True)   # of training
+    # anyone, including the resort's or a subcontractor's safety officer
+    trainer_name = models.CharField(max_length=120)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    # topic numbers the trainer marked Not Applicable on the signed sheet
+    topics_na = models.JSONField(default=list, blank=True)
+    form_rev = models.CharField(max_length=20, default="F01 Rev 0")
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    printed_at = models.DateTimeField(null=True, blank=True)
+    signed_copy = models.FileField(upload_to=induction_sheet_path, null=True,
+                                   blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    verified_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-held_on", "-id"]
+
+    def __str__(self):
+        return f"{self.ref} {self.site.code} {self.held_on}"
+
+
+class InductionAttendee(models.Model):
+    session = models.ForeignKey(InductionSession, on_delete=models.CASCADE,
+                                related_name="attendees")
+    employee = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                 related_name="+")
+    # unticked when uploading if he did not sign on the day
+    attended = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [models.UniqueConstraint(
+            fields=["session", "employee"], name="uniq_induction_attendee")]
+
+
 class SafetyInduction(models.Model):
     """A worker was inducted onto a site before starting. One per worker per
     site; re-inducting supersedes rather than duplicates."""
@@ -7877,6 +7946,10 @@ class SafetyInduction(models.Model):
     topics = models.TextField(blank=True)
     valid_until = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    # the signed session it came from (SP-HSE-F01); blank for one recorded
+    # by hand before sessions existed
+    session = models.ForeignKey(InductionSession, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="records")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -9872,6 +9945,14 @@ class SiteMedicalPlan(models.Model):
     boat_arrangement = models.TextField(blank=True)
     sick_bay = models.TextField(blank=True)
     emergency_contacts = models.TextField(blank=True)
+    # The site safety box the safety induction prints (SP-HSE-F01, owner
+    # 2026-10-26): kept beside the medical plan so the resort clinic and the
+    # hotline are not entered twice.
+    safety_officer = models.CharField(max_length=160, blank=True)
+    site_engineer_contact = models.CharField(max_length=160, blank=True)
+    admin_officer = models.CharField(max_length=160, blank=True)
+    assembly_point = models.TextField(blank=True)
+    resort_rules = models.TextField(blank=True)
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL,
                                    null=True, blank=True, related_name="+")
     updated_at = models.DateTimeField(auto_now=True)

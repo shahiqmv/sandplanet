@@ -573,6 +573,11 @@ def daily_summary(today=None):
                    else "")
                 + (f", OUTBREAK: {', '.join(a['label'] for a in s['alerts'])}"
                    if s["alerts"] else ""))
+        # men working with no induction on this site (SP-HSE-F01)
+        from .hse_inductions import present_not_inducted
+        uninducted = present_not_inducted(site, today)
+        if uninducted:
+            text += f"; {uninducted} present, not inducted"
         lines.append(text)
         for pm in site.current_pms():
             if pm.is_active:

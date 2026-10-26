@@ -1,0 +1,108 @@
+{% load brand %}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  body { font-family: Helvetica, Arial, "Noto Sans Bengali", "Bangla Sangam MN", sans-serif; }
+  .bn { color: #4a5763; font-size: 7.6pt; font-weight: 400; }
+  h2 .bn { color: #4a5763; font-size: 8pt; }
+  .stop { border: 0.8px solid #e0a800; background: #fff7e0; padding: 5px 8px;
+          margin: 4px 0 8px; font-weight: 700; color: #8a5a00; font-size: 8.6pt; }
+  .stop .bn { color: #8a5a00; font-weight: 400; }
+  table.topics td { vertical-align: top; }
+  table.topics td.no { width: 7%; font-size: 13pt; font-weight: 800;
+                       color: {% brand "primary" %}; text-align: center; }
+  table.topics td.done { width: 11%; text-align: left; font-size: 8pt; white-space: nowrap; }
+  .ttl { font-weight: 800; color: {% brand "primary" %}; font-size: 9.6pt; }
+  ul.b { margin: 3px 0 0; padding-left: 13px; }
+  ul.b li { margin-bottom: 2px; font-size: 8.2pt; }
+  ul.b li .bn { display: block; }
+  tr { page-break-inside: avoid; }
+  .tick { display: inline-block; width: 9px; height: 9px; border: 0.8px solid #1c1c1c;
+          margin-right: 4px; text-align: center; line-height: 9px; font-size: 8pt;
+          font-weight: 800; vertical-align: -1px; }
+  table.part td { height: 19px; font-size: 8pt; }
+  table.sig td { border: none; vertical-align: top; width: 50%; padding: 2px 6px; font-size: 8pt; }
+  .sigline { border-bottom: 0.8px solid #1c1c1c; height: 28px; margin: 2px 0 2px; }
+  .small { font-size: 7.4pt; color: #6a7681; }
+  .txt { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="SP-HSE-F01 · Rev 0" %}
+{% include "pdf/_letterhead.html" with title="SAFETY INDUCTION" subline="Health, Safety & Environment · Form SP-HSE-F01 · Rev 0" %}
+{% if bn %}<div style="text-align:right;margin:-3mm 0 3mm" class="bn">{{ c.TITLE_BN }}</div>{% endif %}
+
+<table class="kv">
+  <tr><td class="k">Ref No.</td><td><strong>{{ s.ref }}</strong></td>
+      <td class="k">Project / Site{% if bn %}<br><span class="bn">প্রকল্প / সাইট</span>{% endif %}</td><td>{{ site.code }} — {{ site.name }}</td></tr>
+  <tr><td class="k">Date of training{% if bn %}<br><span class="bn">প্রশিক্ষণের তারিখ</span>{% endif %}</td><td>{{ s.held_on|date:"d M Y" }}</td>
+      <td class="k">Employer{% if bn %}<br><span class="bn">নিয়োগকর্তা (স্যান্ড প্ল্যানেট বা সাবকন্ট্রাক্টর)</span>{% endif %}</td><td>{{ employers }}</td></tr>
+  <tr><td class="k">Trade{% if bn %}<br><span class="bn">কাজের ধরন / ট্রেড</span>{% endif %}</td><td>{{ trades|default:"—" }}</td>
+      <td class="k">Language of training{% if bn %}<br><span class="bn">প্রশিক্ষণের ভাষা</span>{% endif %}</td><td>{{ language_label }}</td></tr>
+  <tr><td class="k">Trained by{% if bn %}<br><span class="bn">প্রশিক্ষণ প্রদানকারী</span>{% endif %}</td><td colspan="3">{{ s.trainer_name }}</td></tr>
+</table>
+
+<div class="stop">{{ c.NO_START.0 }}{% if bn %}<br><span class="bn">{{ c.NO_START.1 }}</span>{% endif %}</div>
+
+<table class="topics">
+  <thead><tr><th style="width:7%">No.{% if bn %}<br><span class="bn">ক্রমিক</span>{% endif %}</th>
+      <th style="text-align:left">Training topic{% if bn %}<br><span class="bn">প্রশিক্ষণের বিষয়</span>{% endif %}</th>
+      <th style="width:11%">Done{% if bn %}<br><span class="bn">সম্পন্ন</span>{% endif %}</th></tr></thead>
+  <tbody>
+  {% for t in topics %}
+  <tr><td class="no">{{ t.no }}</td>
+      <td><div class="ttl">{{ t.en }}</div>{% if bn %}<div class="bn">{{ t.bn }}</div>{% endif %}
+        <ul class="b">{% for en, bntext in t.bullets %}<li>{{ en }}{% if bn %}<span class="bn">{{ bntext }}</span>{% endif %}</li>{% endfor %}</ul></td>
+      <td class="done"><div><span class="tick"></span>✓ Done</div><div style="margin-top:3px"><span class="tick">{% if t.na %}✓{% endif %}</span>N/A</div></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<div style="page-break-inside: avoid">
+<h2>SITE-SPECIFIC INFORMATION{% if bn %} <span class="bn">/ সাইট-নির্দিষ্ট তথ্য</span>{% endif %}</h2>
+<div class="small" style="margin:-2px 0 4px">From the site's medical plan in Planet. Explain each item to the participants.</div>
+<table class="kv">
+  <tr><td class="k" style="width:34%">Safety Officer · name and phone{% if bn %}<br><span class="bn">সেফটি অফিসার · নাম ও ফোন</span>{% endif %}</td><td>{{ plan.safety_officer|default:"" }}</td></tr>
+  <tr><td class="k">Site Engineer · name and phone{% if bn %}<br><span class="bn">সাইট ইঞ্জিনিয়ার · নাম ও ফোন</span>{% endif %}</td><td>{{ plan.site_engineer_contact|default:"" }}</td></tr>
+  <tr><td class="k">Admin Officer · name and phone{% if bn %}<br><span class="bn">প্রশাসনিক কর্মকর্তা · নাম ও ফোন</span>{% endif %}</td><td>{{ plan.admin_officer|default:"" }}</td></tr>
+  <tr><td class="k">Resort clinic / doctor · phone{% if bn %}<br><span class="bn">রিসোর্ট ক্লিনিক / ডাক্তার · ফোন</span>{% endif %}</td><td class="txt">{{ plan.resort_clinic|default:"" }}{% if plan.hotline %}
+Site sickness hotline: {{ plan.hotline }}{% endif %}</td></tr>
+  <tr><td class="k">Emergency assembly point{% if bn %}<br><span class="bn">জরুরি সমাবেশস্থল</span>{% endif %}</td><td class="txt">{{ plan.assembly_point|default:"" }}</td></tr>
+  <tr><td class="k">Resort-specific rules (restricted areas, guest areas, work hours){% if bn %}<br><span class="bn">রিসোর্টের নিজস্ব নিয়ম (নিষিদ্ধ এলাকা, অতিথি এলাকা, কাজের সময়)</span>{% endif %}</td><td class="txt" style="height:40px">{{ plan.resort_rules|default:"" }}</td></tr>
+</table>
+</div>
+
+<div style="page-break-inside: avoid">
+<h2>DECLARATION{% if bn %} <span class="bn">/ ঘোষণা</span>{% endif %}</h2>
+<div style="font-size:8.4pt">{{ c.DECLARATION.0 }}</div>
+{% if bn %}<div class="bn">{{ c.DECLARATION.1 }}</div>{% endif %}
+</div>
+
+<h2>PARTICIPANTS{% if bn %} <span class="bn">/ অংশগ্রহণকারী ও উপস্থিতি</span>{% endif %}</h2>
+<table class="part">
+  <thead><tr><th style="width:5%">No.</th><th style="text-align:left">Name{% if bn %} <span class="bn">/ নাম</span>{% endif %}</th>
+      <th style="width:13%">ID{% if bn %} <span class="bn">/ আইডি</span>{% endif %}</th>
+      <th style="width:24%">Employer / Trade{% if bn %} <span class="bn">/ নিয়োগকর্তা / ট্রেড</span>{% endif %}</th>
+      <th style="width:20%">Signature{% if bn %} <span class="bn">/ স্বাক্ষর</span>{% endif %}</th>
+      <th style="width:10%">Language{% if bn %} <span class="bn">/ ভাষা</span>{% endif %}</th></tr></thead>
+  <tbody>
+  {% for r in rows %}<tr><td class="num">{{ r.n }}</td><td>{{ r.name|default:"" }}</td><td>{{ r.id|default:"" }}</td>
+      <td>{% if r.employer %}{{ r.employer }}{% if r.trade %} / {{ r.trade }}{% endif %}{% endif %}</td><td></td><td>{{ r.language|default:"" }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>SIGN-OFF{% if bn %} <span class="bn">/ স্বাক্ষর</span>{% endif %}</h2>
+<table class="sig"><tr>
+  <td><strong>Trained by</strong>{% if bn %} <span class="bn">/ প্রশিক্ষণ প্রদানকারী</span>{% endif %}
+      <div class="sigline"></div><span class="small">Signature{% if bn %} / স্বাক্ষর{% endif %}</span><br>
+      Name: {{ s.trainer_name }}<br>Date: {{ s.held_on|date:"d M Y" }}</td>
+  <td><strong>Verified by</strong> (Safety Officer / Project Manager){% if bn %}<br><span class="bn">যাচাইকারী (সেফটি অফিসার / প্রজেক্ট ম্যানেজার)</span>{% endif %}
+      <div class="sigline"></div><span class="small">Signature{% if bn %} / স্বাক্ষর{% endif %}</span><br>
+      Name: ______________________________<br>Date: ____ / ____ / ________</td>
+</tr></table>
+<div class="small" style="margin-top:6px">{{ c.FILING }}</div>
+<div class="small" style="text-align:right">Printed {{ printed_at|date:"d M Y H:i" }} from Planet · {{ s.form_rev }}</div>
+</body>
+</html>

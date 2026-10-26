@@ -795,6 +795,11 @@ def attendance_grid(request):
     open_cases = dict(_health.HealthCase.objects.filter(
         employee_id__in=[e.id for e in roster], status="OPEN")
         .values_list("employee_id", "id"))
+    # "Not inducted" beside the name (SP-HSE-F01, owner 2026-10-26): a flag,
+    # never a refusal — attendance is the record of days paid
+    from . import hse_inductions
+    not_inducted = hse_inductions.not_inducted_ids(
+        site, day, [e.id for e in roster])
     for employee in roster:
         att = existing.get(employee.id)
         shift = smap.get(employee.id)
@@ -830,6 +835,7 @@ def attendance_grid(request):
             "absence_note": att.absence_note if att else "",
             "repeat_sick": sick_flags.get(employee.id, 0),
             "open_health_case": open_cases.get(employee.id),
+            "not_inducted": employee.id in not_inducted,
             "saved": att is not None,
             # Here only because he carries a mark — no longer on the site's
             # roster for this day. Mark him OFF to take the record back.
@@ -843,6 +849,11 @@ def attendance_grid(request):
         "locked": _month_locked(site.id, day),
         "has_devices": device is not None,
         "device_unmatched": device["unmatched"] if device else [],
+        # gate punches by men with no induction on this site are listed
+        # with the strangers (HSE forms brief C.1)
+        "device_not_inducted": ([r["emp_no"] + " " + r["full_name"]
+                                 for r in rows if r["not_inducted"]
+                                 and r["device"]] if device else []),
         "shifts": [{"id": s.id, "name": s.name,
                     "start": s.start.strftime("%H:%M"),
                     "end": s.end.strftime("%H:%M"),

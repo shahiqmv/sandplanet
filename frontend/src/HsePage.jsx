@@ -5,6 +5,7 @@ import { ToolboxTab, TrainingTab, WorkerRecordsTab } from "./HseRecords.jsx";
 import { AssessmentsTab, InspectionsTab, PermitsTab } from "./HseWork.jsx";
 import Discussion from "./Discussion.jsx";
 import HsePhotos, { PhotoPicker, ReportButton, uploadPhotos } from "./HsePhotos.jsx";
+import InductionsPanel from "./InductionsPanel.jsx";
 
 // Safety (HSE). The app's whole safety functionality used to be one checkbox
 // on the daily report that notified nobody, so "how many incidents last
@@ -91,8 +92,8 @@ function Stat({ value, label, alarm }) {
   );
 }
 
-export default function HsePage({ me, sites, site }) {
-  const [tab, setTab] = useState("incidents");
+export default function HsePage({ me, sites, site, initialTab, inductionId }) {
+  const [tab, setTab] = useState(initialTab || "incidents");
   const [stats, setStats] = useState(null);
   const [rows, setRows] = useState([]);
   const [actions, setActions] = useState([]);
@@ -167,6 +168,7 @@ export default function HsePage({ me, sites, site }) {
           ["permits", "Permits"],
           ["inspections", "Inspections"],
           ["assessments", "Risk assessments"],
+          ["inductions", "Inductions"],
           ["toolbox", "Toolbox talks"],
           ["training", "Competency"],
           ["workers", "Worker records"]].map(
@@ -265,6 +267,11 @@ export default function HsePage({ me, sites, site }) {
 
       {tab === "toolbox" && (
         <ToolboxTab me={me} sites={sites} siteFilter={siteFilter} />
+      )}
+
+      {tab === "inductions" && (
+        <InductionsPanel me={me} sites={sites} siteFilter={siteFilter}
+                         openId={inductionId} />
       )}
 
       {tab === "training" && <TrainingTab siteFilter={siteFilter} />}

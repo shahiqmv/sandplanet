@@ -530,6 +530,7 @@ export default function App() {
   const [fineId, setFineId] = useState(null);   // a fine opened from My Tasks
   const [warningId, setWarningId] = useState(null);   // a warning notice, likewise
   const [healthCaseId, setHealthCaseId] = useState(null);  // a case from My Tasks
+  const [inductionId, setInductionId] = useState(null);    // an induction session from My Tasks
   const [pscOpenId, setPscOpenId] = useState(null);  // a schedule opened by ref
   const [healthSite, setHealthSite] = useState(null);      // from a site dashboard
   // Set when a voucher is opened straight from My Tasks, so the vouchers page
@@ -960,6 +961,14 @@ export default function App() {
         setOpenSite(null);
         setHoPage("warnings");
       }
+      return;
+    }
+    // An induction session lives on the HSE page's Inductions tab.
+    if (item.doc_type === "INDUCTION") {
+      setInductionId(item.induction_id);
+      setDocView(null);
+      setOpenSite(null);
+      setHoPage("hse");
       return;
     }
     // A fine is not a Document either. The site's PM decides it on the
@@ -1529,7 +1538,9 @@ export default function App() {
           {/* Open to every role — see the nav note: reporting must not be
               gated. The API scopes the register to the user's own sites. */}
           {!docView && !openSite && hoPage === "hse" && (
-            <HsePage me={me} sites={sites} />
+            <HsePage me={me} sites={sites} key={inductionId || "hse"}
+                     initialTab={inductionId ? "inductions" : undefined}
+                     inductionId={inductionId} />
           )}
           {!docView && !openSite && hoPage === "health" && (
             <HealthPage me={me} sites={sites} key={healthSite?.id || "all"}

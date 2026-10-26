@@ -1259,6 +1259,21 @@ def pending_groups(user):
             "hint": (f"{w.employee.emp_no} {w.employee.full_name} · "
                      f"{w.get_level_display()}")[:120],
         } for w in hse_warnings.pending_for(user)[:50]])
+    # Safety inductions (SP-HSE-F01): the PM verifies a signed session; a
+    # printed sheet with no signed copy after 48 hours is the site's to chase.
+    from . import hse_inductions
+    add("To verify — safety inductions", [{
+        "ref": s.ref, "induction_id": s.id, "doc_type": "INDUCTION",
+        "site_code": s.site.code, "project_code": None,
+        "doc_date": s.held_on, "status": "SIGNED",
+        "hint": f"Signed sheet uploaded · trained by {s.trainer_name}"[:120],
+    } for s in hse_inductions.to_verify(user)[:50]])
+    add("To upload — signed induction sheets", [{
+        "ref": s.ref, "induction_id": s.id, "doc_type": "INDUCTION",
+        "site_code": s.site.code, "project_code": None,
+        "doc_date": s.held_on, "status": "PRINTED",
+        "hint": "Printed over 48 hours ago — upload the signed copy",
+    } for s in hse_inductions.unsigned_for(user)[:50]])
     add("To serve — warning notices (signed copy not uploaded)", [{
         "ref": w.ref, "warning_id": w.id, "doc_type": "WARNING",
         "site_code": w.site.code, "project_code": None,

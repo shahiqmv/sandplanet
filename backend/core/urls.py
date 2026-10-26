@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
-    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_hse_warnings as hse_warnings_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_discussion as discussion_api, views_bills as bills_api, views_cameras as cameras_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_hse_warnings as hse_warnings_api, views_hse_inductions as hse_inductions_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_discussion as discussion_api, views_bills as bills_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
@@ -825,6 +825,17 @@ urlpatterns = [
     path("ledger/reports/pnl", ledger_api.report_pnl, name="ledger-pnl"),
     path("ledger/reports/balance-sheet", ledger_api.report_balance_sheet,
          name="ledger-balance-sheet"),
+    path("hse-inductions", hse_inductions_api.sessions, name="hse-inductions"),
+    path("hse-inductions/meta", hse_inductions_api.induction_meta,
+         name="hse-induction-meta"),
+    path("hse-inductions/candidates", hse_inductions_api.induction_candidates,
+         name="hse-induction-candidates"),
+    path("hse-inductions/<int:pk>", hse_inductions_api.session_detail,
+         name="hse-induction"),
+    path("hse-inductions/<int:pk>/pdf", hse_inductions_api.session_pdf,
+         name="hse-induction-pdf"),
+    path("hse-inductions/<int:pk>/<str:action>",
+         hse_inductions_api.session_action, name="hse-induction-action"),
     path("hse-warnings", hse_warnings_api.warnings, name="hse-warnings"),
     path("hse-warnings/meta", hse_warnings_api.warning_meta,
          name="hse-warning-meta"),
