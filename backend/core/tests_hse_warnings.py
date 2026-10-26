@@ -184,3 +184,36 @@ class WarningNoticeTests(TestCase):
         # HR sees every site
         self.assertEqual(len(self.as_(self.hr).get(
             "/api/v1/hse-warnings").data["results"]), 1)
+
+
+class FormLanguageTests(WarningNoticeTests):
+    """The warning and induction forms print English and, under it, Bengali,
+    Tamil, Sinhala, Hindi or Nepali (owner 2026-10-26); any other language
+    prints English and says to explain it verbally."""
+
+    def test_every_language_file_has_every_line(self):
+        from . import form_i18n
+        en = form_i18n.english()
+        for lang in form_i18n.TRANSLATED:
+            words = form_i18n.strings(lang)
+            self.assertEqual(set(words), set(en), lang)
+            self.assertEqual([k for k, v in words.items() if not v.strip()],
+                             [], lang)
+
+    def test_the_warning_prints_in_each_language(self):
+        import fitz
+
+        from . import form_i18n
+        wid = self.raise_().data["id"]
+        self.approve(wid)
+        w = WarningNotice.objects.get(pk=wid)
+        for lang in (*form_i18n.TRANSLATED, "DV"):
+            w.language = lang
+            w.save(update_fields=["language"])
+            pdf = self.as_(self.se).get(f"/api/v1/hse-warnings/{wid}/pdf")
+            self.assertEqual(pdf.status_code, 200, lang)
+            text = "".join(p.get_text() for p in fitz.open(
+                stream=pdf.content, filetype="pdf"))
+            self.assertIn("Not wearing required PPE", text)
+            self.assertEqual("explain the warning to him verbally" in text,
+                             lang == "DV", lang)

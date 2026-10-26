@@ -221,7 +221,7 @@ def upload_signed(s, user, files, absent_ids=(), topics_na=()):
         s.status = "SIGNED"
         s.save()
         s.attendees.filter(employee_id__in=absent).update(attended=False)
-        topics = ", ".join(f"{no} {en}" for no, en, _bn, _b in content.TOPICS
+        topics = ", ".join(f"{no} {en}" for no, en, _b in content.TOPICS
                            if no not in na)
         for a in s.attendees.filter(attended=True):
             SafetyInduction.objects.create(

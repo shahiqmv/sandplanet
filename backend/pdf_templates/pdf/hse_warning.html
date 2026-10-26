@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 {% include "pdf/_styles.html" %}
 <style>
-  /* Bengali beside English: any installed Bengali face is picked up per
-     glyph (Noto Sans Bengali on the server) */
-  body { font-family: Helvetica, Arial, "Noto Sans Bengali", "Bangla Sangam MN", sans-serif; }
-  .bn { color: #4a5763; font-size: 7.6pt; font-weight: 400; }
-  h2 .bn { color: #4a5763; font-size: 8pt; }
+  /* the worker's language under the English: the installed face for each
+     script is picked up per glyph (Noto on the server) */
+  body { font-family: Helvetica, Arial, "Noto Sans Bengali", "Noto Sans Tamil",
+         "Noto Sans Sinhala", "Noto Sans Devanagari", "Bangla Sangam MN",
+         "Tamil Sangam MN", "Sinhala Sangam MN", "Devanagari Sangam MN", sans-serif; }
+  .loc { color: #4a5763; font-size: 7.6pt; font-weight: 400; line-height: 1.5; }
+  h2 .loc { color: #4a5763; font-size: 8pt; }
   .tick { display: inline-block; width: 9px; height: 9px; border: 0.8px solid #1c1c1c;
           margin-right: 5px; text-align: center; line-height: 9px; font-size: 8pt;
           font-weight: 800; vertical-align: -1px; }
@@ -29,75 +31,75 @@
 <body>
 {% include "pdf/_footer.html" with footer_doc="SP-HSE-F02 · Rev 0" %}
 {% include "pdf/_letterhead.html" with title="EMPLOYEE WARNING NOTICE" subline="Health, Safety & Environment · Form SP-HSE-F02 · Rev 0" %}
-{% if bn %}<div style="text-align:right;margin:-3mm 0 3mm" class="bn">কর্মচারী সতর্কীকরণ নোটিশ</div>{% endif %}
+{% if L %}<div style="text-align:right;margin:-3mm 0 3mm" class="loc">{{ L.wn_title }}</div>{% endif %}
 
 <table class="kv">
-  <tr><td class="k">Ref No.{% if bn %}<br><span class="bn">রেফারেন্স নং</span>{% endif %}</td><td><strong>{{ w.ref }}</strong></td>
-      <td class="k">Project / Site{% if bn %}<br><span class="bn">প্রকল্প / সাইট</span>{% endif %}</td>
+  <tr><td class="k">Ref No.{% if L %}<br><span class="loc">{{ L.ref_no }}</span>{% endif %}</td><td><strong>{{ w.ref }}</strong></td>
+      <td class="k">Project / Site{% if L %}<br><span class="loc">{{ L.project_site }}</span>{% endif %}</td>
       <td>{% if project %}{{ project.code }} · {% endif %}{{ site.code }} — {{ site.name }}</td>
-      <td class="k">Date{% if bn %}<br><span class="bn">তারিখ</span>{% endif %}</td><td>{{ w.event_date|date:"d M Y" }}</td></tr>
-  <tr><td class="k">Employee name{% if bn %}<br><span class="bn">কর্মচারীর নাম</span>{% endif %}</td><td>{{ emp.full_name }}</td>
-      <td class="k">Employee ID{% if bn %}<br><span class="bn">আইডি</span>{% endif %}</td><td>{{ emp.emp_no }}</td>
-      <td class="k">Job title / Trade{% if bn %}<br><span class="bn">পদবি / ট্রেড</span>{% endif %}</td><td>{{ emp.job_title|default:"" }}{% if emp.job_title and emp.job_category %} · {% endif %}{{ emp.job_category.name|default:"" }}</td></tr>
-  <tr><td class="k">Nationality{% if bn %}<br><span class="bn">জাতীয়তা</span>{% endif %}</td><td>{{ emp.nationality|default:"" }}</td>
-      <td class="k">Subcontractor{% if bn %}<br><span class="bn">সাবকন্ট্রাক্টরের নাম</span>{% endif %}</td><td>{{ subcontractor|default:"—" }}</td>
-      <td class="k">Supervisor{% if bn %}<br><span class="bn">সুপারভাইজার</span>{% endif %}</td><td>{{ w.supervisor|default:"" }}</td></tr>
+      <td class="k">Date{% if L %}<br><span class="loc">{{ L.date }}</span>{% endif %}</td><td>{{ w.event_date|date:"d M Y" }}</td></tr>
+  <tr><td class="k">Employee name{% if L %}<br><span class="loc">{{ L.employee_name }}</span>{% endif %}</td><td>{{ emp.full_name }}</td>
+      <td class="k">Employee ID{% if L %}<br><span class="loc">{{ L.employee_id }}</span>{% endif %}</td><td>{{ emp.emp_no }}</td>
+      <td class="k">Job title / Trade{% if L %}<br><span class="loc">{{ L.job_title_trade }}</span>{% endif %}</td><td>{{ emp.job_title|default:"" }}{% if emp.job_title and emp.job_category %} · {% endif %}{{ emp.job_category.name|default:"" }}</td></tr>
+  <tr><td class="k">Nationality{% if L %}<br><span class="loc">{{ L.nationality }}</span>{% endif %}</td><td>{{ emp.nationality|default:"" }}</td>
+      <td class="k">Subcontractor{% if L %}<br><span class="loc">{{ L.subcontractor }}</span>{% endif %}</td><td>{{ subcontractor|default:"—" }}</td>
+      <td class="k">Supervisor{% if L %}<br><span class="loc">{{ L.supervisor }}</span>{% endif %}</td><td>{{ w.supervisor|default:"" }}</td></tr>
 </table>
 <div style="margin:-2px 0 6px;font-size:8.2pt">
   Employer: <span class="tick">{% if not is_sub %}✓{% endif %}</span>Sand Planet &nbsp;&nbsp;
   <span class="tick">{% if is_sub %}✓{% endif %}</span>Subcontractor
-  {% if bn %}<span class="bn"> &nbsp;/&nbsp; নিয়োগকর্তা: স্যান্ড প্ল্যানেট বা সাবকন্ট্রাক্টর</span>{% endif %}
+  {% if L %}<span class="loc"> &nbsp;/&nbsp; {{ L.employer_choice }}</span>{% endif %}
 </div>
 
-<h2>1. WARNING LEVEL{% if bn %} <span class="bn">/ সতর্কীকরণের ধাপ</span>{% endif %}</h2>
+<h2>1. WARNING LEVEL{% if L %} <span class="loc">/ {{ L.wn_level }}</span>{% endif %}</h2>
 <table class="opts"><tr>
-  <td>{% for l in levels|slice:":2" %}<div><span class="tick">{% if l.ticked %}✓{% endif %}</span>{{ l.en }}{% if bn %}<span class="bn"> / {% if l.code == "VERBAL" %}মৌখিক সতর্কীকরণ (রেকর্ডকৃত){% else %}প্রথম লিখিত সতর্কীকরণ{% endif %}</span>{% endif %}</div>{% endfor %}</td>
-  <td>{% for l in levels|slice:"2:" %}<div><span class="tick">{% if l.ticked %}✓{% endif %}</span>{{ l.en }}{% if bn %}<span class="bn"> / {% if l.code == "FINAL" %}চূড়ান্ত লিখিত সতর্কীকরণ{% else %}সাইট থেকে অপসারণ{% endif %}</span>{% endif %}</div>{% endfor %}</td>
+  <td>{% for l in levels|slice:":2" %}<div><span class="tick">{% if l.ticked %}✓{% endif %}</span>{{ l.en }}{% if l.local %}<span class="loc"> / {{ l.local }}</span>{% endif %}</div>{% endfor %}</td>
+  <td>{% for l in levels|slice:"2:" %}<div><span class="tick">{% if l.ticked %}✓{% endif %}</span>{{ l.en }}{% if l.local %}<span class="loc"> / {{ l.local }}</span>{% endif %}</div>{% endfor %}</td>
 </tr></table>
 {% if w.level != w.suggested_level %}<div class="small" style="margin:-3px 0 5px">Level set above or below the suggested {{ w.get_suggested_level_display|lower }}: {{ w.level_reason }}</div>{% endif %}
 
-<h2>2. TYPE OF OFFENCE{% if bn %} <span class="bn">/ অপরাধের ধরন</span>{% endif %}</h2>
+<h2>2. TYPE OF OFFENCE{% if L %} <span class="loc">/ {{ L.wn_offence_type }}</span>{% endif %}</h2>
 <table class="opts"><tr>
-  <td><div class="grp">Safety{% if bn %} <span class="bn">/ নিরাপত্তা</span>{% endif %}</div>
-    {% for o in offences %}{% if o.group == "SAFETY" %}<div><span class="tick">{% if o.ticked %}✓{% endif %}</span>{{ o.en }}{% if bn %}<span class="bn"> / {{ o.bn }}</span>{% endif %}</div>{% endif %}{% endfor %}</td>
-  <td><div class="grp">Conduct{% if bn %} <span class="bn">/ আচরণ</span>{% endif %}</div>
-    {% for o in offences %}{% if o.group == "CONDUCT" %}<div><span class="tick">{% if o.ticked %}✓{% endif %}</span>{{ o.en }}{% if bn %}<span class="bn"> / {{ o.bn }}</span>{% endif %}</div>{% endif %}{% endfor %}
-    <div><span class="tick">{% if w.other_offence %}✓{% endif %}</span>Other: {{ w.other_offence|default:"______________________" }}{% if bn %}<span class="bn"> / অন্যান্য</span>{% endif %}</div></td>
+  <td><div class="grp">Safety{% if L %} <span class="loc">/ {{ L.grp_SAFETY }}</span>{% endif %}</div>
+    {% for o in offences %}{% if o.group == "SAFETY" %}<div><span class="tick">{% if o.ticked %}✓{% endif %}</span>{{ o.en }}{% if o.local %}<span class="loc"> / {{ o.local }}</span>{% endif %}</div>{% endif %}{% endfor %}</td>
+  <td><div class="grp">Conduct{% if L %} <span class="loc">/ {{ L.grp_CONDUCT }}</span>{% endif %}</div>
+    {% for o in offences %}{% if o.group == "CONDUCT" %}<div><span class="tick">{% if o.ticked %}✓{% endif %}</span>{{ o.en }}{% if o.local %}<span class="loc"> / {{ o.local }}</span>{% endif %}</div>{% endif %}{% endfor %}
+    <div><span class="tick">{% if w.other_offence %}✓{% endif %}</span>Other: {{ w.other_offence|default:"______________________" }}{% if L %}<span class="loc"> / {{ L.other }}</span>{% endif %}</div></td>
 </tr></table>
 
-<h2>3. DETAILS{% if bn %} <span class="bn">/ বিস্তারিত</span>{% endif %}</h2>
-<div class="box tall"><div class="h">What happened (date, time, location){% if bn %} <span class="bn">/ কী ঘটেছে (তারিখ, সময়, স্থান)</span>{% endif %}</div>
+<h2>3. DETAILS{% if L %} <span class="loc">/ {{ L.wn_details }}</span>{% endif %}</h2>
+<div class="box tall"><div class="h">What happened (date, time, location){% if L %} <span class="loc">/ {{ L.wn_what_happened }}</span>{% endif %}</div>
   <div class="txt">{{ w.what_happened }}{% if w.incident %}
 
 Linked incident: {{ w.incident.document.ref }}{% endif %}</div></div>
-<div class="box"><div class="h">Corrective action required{% if bn %} <span class="bn">/ প্রয়োজনীয় সংশোধনমূলক ব্যবস্থা</span>{% endif %}</div>
+<div class="box"><div class="h">Corrective action required{% if L %} <span class="loc">/ {{ L.wn_corrective }}</span>{% endif %}</div>
   <div class="txt">{{ w.corrective_action }}</div></div>
-<div class="box tall"><div class="h">Employee's statement{% if bn %} <span class="bn">/ কর্মচারীর বক্তব্য</span>{% endif %}</div>
+<div class="box tall"><div class="h">Employee's statement{% if L %} <span class="loc">/ {{ L.wn_statement }}</span>{% endif %}</div>
   <div class="txt"></div></div>
 <div class="warn">A further offence may lead to the next warning level or removal from site.</div>
-{% if bn %}<div class="bn" style="color:#b3261e">পুনরায় অপরাধ করলে পরবর্তী ধাপের সতর্কীকরণ বা সাইট থেকে অপসারণ হতে পারে।</div>{% endif %}
+{% if L %}<div class="loc" style="color:#b3261e">{{ L.wn_further }}</div>{% endif %}
 
-<h2>4. ACKNOWLEDGEMENT{% if bn %} <span class="bn">/ স্বীকৃতি</span>{% endif %}</h2>
+<h2>4. ACKNOWLEDGEMENT{% if L %} <span class="loc">/ {{ L.wn_ack_heading }}</span>{% endif %}</h2>
 <div style="font-size:8.2pt">By signing, I confirm this warning was explained to me in a language I understand. Signing does not mean I agree. The warning stands even if I do not sign.</div>
-{% if bn %}<div class="bn">স্বাক্ষর করে আমি নিশ্চিত করছি যে এই সতর্কীকরণটি আমাকে আমার বোধগম্য ভাষায় বুঝিয়ে বলা হয়েছে। স্বাক্ষর করার অর্থ এই নয় যে আমি একমত। আমি স্বাক্ষর না করলেও এই সতর্কীকরণ কার্যকর থাকবে।</div>{% endif %}
+{% if L %}<div class="loc">{{ L.wn_ack_text }}</div>{% endif %}
 {% if explained_verbally %}<div class="small" style="margin-top:3px">His language is {{ language_label }}; there is no printed translation yet — explain the warning to him verbally before he signs.</div>{% endif %}
 
 <table class="sig"><tr>
-  <td><div class="sighead"><strong>Employee</strong>{% if bn %}<br><span class="bn">কর্মচারী</span>{% endif %}</div>
-      <div class="sigline"></div><span class="small">Signature{% if bn %} / স্বাক্ষর{% endif %}</span><br>
+  <td><div class="sighead"><strong>Employee</strong>{% if L %}<br><span class="loc">{{ L.role_employee }}</span>{% endif %}</div>
+      <div class="sigline"></div><span class="small">Signature{% if L %} / {{ L.signature }}{% endif %}</span><br>
       Name: {{ emp.full_name }}<br>Date: ____ / ____ / ________</td>
-  <td><div class="sighead"><strong>Issued by</strong> (Safety Officer / Site Engineer){% if bn %}<br><span class="bn">প্রদানকারী (সেফটি অফিসার / সাইট ইঞ্জিনিয়ার)</span>{% endif %}</div>
-      <div class="sigline"></div><span class="small">Signature{% if bn %} / স্বাক্ষর{% endif %}</span><br>
+  <td><div class="sighead"><strong>Issued by</strong> (Safety Officer / Site Engineer){% if L %}<br><span class="loc">{{ L.role_issued_by }}</span>{% endif %}</div>
+      <div class="sigline"></div><span class="small">Signature{% if L %} / {{ L.signature }}{% endif %}</span><br>
       Name: {{ w.raised_by.get_full_name|default:w.raised_by.username }}<br>Date: ____ / ____ / ________</td>
-  <td><div class="sighead"><strong>Witness</strong> (if employee refuses to sign){% if bn %}<br><span class="bn">সাক্ষী (কর্মচারী স্বাক্ষর না করলে)</span>{% endif %}</div>
-      <div class="sigline"></div><span class="small">Signature{% if bn %} / স্বাক্ষর{% endif %}</span><br>
+  <td><div class="sighead"><strong>Witness</strong> (if employee refuses to sign){% if L %}<br><span class="loc">{{ L.role_witness }}</span>{% endif %}</div>
+      <div class="sigline"></div><span class="small">Signature{% if L %} / {{ L.signature }}{% endif %}</span><br>
       Name: ________________<br>Date: ____ / ____ / ________</td>
-  <td><div class="sighead"><strong>Approved by</strong> (Project Manager){% if bn %}<br><span class="bn">অনুমোদনকারী (প্রজেক্ট ম্যানেজার)</span>{% endif %}</div>
-      <div class="sigline"></div><span class="small">Signature{% if bn %} / স্বাক্ষর{% endif %}</span><br>
+  <td><div class="sighead"><strong>Approved by</strong> (Project Manager){% if L %}<br><span class="loc">{{ L.role_approved_by }}</span>{% endif %}</div>
+      <div class="sigline"></div><span class="small">Signature{% if L %} / {{ L.signature }}{% endif %}</span><br>
       Name: {{ w.decided_by.get_full_name|default:w.decided_by.username }}<br>Date: {{ w.decided_at|date:"d M Y" }}</td>
 </tr></table>
 
-<div class="small" style="text-align:center;margin-top:6px">Copies: Employee · Site file · HR, Head Office{% if bn %} &nbsp;/&nbsp; <span class="bn">কপি: কর্মচারী · সাইট ফাইল · এইচআর, হেড অফিস</span>{% endif %}</div>
+<div class="small" style="text-align:center;margin-top:6px">Copies: Employee · Site file · HR, Head Office{% if L %} &nbsp;/&nbsp; <span class="loc">{{ L.wn_copies }}</span>{% endif %}</div>
 <div class="stamp">Printed {{ printed_at|date:"d M Y H:i" }} from Planet · {{ w.form_rev }} · upload the signed copy to complete the record</div>
 </body>
 </html>

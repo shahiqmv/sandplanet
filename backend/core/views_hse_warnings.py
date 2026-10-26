@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from . import form_i18n
 from . import hse_warnings as svc
 from .models import Employee, SafetyIncident, Site
 
@@ -68,11 +69,12 @@ def warning_meta(request):
     """The form's offence list, levels and the languages a worker's forms
     can print in."""
     return Response({
-        "offences": [{"code": c, "group": g, "label": en, "label_bn": bn}
-                     for c, g, en, bn in svc.OFFENCES],
+        "offences": [{"code": c, "group": g, "label": en}
+                     for c, g, en in svc.OFFENCES],
         "levels": [{"code": c, "label": lbl} for c, lbl in
                    svc.WarningNotice.Level.choices],
         "languages": [{"code": c, "label": lbl} for c, lbl in svc.LANGUAGES],
+        "translated": list(svc.TRANSLATED),
         "active_months": svc.active_months(),
         "can_record": request.user.role in svc.RECORD_ROLES,
     })
@@ -192,8 +194,8 @@ def warning_workers(request):
 @api_view(["GET"])
 def warning_pdf(request, pk):
     """SP-HSE-F02 printed from the record: everything filled in but the
-    employee's statement and the signatures. English, plus Bengali when that
-    is his language."""
+    employee's statement and the signatures. English, and under it his
+    language where the form is translated into it (core/form_i18n)."""
     from . import pdf as pdf_mod
     from .views_payroll import _pdf_response
     w = _get(request, pk)
@@ -209,14 +211,16 @@ def warning_pdf(request, pk):
                and w.site.projects.filter(status="ACTIVE").first())
     ctx = {
         "w": w, "emp": emp, "site": w.site, "project": project or None,
-        "bn": lang == "BN",
+        "L": form_i18n.strings(lang),
         "explained_verbally": bool(lang) and lang not in svc.TRANSLATED
         and lang != "EN",
         "language_label": dict(svc.LANGUAGES).get(lang, ""),
-        "offences": [{"code": c, "group": g, "en": en, "bn": bn,
+        "offences": [{"code": c, "group": g, "en": en,
+                      "local": (form_i18n.strings(lang) or {}).get(f"off_{c}"),
                       "ticked": c in (w.offences or [])}
-                     for c, g, en, bn in svc.OFFENCES],
-        "levels": [{"code": c, "en": lbl, "ticked": w.level == c}
+                     for c, g, en in svc.OFFENCES],
+        "levels": [{"code": c, "en": lbl, "ticked": w.level == c,
+                    "local": (form_i18n.strings(lang) or {}).get(f"lvl_{c}")}
                    for c, lbl in svc.WarningNotice.Level.choices],
         "is_sub": emp.is_subcontract,
         "subcontractor": (emp.subcontractor.name if emp.is_subcontract

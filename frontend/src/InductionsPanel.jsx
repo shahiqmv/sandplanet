@@ -65,7 +65,7 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
         <label style={{ fontSize: 13, flex: 1, minWidth: 200 }}>Trained by (anyone — ours, the resort's or a subcontractor's)
           <input style={inputStyle} value={trainer} onChange={(e) => setTrainer(e.target.value)} /></label>
       </div>
-      {language && language !== "BN" && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>The form prints in English only for this language — explain it to the men verbally.</div>}
+      {language && !meta.translated.includes(language) && <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>The form prints in English only for this language — explain it to the men verbally.</div>}
       <div style={{ marginTop: 10, fontSize: 13 }}>
         <b>Men on the site not yet inducted here</b> <span style={{ color: "var(--muted)" }}>— new hires, bring-backs, transfers in, newly approved subcontract workers</span>
       </div>

@@ -882,8 +882,8 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
             <SelectOrOther value={f.nationality} options={NATIONALITIES}
                            placeholder="Nationality…"
                            onChange={(v) => set({ nationality: v })} /></L>
-          {/* the language his warnings, induction and PPE sheets print in
-              beside English (owner 2026-10-26) */}
+          {/* the language his warning and induction forms print in beside
+              English (owner 2026-10-26); Dhivehi prints English only */}
           <L label="Forms in (language)">
             <select value={f.preferred_language}
                     onChange={(e) => set({ preferred_language: e.target.value })}
@@ -894,7 +894,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
               <option value="SI">Sinhala</option>
               <option value="TA">Tamil</option>
               <option value="NE">Nepali</option>
-              <option value="DV">Dhivehi</option>
+              <option value="DV">Dhivehi (English form, explained verbally)</option>
             </select></L>
           <L label="Passport no.">
             <input value={f.passport_no}

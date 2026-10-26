@@ -22,6 +22,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .audit import audit
+from .form_i18n import TRANSLATED, english  # noqa: F401  (TRANSLATED re-exported)
 from .models import Employee, EmployeeSiteAllocation, WarningNotice
 
 FORM_REV = "F02 Rev 0"
@@ -33,37 +34,21 @@ LEVEL_ORDER = ["VERBAL", "FIRST", "FINAL", "REMOVAL"]
 ACTIVE_MONTHS_KEY = "hse_warning_active_months"
 DEFAULT_ACTIVE_MONTHS = 12
 
-# The form's offences, English and Bengali, in the form's order.
-OFFENCES = [
-    ("PPE", "SAFETY", "Not wearing required PPE", "প্রয়োজনীয় PPE না পরা"),
-    ("HEIGHT", "SAFETY", "Working at height without fall protection",
-     "ফল-প্রোটেকশন ছাড়া উচ্চতায় কাজ"),
-    ("TOOLS", "SAFETY", "Unsafe use of tools or equipment",
-     "যন্ত্রপাতির অনিরাপদ ব্যবহার"),
-    ("GUARDS", "SAFETY", "Removing guards, scaffolding or safety signs",
-     "গার্ড, স্ক্যাফোল্ডিং বা সেফটি সাইন সরানো"),
-    ("SMOKING", "SAFETY", "Smoking in a prohibited area",
-     "নিষিদ্ধ এলাকায় ধূমপান"),
-    ("ALCOHOL", "SAFETY", "Alcohol or drugs at work", "কাজের সময় মদ বা মাদক"),
-    ("FIGHT", "CONDUCT", "Fighting or abusive behaviour",
-     "মারামারি বা অশোভন আচরণ"),
-    ("THEFT", "CONDUCT", "Theft or deliberate damage to property",
-     "চুরি বা সম্পত্তির ইচ্ছাকৃত ক্ষতি"),
-    ("LATE", "CONDUCT", "Late arrival or leaving early",
-     "দেরিতে আসা বা আগে চলে যাওয়া"),
-    ("ABSENT", "CONDUCT", "Absence without approval",
-     "অনুমতি ছাড়া অনুপস্থিতি"),
-    ("SUBSTANDARD", "CONDUCT", "Substandard work", "মানহীন কাজ"),
-]
+# The form's offences in the form's order; the words in each language are
+# "off_<code>" in core/form_i18n.
+OFFENCES = [(code, group, english()[f"off_{code}"]) for code, group in (
+    ("PPE", "SAFETY"), ("HEIGHT", "SAFETY"), ("TOOLS", "SAFETY"),
+    ("GUARDS", "SAFETY"), ("SMOKING", "SAFETY"), ("ALCOHOL", "SAFETY"),
+    ("FIGHT", "CONDUCT"), ("THEFT", "CONDUCT"), ("LATE", "CONDUCT"),
+    ("ABSENT", "CONDUCT"), ("SUBSTANDARD", "CONDUCT"))]
 OFFENCE_CODES = {o[0] for o in OFFENCES}
 
-# Languages a worker's forms can print in beside English (brief C.5). Only
-# Bengali has a translated template so far; the others print English and the
-# record notes it was explained verbally.
+# Languages a worker's forms can be in (brief C.5). Those in TRANSLATED
+# print beside English (owner 2026-10-26); the rest print English and the
+# form says to explain it verbally.
 LANGUAGES = [("BN", "Bengali"), ("HI", "Hindi"), ("SI", "Sinhala"),
              ("TA", "Tamil"), ("NE", "Nepali"), ("DV", "Dhivehi"),
              ("EN", "English")]
-TRANSLATED = {"BN"}
 
 
 # ---- permissions -----------------------------------------------------------

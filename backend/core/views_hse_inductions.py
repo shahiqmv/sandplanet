@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from . import form_i18n
 from . import hse_induction_content as content
 from . import hse_inductions as svc
 from .hse_warnings import LANGUAGES
@@ -54,8 +55,9 @@ def _row(s, user):
 @api_view(["GET"])
 def induction_meta(request):
     return Response({
-        "topics": [{"no": no, "title": en, "title_bn": bn}
-                   for no, en, bn, _b in content.TOPICS],
+        "topics": [{"no": no, "title": en}
+                   for no, en, _b in content.TOPICS],
+        "translated": list(form_i18n.TRANSLATED),
         "languages": [{"code": c, "label": lbl} for c, lbl in LANGUAGES],
         "form_rev": content.FORM_REV,
         "can_record": request.user.role in svc.RECORD_ROLES,
@@ -152,8 +154,8 @@ def induction_candidates(request):
 @api_view(["GET"])
 def session_pdf(request, pk):
     """SP-HSE-F01 printed for this session: the six topics, the site box
-    from the site's medical plan, and the men on it. English, plus Bengali
-    when that is the language of the training."""
+    from the site's medical plan, and the men on it. English, and under it
+    the language of the training where the form is translated into it."""
     from . import pdf as pdf_mod
     from .views_payroll import _pdf_response
     s = _get(request, pk)
@@ -164,6 +166,7 @@ def session_pdf(request, pk):
     if s.status == "DRAFT" and svc.can_record(request.user, s.site):
         svc.mark_printed(s)
     plan = SiteMedicalPlan.objects.filter(site=s.site).first()
+    en, L = form_i18n.english(), form_i18n.strings(s.language)
     att = [a.employee for a in s.attendees.select_related(
         "employee__job_category", "employee__subcontractor")
         if a.attended or s.status in ("DRAFT", "PRINTED")]
@@ -179,14 +182,16 @@ def session_pdf(request, pk):
     trades = sorted({r["trade"] for r in rows if r.get("trade")})
     ctx = {
         "s": s, "site": s.site, "plan": plan, "rows": rows,
-        "bn": s.language == "BN",
+        "L": L,
         "language_label": dict(LANGUAGES).get(s.language, "English"),
         "employers": ", ".join(employers) or "Sand Planet",
         "trades": ", ".join(trades[:4]) + (" and others" if len(trades) > 4
                                             else ""),
-        "topics": [{"no": no, "en": en, "bn": bn, "bullets": b,
+        "topics": [{"no": no, "en": en[t], "local": (L or {}).get(t),
+                    "bullets": [(en[k], (L or {}).get(k)) for k in keys],
                     "na": no in (s.topics_na or [])}
-                   for no, en, bn, b in content.TOPICS],
+                   for no, t, keys in content.TOPIC_KEYS],
+        "en": en,
         "c": content,
         "footer_doc": "SP-HSE-" + s.form_rev.replace(" Rev", " · Rev"),
         "subline": ("Health, Safety & Environment · Form SP-HSE-"
