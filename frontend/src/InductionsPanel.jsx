@@ -20,6 +20,7 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
   const [site, setSite] = useState(siteId || "");
   const [day, setDay] = useState(today());
   const [language, setLanguage] = useState("BN");
+  const [langTouched, setLangTouched] = useState(false);
   const [trainer, setTrainer] = useState("");
   const [men, setMen] = useState([]);
   const [picked, setPicked] = useState(() => new Set());
@@ -28,9 +29,25 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
   useEffect(() => {
     if (!site || !day) { setMen([]); return; }
     api(`/hse-inductions/candidates?site=${site}&date=${day}`)
-      .then((r) => { setMen(r); setPicked(new Set(r.map((m) => m.id))); })
+      .then(setMen)
       .catch((e) => { setMen([]); setError(e.message); });
   }, [site, day]);
+  // A session is run in one language (owner 2026-10-26): the list is grouped
+  // by each man's language, and the session's language group is ticked —
+  // the others are inducted in their own session.
+  const langOf = (m) => (m.language === "EN" ? "" : m.language || "");
+  useEffect(() => {
+    if (!men.length) { setPicked(new Set()); return; }
+    let lang = language;
+    if (!langTouched) {        // start with the biggest group's language
+      const counts = {};
+      men.forEach((m) => { counts[langOf(m)] = (counts[langOf(m)] || 0) + 1; });
+      lang = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+      setLanguage(lang);
+    }
+    setPicked(new Set(men.filter((m) => langOf(m) === lang).map((m) => m.id)));
+  }, [men, language]); // eslint-disable-line react-hooks/exhaustive-deps
+  const langLabel = (c) => (c ? meta.languages.find((l) => l.code === c)?.label || c : "English / not set");
   const [q, setQ] = useState("");
   const toggle = (id) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   // bulk tick / untick acts on the men shown, so "untick all, search the
@@ -58,7 +75,7 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
         <label style={{ fontSize: 13 }}>Date
           <input type="date" style={{ ...inputStyle, width: 160 }} value={day} onChange={(e) => setDay(e.target.value)} /></label>
         <label style={{ fontSize: 13 }}>Language of training
-          <select style={{ ...inputStyle, width: 150 }} value={language} onChange={(e) => setLanguage(e.target.value)}>
+          <select style={{ ...inputStyle, width: 150 }} value={language} onChange={(e) => { setLangTouched(true); setLanguage(e.target.value); }}>
             <option value="">English</option>
             {meta.languages.filter((l) => l.code !== "EN").map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
           </select></label>
@@ -78,13 +95,30 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
         </div>
       )}
       <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, marginTop: 6, background: "var(--paper)" }}>
-        {shown.map((m) => (
-          <label key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 8px", fontSize: 13, borderBottom: "1px solid var(--line)" }}>
-            <input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} />
-            <b>{m.emp_no}</b> {m.full_name}
-            <span style={{ color: "var(--muted)", fontSize: 12 }}>{m.trade}{m.subcontractor ? ` · ${m.subcontractor}` : ""}</span>
-          </label>
-        ))}
+        {[...new Set(shown.map(langOf))]
+          .sort((a, b) => (a === language ? -1 : b === language ? 1 : shown.filter((m) => langOf(m) === b).length - shown.filter((m) => langOf(m) === a).length))
+          .map((g) => {
+            const group = shown.filter((m) => langOf(m) === g);
+            const allOn = group.every((m) => picked.has(m.id));
+            return (
+              <Fragment key={g || "none"}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "5px 8px", background: g === language ? "var(--sky-soft)" : "var(--sand, #f7f4ee)", borderBottom: "1px solid var(--line)", fontSize: 12.5 }}>
+                  <b>{langLabel(g)} — {group.length}</b>
+                  {g === language ? <span style={{ color: "var(--muted)" }}>this session's language</span>
+                    : <span style={{ color: "var(--muted)" }}>run a separate session in {langLabel(g)}</span>}
+                  <button type="button" onClick={() => setPicked((p) => { const n = new Set(p); group.forEach((m) => (allOn ? n.delete(m.id) : n.add(m.id))); return n; })}
+                          style={{ marginLeft: "auto", background: "none", border: 0, color: "var(--navy)", cursor: "pointer", fontWeight: 600 }}>{allOn ? "Untick group" : "Tick group"}</button>
+                </div>
+                {group.map((m) => (
+                  <label key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 8px 4px 16px", fontSize: 13, borderBottom: "1px solid var(--line)" }}>
+                    <input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} />
+                    <b>{m.emp_no}</b> {m.full_name}
+                    <span style={{ color: "var(--muted)", fontSize: 12 }}>{m.trade}{m.subcontractor ? ` · ${m.subcontractor}` : ""}</span>
+                  </label>
+                ))}
+              </Fragment>
+            );
+          })}
         {men.length > 0 && shown.length === 0 && <div style={{ padding: 8, fontSize: 13, color: "var(--muted)" }}>No one matches the search.</div>}
         {men.length === 0 && <div style={{ padding: 8, fontSize: 13, color: "var(--muted)" }}>{site ? "Everyone on the site that day is inducted." : "Choose the site."}</div>}
       </div>

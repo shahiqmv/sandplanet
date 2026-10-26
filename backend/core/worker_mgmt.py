@@ -53,6 +53,10 @@ def _validate_add(data, exclude_pk=None):
                 "ask HR to transfer him rather than hiring him again.")
     if not (data.get("nationality") or "").strip():
         return "Nationality is required."
+    from .form_i18n import check_language
+    _code, err = check_language(data.get("preferred_language"))
+    if err:
+        return err
     if not data.get("job_category_id"):
         return "Trade / category is required."
     if _dec(data.get("basic_pay")) is None:
@@ -86,6 +90,7 @@ def _left_from(emp):
 def rehire_json(emp):
     return {"employee_id": emp.id, "emp_no": emp.emp_no,
             "full_name": emp.full_name, "nationality": emp.nationality,
+            "preferred_language": emp.preferred_language or "",
             "left_on": emp.left_on, "left_site": _left_from(emp),
             "trade": emp.job_category.name if emp.job_category_id else ""}
 
@@ -107,6 +112,11 @@ def _validate_rehire(data):
         return None, "Trade / category is required."
     if _dec(data.get("basic_pay")) is None:
         return None, "Basic pay (salary) is required."
+    from .form_i18n import check_language
+    _code, err = check_language(data.get("preferred_language")
+                                or emp.preferred_language)
+    if err:
+        return None, err
     return emp, None
 
 
@@ -114,7 +124,7 @@ def _validate_rehire(data):
 # comes back on. His name, passport and nationality stay as recorded.
 REHIRE_FIELDS = ("basic_pay", "currency", "work_permit_no",
                  "work_permit_expiry", "job_category_id", "ot_applies",
-                 "emergency_contact")
+                 "emergency_contact", "preferred_language")
 
 
 def _apply_add_fields(emp, data):
@@ -144,6 +154,8 @@ def _apply_add_fields(emp, data):
         emp.ot_applies = data.get("ot_applies")
     if "job_category_id" in data:
         emp.job_category_id = data.get("job_category_id") or None
+    if data.get("preferred_language"):
+        emp.preferred_language = data["preferred_language"].strip().upper()[:2]
 
 
 def _has_open_change(employee):
@@ -449,6 +461,8 @@ def update_hire(employee, data, actor):
         "job_category_id": data.get("job_category_id",
                                     employee.job_category_id),
         "basic_pay": data.get("basic_pay", employee.basic_pay),
+        "preferred_language": data.get("preferred_language",
+                                       employee.preferred_language),
     }
     err = _validate_add(merged, exclude_pk=employee.pk)
     if err:

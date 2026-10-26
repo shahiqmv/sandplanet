@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { WORKER_LANGUAGES } from "./languages.js";
 import { EmployeeHealth } from "./HealthPage.jsx";
 import HireForm from "./HireWorkerForm.jsx";
 import { api, apiUpload } from "./api.js";
@@ -884,17 +885,12 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                            onChange={(v) => set({ nationality: v })} /></L>
           {/* the language his warning and induction forms print in beside
               English (owner 2026-10-26); Dhivehi prints English only */}
-          <L label="Forms in (language)">
+          <L label={creating ? "Forms in (language) *" : "Forms in (language)"}>
             <select value={f.preferred_language}
                     onChange={(e) => set({ preferred_language: e.target.value })}
                     style={inputStyle}>
-              <option value="">English only</option>
-              <option value="BN">Bengali</option>
-              <option value="HI">Hindi</option>
-              <option value="SI">Sinhala</option>
-              <option value="TA">Tamil</option>
-              <option value="NE">Nepali</option>
-              <option value="DV">Dhivehi (English form, explained verbally)</option>
+              <option value="">{creating ? "— choose —" : "Not set"}</option>
+              {WORKER_LANGUAGES.map(([c, l]) => <option key={c} value={c}>{l}</option>)}
             </select></L>
           <L label="Passport no.">
             <input value={f.passport_no}

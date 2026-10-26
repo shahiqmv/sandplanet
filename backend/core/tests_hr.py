@@ -53,7 +53,7 @@ class HrBase(TestCase):
     def make_employee(self, name, basic_pay=None, passport_no="N1234567"):
         r = self.client.post("/api/v1/employees", {
             "full_name": name, "passport_no": passport_no,
-            "nationality": "Sri Lankan", "job_category": self.mason_cat.id,
+            "preferred_language": "EN", "nationality": "Sri Lankan", "job_category": self.mason_cat.id,
             "basic_pay": basic_pay, "join_date": "2025-01-01",
         }, format="json")
         assert r.status_code == 201, r.data
@@ -113,7 +113,7 @@ class EmployeeSensitivityTests(HrBase):
     def test_sensitive_fields_never_in_audit_detail(self):
         self.as_user(self.hr)
         self.client.patch(f"/api/v1/employees/{self.mason.id}",
-                          {"basic_pay": 10000, "nationality": "Indian"},
+                          {"basic_pay": 10000, "preferred_language": "EN", "nationality": "Indian"},
                           format="json")
         log = AuditLog.objects.filter(entity="employee",
                                       event="EMPLOYEE_UPDATED").first()
@@ -345,7 +345,7 @@ class HeadOfficeEmployeeTests(HrBase):
         from .vouchers import ho_site
         ho = ho_site()
         r = self.client.post("/api/v1/employees", {
-            "full_name": "Office Staff", "nationality": "Maldivian",
+            "full_name": "Office Staff", "preferred_language": "EN", "nationality": "Maldivian",
             "job_category": self.mason_cat.id, "site_id": ho.id,
         }, format="json")
         self.assertEqual(r.status_code, 201, r.data)
@@ -359,12 +359,35 @@ class HeadOfficeEmployeeTests(HrBase):
 
     def test_create_without_site_leaves_unallocated(self):
         r = self.client.post("/api/v1/employees", {
-            "full_name": "Nobody", "nationality": "Maldivian",
+            "full_name": "Nobody", "preferred_language": "EN", "nationality": "Maldivian",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         emp = Employee.objects.get(pk=r.data["id"])
         self.assertFalse(emp.site_allocations.filter(to_date__isnull=True)
                          .exists())
+
+
+    def test_a_new_record_needs_his_language(self):
+        """The language his warning and induction forms print in is asked
+        for on every new worker (owner 2026-10-26); old records are not
+        forced on an edit."""
+        r = self.client.post("/api/v1/employees", {
+            "full_name": "No Language", "nationality": "Bangladeshi"},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("preferred_language", r.data)
+        r = self.client.post("/api/v1/employees", {
+            "full_name": "Bad Language", "preferred_language": "XX"},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/v1/employees", {
+            "full_name": "Rahim", "preferred_language": "bn"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["preferred_language"], "BN")
+        old = Employee.objects.create(emp_no="EMP-7001", full_name="Old Hand")
+        r = self.client.patch(f"/api/v1/employees/{old.id}",
+                              {"job_title": "Mason"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
 
 
 class DuplicatePassportTests(HrBase):
@@ -378,7 +401,7 @@ class DuplicatePassportTests(HrBase):
 
     def _payload(self, **kw):
         data = {"full_name": "Test Worker", "passport_no": "EK0658559",
-                "nationality": "Bangladeshi", "basic_pay": "7000",
+                "preferred_language": "EN", "nationality": "Bangladeshi", "basic_pay": "7000",
                 "currency": "MVR", "employment_type": "CONTRACT"}
         data.update(kw)
         return data
@@ -632,7 +655,7 @@ class OnePassportOneRecordTests(TestCase):
         from . import worker_mgmt
         batch, err = worker_mgmt.create_add_batch(self.site, [{
             "full_name": "New Hire", "passport_no": "AB123456",
-            "nationality": "Bangladeshi", "job_category_id": self.cat.id,
+            "preferred_language": "EN", "nationality": "Bangladeshi", "job_category_id": self.cat.id,
             "basic_pay": "7000"}], self.sa)
         self.assertIsNone(batch)
         self.assertIn("PP-0001", err)
@@ -642,7 +665,7 @@ class OnePassportOneRecordTests(TestCase):
         from . import worker_mgmt
         batch, err = worker_mgmt.create_add_batch(self.site, [{
             "full_name": "Genuinely New", "passport_no": "ZZ999999",
-            "nationality": "Bangladeshi", "job_category_id": self.cat.id,
+            "preferred_language": "EN", "nationality": "Bangladeshi", "job_category_id": self.cat.id,
             "basic_pay": "7000"}], self.sa)
         self.assertIsNone(err, err)
         self.assertIsNotNone(batch)
@@ -1280,7 +1303,7 @@ class PaIsFullHrTests(HrBase):
         self.as_user(self.pa)
         r = self.client.post("/api/v1/employees", {
             "full_name": "PA Hire", "passport_no": "N4455661",
-            "nationality": "Sri Lankan", "job_category": self.mason_cat.id,
+            "preferred_language": "EN", "nationality": "Sri Lankan", "job_category": self.mason_cat.id,
             "basic_pay": "7000", "join_date": "2026-01-01",
         }, format="json")
         self.assertEqual(r.status_code, 201, r.data)

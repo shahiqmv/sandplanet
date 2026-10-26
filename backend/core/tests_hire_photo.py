@@ -34,7 +34,7 @@ class HirePhotoTests(TestCase):
     def _batch(self):
         batch, err = wm.create_add_batch(self.site, [{
             "full_name": "Ravi Kumar", "passport_no": "N1234567",
-            "nationality": "Indian", "basic_pay": "6000",
+            "preferred_language": "EN", "nationality": "Indian", "basic_pay": "6000",
             "currency": "MVR", "job_category_id": self.cat.id}], self.sa)
         self.assertIsNone(err)
         return batch
@@ -60,7 +60,7 @@ class HirePhotoTests(TestCase):
                              {"kind": "ADD", "workers": [
                                  {"full_name": "Ravi Kumar",
                                   "passport_no": "N1234567",
-                                  "nationality": "Indian",
+                                  "preferred_language": "EN", "nationality": "Indian",
                                   "basic_pay": "6000", "currency": "MVR",
                                   "job_category_id": self.cat.id}]},
                              format="json")

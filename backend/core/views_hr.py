@@ -194,8 +194,20 @@ class EmployeeSerializer(serializers.ModelSerializer):
             .select_related("site").first()
         return row.site.code if row else None
 
+    def validate_preferred_language(self, value):
+        from .form_i18n import check_language
+        code, err = check_language(value, required=False)
+        if err:
+            raise serializers.ValidationError(err)
+        return code
+
     def validate(self, attrs):
         inst = self.instance
+        # a new record needs the language his forms print in (owner
+        # 2026-10-26); older records fill it in as they are edited
+        if inst is None and not attrs.get("preferred_language"):
+            raise serializers.ValidationError({"preferred_language":
+                "Choose the language his forms print in."})
         usd = attrs.get("usd_basic_pay",
                         getattr(inst, "usd_basic_pay", None))
         emp_type = attrs.get("employment_type",

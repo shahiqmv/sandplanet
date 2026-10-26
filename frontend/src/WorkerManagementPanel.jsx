@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { WORKER_LANGUAGES } from "./languages.js";
 import { api, apiUpload } from "./api.js";
 import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
@@ -444,6 +445,7 @@ function RevisionCard({ rev, me, onChanged }) {
 // worker goes on the company work permit and is created by HR / onboarding,
 // never from the site batch. The server enforces this too.
 const BLANK = { full_name: "", passport_no: "", nationality: "",
+  preferred_language: "",
   job_category_id: "", basic_pay: "", currency: "MVR",
   employment_type: "CONTRACT", work_permit_no: "", work_permit_expiry: "",
   // Held on the row and uploaded once the batch has created the worker: the
@@ -504,7 +506,8 @@ function HiresForm({ site, onCancel, onDone }) {
     const o = offer;
     next[o.row] = { ...next[o.row], rehire_employee_id: o.employee_id,
                     rehire: o, full_name: o.full_name,
-                    nationality: o.nationality || next[o.row].nationality };
+                    nationality: o.nationality || next[o.row].nationality,
+                    preferred_language: o.preferred_language || next[o.row].preferred_language };
     setRows(next); setOffer(null); setError(null);
   }
   function notHim(i) {
@@ -623,6 +626,13 @@ function HiresForm({ site, onCancel, onDone }) {
               <input style={inputStyle} value={r.nationality}
                      disabled={!!r.rehire}
                      onChange={set(i, "nationality")} /></label>
+            <label style={lbl}>{star("Forms in (language)")}
+              <select style={inputStyle} value={r.preferred_language}
+                      onChange={set(i, "preferred_language")}>
+                <option value="">—</option>
+                {WORKER_LANGUAGES.map(([c, l]) => (
+                  <option key={c} value={c}>{l}</option>))}
+              </select></label>
             <label style={lbl}>{star("Trade")}
               <select style={inputStyle} value={r.job_category_id}
                       onChange={set(i, "job_category_id")}>

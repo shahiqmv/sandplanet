@@ -114,6 +114,10 @@ def add_worker(sub, data, actor):
     if join is None:
         return None, ("Give the date the worker joined the site — the "
                       "register shows him from that day.")
+    from .form_i18n import check_language
+    lang, err = check_language(data.get("preferred_language"))
+    if err:
+        return None, err
     with transaction.atomic():
         n = int(next_ref("EMP", None).split("-")[1])
         emp = Employee.objects.create(
@@ -122,7 +126,7 @@ def add_worker(sub, data, actor):
             nationality=data.get("nationality", ""),
             job_category_id=data.get("job_category_id") or None,
             emergency_contact=data.get("emergency_contact", ""),
-            join_date=join,
+            join_date=join, preferred_language=lang,
             engagement_type=Employee.Engagement.SUBCONTRACT, subcontractor=sub,
             is_active=False, sub_pending=True)
         EmployeeSiteAllocation.objects.create(

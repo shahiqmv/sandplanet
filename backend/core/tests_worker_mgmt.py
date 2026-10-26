@@ -32,7 +32,7 @@ class WorkerBatchTests(TestCase):
 
     def _worker(self, name, **kw):
         return {"full_name": name, "passport_no": f"P-{name}",
-                "nationality": "IND", "basic_pay": "6000",
+                "preferred_language": "EN", "nationality": "IND", "basic_pay": "6000",
                 "job_category_id": self.mason.id, **kw}
 
     def _add_batch(self, workers):

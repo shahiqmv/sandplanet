@@ -52,7 +52,7 @@ class SubcontractorTeamTests(TestCase):
 
         # unusable until approved — no workers yet
         r = self.client.post(f"/api/v1/subcontractors/{sid}/workers",
-                             {"full_name": "Worker A", "join_date": "2026-06-01"}, format="json")
+                             {"full_name": "Worker A", "preferred_language": "EN", "join_date": "2026-06-01"}, format="json")
         self.assertEqual(r.status_code, 400)
 
         # SA cannot self-approve
@@ -82,7 +82,7 @@ class SubcontractorTeamTests(TestCase):
 
         self._auth(self.sa)
         r = self.client.post(f"/api/v1/subcontractors/{sub.id}/workers",
-                             {"full_name": "Worker A", "join_date": "2026-06-01",
+                             {"full_name": "Worker A", "preferred_language": "EN", "join_date": "2026-06-01",
                               "job_category_id": self.mason.id}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         wid = r.data["id"]
@@ -181,7 +181,7 @@ class SubcontractorTeamTests(TestCase):
         sub = self._approved_sub()
         self._auth(self.sa)
         r = self.client.post(f"/api/v1/subcontractors/{sub.id}/workers",
-                             {"full_name": "Worker A", "join_date": "2026-06-01"}, format="json")
+                             {"full_name": "Worker A", "preferred_language": "EN", "join_date": "2026-06-01"}, format="json")
         emp = Employee.objects.get(pk=r.data["id"])
         self.assertEqual(emp.engagement_type, "SUBCONTRACT")
         self.assertNotIn(emp.id, Employee.objects.payroll_eligible()
@@ -1188,7 +1188,7 @@ class TakenOnDirectlyTests(TestCase):
         from core import subcontract
         emp, err = subcontract.add_worker(
             self.sub, {"full_name": "Sudesh Lakmal",
-                       "passport_no": "P1258011",
+                       "passport_no": "P1258011", "preferred_language": "SI",
                        "join_date": "2026-09-05"}, self.sa)
         assert err is None, err
         if approved:
@@ -1739,6 +1739,7 @@ class SubcontractWorkerJoinDateTests(TestCase):
 
     def _add(self, **body):
         body.setdefault("full_name", "Worker J")
+        body.setdefault("preferred_language", "EN")
         return self.client.post(f"/api/v1/subcontractors/{self.sub.id}/workers",
                                 body, format="json")
 

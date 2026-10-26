@@ -32,3 +32,20 @@ def strings(lang):
     alone."""
     lang = (lang or "").upper()
     return _load(lang.lower()) if lang in TRANSLATED else None
+
+
+# Every language a worker's forms can be set to: the five translations,
+# Dhivehi (the English form, explained verbally) and English. A worker added
+# from now on must have one (owner 2026-10-26).
+LANGUAGE_CODES = ("BN", "TA", "SI", "HI", "NE", "DV", "EN")
+
+
+def check_language(value, required=True):
+    """(code, error) for the language on a worker's record."""
+    code = (value or "").strip().upper()
+    if not code:
+        return "", ("Choose the language his forms print in." if required
+                    else None)
+    if code not in LANGUAGE_CODES:
+        return "", "Choose a language from the list."
+    return code, None

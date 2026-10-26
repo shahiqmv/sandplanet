@@ -57,7 +57,7 @@ class RehireTests(TestCase):
 
     def row(self, **kw):
         return {"full_name": "Shamrat Hossain", "passport_no": "EK0720872",
-                "nationality": "Bangladeshi", "job_category_id": self.mason.id,
+                "preferred_language": "EN", "nationality": "Bangladeshi", "job_category_id": self.mason.id,
                 "basic_pay": "8500", "currency": "MVR", **kw}
 
     def test_the_hire_form_offers_him_back_and_approval_restores_him(self):

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { WORKER_LANGUAGES } from "./languages.js";
 import HireForm from "./HireWorkerForm.jsx";
 import AgreementsPanel from "./AgreementsPanel.jsx";
 import { api } from "./api.js";
@@ -332,6 +333,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 function WorkerForm({ sub, cats, onCancel, onDone }) {
   const [f, setF] = useState({ full_name: "", nationality: "",
+    preferred_language: "",
     passport_no: "", job_category_id: "", join_date: today(),
     sub_monthly_rate: "" });
   const [busy, setBusy] = useState(false);
@@ -366,6 +368,12 @@ function WorkerForm({ sub, cats, onCancel, onDone }) {
                value={f.nationality} onChange={set("nationality")} />
         <input style={inputStyle} placeholder="Passport no."
                value={f.passport_no} onChange={set("passport_no")} />
+        <select style={inputStyle} value={f.preferred_language}
+                onChange={set("preferred_language")} required>
+          <option value="">Forms in (language) *</option>
+          {WORKER_LANGUAGES.map(([c, l]) => (
+            <option key={c} value={c}>{l}</option>))}
+        </select>
         <label style={{ fontSize: 12, color: "var(--muted)" }}>
           Joined the site *
           <input type="date" style={inputStyle} value={f.join_date}
