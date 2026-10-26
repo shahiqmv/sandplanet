@@ -4,13 +4,21 @@ Transcribed from the approved form, English and Bengali, in the form's order.
 A new revision of the form is a new constant and a new FORM_REV, so a session
 always prints — and records — the revision it was given from.
 """
-FORM_REV = "F01 Rev 0"
+FORM_REV = "F01 Rev 1"   # Rev 1: the starter-kit line (owner 2026-10-26)
 
 TITLE_BN = "সেফটি ইনডাকশন প্রশিক্ষণ"
 NO_START = ("No one starts work on site until this induction is completed "
             "and signed.",
             "এই ইনডাকশন সম্পন্ন ও স্বাক্ষর না করা পর্যন্ত কেউ সাইটে কাজ শুরু "
             "করতে পারবে না।")
+# The starter PPE kit is proven by this line, signed on day one, instead of a
+# per-man PPE issue record (owner 2026-10-26: too much admin for what it
+# proves). Specialised kit — harness, welding mask — is still recorded singly.
+PPE_RECEIVED = (
+    "I have received my safety helmet, safety boots, high-visibility vest "
+    "and gloves, and will wear them at all times at work.",
+    "আমি আমার সেফটি হেলমেট, সেফটি বুট, রিফ্লেক্টিভ ভেস্ট ও গ্লাভস বুঝে "
+    "পেয়েছি এবং কাজের সময় সবসময় সেগুলো পরব।")
 DECLARATION = (
     "I confirm that this induction was explained to me in a language I "
     "understand, and that I have understood and will strictly follow all the "

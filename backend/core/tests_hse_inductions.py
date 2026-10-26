@@ -98,7 +98,8 @@ class InductionTests(TestCase):
         text = "".join(p.get_text() for p in fitz.open(stream=pdf.content,
                                                          filetype="pdf"))
         for want in ("SAFETY INDUCTION", "Personal Protective Equipment",
-                     "Disciplinary Rules", "New Hire", "Atoll Civil"):
+                     "Disciplinary Rules", "New Hire", "Atoll Civil",
+                     "high-visibility vest", "F01 · Rev 1"):
             self.assertIn(want, text)
         self.assertEqual(InductionSession.objects.get().status, "PRINTED")
         # the sub man did not sign on the day

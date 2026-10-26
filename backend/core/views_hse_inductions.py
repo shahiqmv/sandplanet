@@ -187,6 +187,9 @@ def session_pdf(request, pk):
                     "na": no in (s.topics_na or [])}
                    for no, en, bn, b in content.TOPICS],
         "c": content,
+        "footer_doc": "SP-HSE-" + s.form_rev.replace(" Rev", " · Rev"),
+        "subline": ("Health, Safety & Environment · Form SP-HSE-"
+                    + s.form_rev.replace(" Rev", " · Rev")),
         "logo_src": pdf_mod.logo_src(), "co": pdf_mod.company_info(),
         "printed_at": timezone.localtime(),
     }

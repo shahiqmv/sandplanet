@@ -360,12 +360,52 @@ class PeopleRecordTests(TestCase):
                 "duration_min": 15,
                 "attendees": [{"employee_id": w.id} for w in self.workers]}
         photos = extra.pop("photos", None)
+        sheet = extra.pop("sheet", None)
         body.update(extra)
         import json
-        return self.client.post("/api/v1/hse/toolbox-talks", {
-            "payload": json.dumps(body),
-            "photos": [a_photo()] if photos is None else photos},
-            format="multipart")
+        data = {"payload": json.dumps(body),
+                "photos": [a_photo()] if photos is None else photos}
+        if sheet:
+            data["sheet"] = sheet
+        return self.client.post("/api/v1/hse/toolbox-talks", data,
+                                format="multipart")
+
+    def _sheet(self):
+        import pymupdf as fitz
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        doc = fitz.open()
+        doc.new_page().insert_text((72, 72), "signed sheet")
+        return SimpleUploadedFile("sheet.pdf", doc.tobytes(),
+                                  content_type="application/pdf")
+
+    def test_the_signed_sheet_stands_in_for_the_photo(self):
+        """HSE forms brief D (owner 2026-10-26): print the sheet before the
+        talk, upload it signed — it counts as the photograph."""
+        r = self.client.get(f"/api/v1/hse/toolbox-talks/sheet.pdf?"
+                            f"site={self.site.id}&day={date.today()}"
+                            f"&topic=Ladders")
+        self.assertIn(r.status_code, (200, 503))
+        if r.status_code == 200:
+            import pymupdf as fitz
+            text = "".join(p.get_text() for p in fitz.open(
+                stream=r.content, filetype="pdf"))
+            for want in ("ATTENDANCE SHEET", "Ladders", "Worker 0",
+                         "Worker 2"):
+                self.assertIn(want, text)
+        r = self._talk(photos=[], sheet=[self._sheet()])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["sheet_url"])
+        self.assertEqual(r.data["photos"], [])
+        # a talk with one photo: once the sheet is in, the photo may go
+        r = self._talk()
+        ref, pk = r.data["ref"], r.data["photos"][0]["id"]
+        self.assertEqual(self.client.delete(
+            f"/api/v1/hse/toolbox-talks/{ref}/photos/{pk}").status_code, 400)
+        r = self.client.post(f"/api/v1/hse/toolbox-talks/{ref}/sheet",
+                             {"files": [self._sheet()]}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.client.delete(
+            f"/api/v1/hse/toolbox-talks/{ref}/photos/{pk}").status_code, 200)
 
     def test_a_talk_records_who_was_there(self):
         r = self._talk()

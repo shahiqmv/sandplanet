@@ -63,11 +63,11 @@ function WarningFields({ meta, f, setF, suggested }) {
 
 const EMPTY = { offences: [], other_offence: "", what_happened: "", corrective_action: "", supervisor: "", level: "", level_reason: "" };
 
-function RaiseForm({ site, sites, meta, onSaved, onCancel }) {
+function RaiseForm({ site, sites, meta, onSaved, onCancel, preset }) {
   const [siteId, setSiteId] = useState(site?.id || "");
-  const [day, setDay] = useState(today());
+  const [day, setDay] = useState(preset?.day || today());
   const [workers, setWorkers] = useState([]);
-  const [emp, setEmp] = useState("");
+  const [emp, setEmp] = useState(preset?.employee || "");
   const [f, setF] = useState(EMPTY);
   const [q, setQ] = useState("");
   const [error, setError] = useState(null);
@@ -82,7 +82,8 @@ function RaiseForm({ site, sites, meta, onSaved, onCancel }) {
     e.preventDefault(); setBusy(true); setError(null);
     try {
       onSaved(await api("/hse-warnings", { method: "POST", body: {
-        ...f, level: f.level || worker?.suggested_level, site: siteId, employee: emp, event_date: day } }));
+        ...f, level: f.level || worker?.suggested_level, site: siteId, employee: emp, event_date: day,
+        incident: preset?.incident || undefined } }));
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   const shown = workers.filter((w) => !q || `${w.emp_no} ${w.full_name} ${w.subcontractor}`.toLowerCase().includes(q.toLowerCase()));
@@ -120,6 +121,24 @@ function RaiseForm({ site, sites, meta, onSaved, onCancel }) {
         <span style={{ fontSize: 12, color: "var(--muted)" }}>The site PM approves it, then you print, serve and upload the signed copy. No money is involved — a fine is recorded separately if wanted.</span>
       </div>
     </form>
+  );
+}
+
+// From an HSE incident: the same form, its site and date fixed, the warning
+// carrying the incident (HSE forms brief C.2). People on an incident are
+// mostly typed names, so the worker is picked from those on the site that day.
+export function WarnFromIncident({ incident, onDone, onCancel }) {
+  const [meta, setMeta] = useState(null);
+  const [saved, setSaved] = useState(null);
+  useEffect(() => { api("/hse-warnings/meta").then(setMeta).catch(() => {}); }, []);
+  if (saved) return <p style={{ fontSize: 13, color: "var(--green-fg, #1e6b3a)" }}>{saved.ref} sent to the PM — it is under Workforce → Warnings. <button onClick={onDone} style={{ background: "none", border: 0, color: "var(--navy)", cursor: "pointer", fontWeight: 600 }}>Close</button></p>;
+  if (!meta) return <p style={{ fontSize: 13 }}>Loading…</p>;
+  const d = new Date(incident.occurred_at);
+  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const linked = (incident.people || []).filter((p) => p.employee);
+  return (
+    <RaiseForm site={{ id: incident.site_id }} meta={meta} onCancel={onCancel} onSaved={setSaved}
+               preset={{ day, incident: incident.id, employee: linked.length === 1 ? linked[0].employee : "" }} />
   );
 }
 

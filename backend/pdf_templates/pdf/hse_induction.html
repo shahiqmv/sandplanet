@@ -30,8 +30,8 @@
 </style>
 </head>
 <body>
-{% include "pdf/_footer.html" with footer_doc="SP-HSE-F01 · Rev 0" %}
-{% include "pdf/_letterhead.html" with title="SAFETY INDUCTION" subline="Health, Safety & Environment · Form SP-HSE-F01 · Rev 0" %}
+{% include "pdf/_footer.html" with footer_doc=footer_doc %}
+{% include "pdf/_letterhead.html" with title="SAFETY INDUCTION" subline=subline %}
 {% if bn %}<div style="text-align:right;margin:-3mm 0 3mm" class="bn">{{ c.TITLE_BN }}</div>{% endif %}
 
 <table class="kv">
@@ -78,6 +78,8 @@ Site sickness hotline: {{ plan.hotline }}{% endif %}</td></tr>
 <h2>DECLARATION{% if bn %} <span class="bn">/ ঘোষণা</span>{% endif %}</h2>
 <div style="font-size:8.4pt">{{ c.DECLARATION.0 }}</div>
 {% if bn %}<div class="bn">{{ c.DECLARATION.1 }}</div>{% endif %}
+<div style="font-size:8.4pt;margin-top:4px"><strong>{{ c.PPE_RECEIVED.0 }}</strong></div>
+{% if bn %}<div class="bn">{{ c.PPE_RECEIVED.1 }}</div>{% endif %}
 </div>
 
 <h2>PARTICIPANTS{% if bn %} <span class="bn">/ অংশগ্রহণকারী ও উপস্থিতি</span>{% endif %}</h2>

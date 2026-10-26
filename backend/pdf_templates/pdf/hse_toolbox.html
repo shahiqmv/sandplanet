@@ -51,7 +51,7 @@
   <tr><td style="height:34px">{{ presenter }}</td>
       <td>{{ t.delivered_by.full_name }}<br><span class="note">{{ doc.created_at|date:"d M Y" }}</span></td><td></td></tr>
 </table>
-<p class="note">Printed {{ printed_at|date:"d M Y — H:i" }} from Planet. Attendance is taken from the day's register. {{ photos|length }} photograph{{ photos|length|pluralize }} on record{% if photos %}, overleaf{% endif %}.</p>
+<p class="note">Printed {{ printed_at|date:"d M Y — H:i" }} from Planet. Attendance is taken from the day's register. {{ photos|length }} photograph{{ photos|length|pluralize }} on record{% if photos %}, overleaf{% endif %}.{% if has_sheet %} The signed attendance sheet is on file in Planet.{% endif %}</p>
 
 {% if photos %}
 <div style="page-break-before: always"></div>

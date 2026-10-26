@@ -6,6 +6,7 @@ import { AssessmentsTab, InspectionsTab, PermitsTab } from "./HseWork.jsx";
 import Discussion from "./Discussion.jsx";
 import HsePhotos, { PhotoPicker, ReportButton, uploadPhotos } from "./HsePhotos.jsx";
 import InductionsPanel from "./InductionsPanel.jsx";
+import { WarnFromIncident } from "./WarningsPanel.jsx";
 
 // Safety (HSE). The app's whole safety functionality used to be one checkbox
 // on the daily report that notified nobody, so "how many incidents last
@@ -506,6 +507,7 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
       </dl>
 
       <PeopleBlock incident={incident} onChanged={onChanged} />
+      <WarnBlock incident={incident} me={me} />
 
       <HsePhotos base={`/hse/incidents/${incident.ref}`} photos={incident.photos || []}
                  canAdd={!closed} canRemove={canInvestigate && !closed}
@@ -617,6 +619,21 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
       )}
       {incident?.ref && <Discussion threadKey={`ref:${incident.ref}`} me={me} />}
     </Modal>
+  );
+}
+
+// A warning notice for a worker involved — the site team raises it, the PM
+// approves it on the Warnings tab as any other. Never a fine (owner 2026-09-29).
+const WARN_ROLES = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "ADMIN"];
+function WarnBlock({ incident, me }) {
+  const [open, setOpen] = useState(false);
+  if (!WARN_ROLES.includes(me?.role)) return null;
+  return (
+    <div style={{ marginTop: 8 }}>
+      {open
+        ? <WarnFromIncident incident={incident} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
+        : <button onClick={() => setOpen(true)} style={ghostButton}>Warn a worker involved (SP-HSE-F02)</button>}
+    </div>
   );
 }
 

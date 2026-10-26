@@ -217,7 +217,8 @@ def remove_photo(document, pk, user):
         return "That photo is not on this record."
     if document.doc_type == "INC" and document.status == "CLOSED":
         return "This incident is closed — its evidence is kept as it is."
-    if document.doc_type == "TBT" and photos_of(document).count() == 1:
+    if (document.doc_type == "TBT" and photos_of(document).count() == 1
+            and sheet_of(document) is None):
         return ("A toolbox talk keeps at least one photo — add another "
                 "before removing this one.")
     stored, name = att.file, att.file_name
@@ -372,6 +373,40 @@ def statistics(site_ids=None, date_from=None, date_to=None):
     }
 
 
+# A toolbox talk's signed attendance sheet (HSE forms brief D, owner
+# 2026-10-26) counts as its photograph: the sheet with the men's signatures
+# proves who stood there better than a picture of their backs. Kept as one
+# PDF, photos of its pages joined.
+SHEET_CAPTION = "Signed attendance sheet"
+
+
+def sheet_of(document):
+    return (document.attachments.filter(kind="EVIDENCE",
+                                        caption=SHEET_CAPTION)
+            .order_by("-id").first())
+
+
+def add_toolbox_sheet(document, uploads, user):
+    """Attach the signed attendance sheet. Returns (attachment, error)."""
+    from . import signed_sheets
+    from .models import Attachment
+    pdf, err = signed_sheets.join(uploads)
+    if err:
+        return None, err
+    # a fresh name each time: storage never overwrites a file (S3 gotcha)
+    name = (f"{document.ref}-signed-sheet-"
+            f"{timezone.now():%Y%m%d%H%M%S}.pdf")
+    att = Attachment(document=document, revision=document.current_revision,
+                     kind="EVIDENCE", caption=SHEET_CAPTION, file_name=name,
+                     content_type="application/pdf", size_bytes=pdf.size,
+                     uploaded_by=user)
+    att.file.save(name, pdf, save=False)
+    att.save()
+    audit("document", document.id, "TOOLBOX_SHEET_ADDED", actor=user,
+          detail={"ref": document.ref})
+    return att, None
+
+
 # ---- people records: toolbox talks, inductions, training, PPE -----------
 # The records the HSE officer on a bigger site already keeps. These are
 # registers rather than workflows — the officer runs the process, the app
@@ -395,16 +430,18 @@ def workers_present(site, day):
 
 
 @transaction.atomic
-def create_toolbox_talk(*, site, data, user, project=None, photos=None):
+def create_toolbox_talk(*, site, data, user, project=None, photos=None,
+                        sheet=None):
     from .models import ToolboxAttendee, ToolboxTalk
 
     topic = (data.get("topic") or "").strip()
     if not topic:
         return None, "What was the talk about?"
     photos = list(photos or [])
-    if not photos:
-        return None, ("Add at least one photo of the talk — the men "
-                      "gathered for it.")
+    sheet = list(sheet or [])
+    if not photos and not sheet:
+        return None, ("Add the signed attendance sheet or at least one "
+                      "photo of the talk — the men gathered for it.")
     delivered_at = data.get("delivered_at")
     if isinstance(delivered_at, str):
         delivered_at = parse_datetime(delivered_at)
@@ -448,12 +485,17 @@ def create_toolbox_talk(*, site, data, user, project=None, photos=None):
         if problem:
             transaction.set_rollback(True)
             return None, problem
+    if sheet:
+        _, problem = add_toolbox_sheet(doc, sheet, user)
+        if problem:
+            transaction.set_rollback(True)
+            return None, problem
 
     audit("document", doc.id, "TOOLBOX_TALK_RECORDED", actor=user,
           to_state="RECORDED",
           detail={"ref": ref, "topic": topic[:80],
                   "attendees": talk.attendees.count(),
-                  "photos": len(photos)})
+                  "photos": len(photos), "sheet": bool(sheet)})
     return talk, None
 
 
