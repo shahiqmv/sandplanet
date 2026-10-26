@@ -31,7 +31,13 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
       .then((r) => { setMen(r); setPicked(new Set(r.map((m) => m.id))); })
       .catch((e) => { setMen([]); setError(e.message); });
   }, [site, day]);
+  const [q, setQ] = useState("");
   const toggle = (id) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // bulk tick / untick acts on the men shown, so "untick all, search the
+  // subcontractor, tick all shown" picks one gang
+  const shown = men.filter((m) => !q.trim() || `${m.emp_no} ${m.full_name} ${m.trade} ${m.subcontractor || "Sand Planet"}`
+    .toLowerCase().includes(q.trim().toLowerCase()));
+  const tickShown = (on) => setPicked((p) => { const n = new Set(p); shown.forEach((m) => (on ? n.add(m.id) : n.delete(m.id))); return n; });
   async function save(e) {
     e.preventDefault(); setBusy(true); setError(null);
     try {
@@ -63,14 +69,23 @@ function NewSession({ siteId, sites, meta, onSaved, onCancel }) {
       <div style={{ marginTop: 10, fontSize: 13 }}>
         <b>Men on the site not yet inducted here</b> <span style={{ color: "var(--muted)" }}>— new hires, bring-backs, transfers in, newly approved subcontract workers</span>
       </div>
-      <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, marginTop: 4, background: "var(--paper)" }}>
-        {men.map((m) => (
+      {men.length > 0 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+          <input style={{ ...inputStyle, width: 260 }} placeholder="Search name, number, trade or subcontractor…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Btn type="button" variant="secondary" onClick={() => tickShown(true)}>Tick all{q.trim() ? " shown" : ""}</Btn>
+          <Btn type="button" variant="secondary" onClick={() => tickShown(false)}>Untick all{q.trim() ? " shown" : ""}</Btn>
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{picked.size} of {men.length} ticked{q.trim() ? ` · ${shown.length} shown` : ""}</span>
+        </div>
+      )}
+      <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, marginTop: 6, background: "var(--paper)" }}>
+        {shown.map((m) => (
           <label key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 8px", fontSize: 13, borderBottom: "1px solid var(--line)" }}>
             <input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} />
             <b>{m.emp_no}</b> {m.full_name}
             <span style={{ color: "var(--muted)", fontSize: 12 }}>{m.trade}{m.subcontractor ? ` · ${m.subcontractor}` : ""}</span>
           </label>
         ))}
+        {men.length > 0 && shown.length === 0 && <div style={{ padding: 8, fontSize: 13, color: "var(--muted)" }}>No one matches the search.</div>}
         {men.length === 0 && <div style={{ padding: 8, fontSize: 13, color: "var(--muted)" }}>{site ? "Everyone on the site that day is inducted." : "Choose the site."}</div>}
       </div>
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
