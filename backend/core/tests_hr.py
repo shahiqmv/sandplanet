@@ -1330,3 +1330,48 @@ class PaIsFullHrTests(HrBase):
         self.assertIn("basic_pay", r.data)
         self.assertIsNotNone(r.data["basic_pay"])
 
+
+
+class SetWorkerLanguagesCommandTests(TestCase):
+    """Filling the language from nationality and the reviewed sheet
+    (owner 2026-10-26): blanks only, a dry run unless --apply."""
+
+    def test_nationality_and_sheet_fill_the_blanks(self):
+        import tempfile
+        from io import StringIO
+
+        from django.core.management import call_command
+        from openpyxl import Workbook
+
+        def emp(no, nat, lang=""):
+            return Employee.objects.create(emp_no=no, full_name=no,
+                                           nationality=nat,
+                                           preferred_language=lang)
+        emp("EMP-9001", "BANGALIDESHI")
+        emp("EMP-9002", "Nepalese")
+        emp("EMP-9003", "Male")
+        emp("EMP-9004", "Sri Lankan")          # from the sheet: suggested
+        emp("EMP-9005", "Indian")              # from the sheet: confirmed
+        emp("EMP-9006", "Indian")              # not on the sheet: stays blank
+        emp("EMP-9007", "Bangladeshi", "EN")   # already set: left alone
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Emp no", "Name", "Nat", "Site", "Trade", "Suggested",
+                   "Sure", "Why", "Confirmed"])
+        ws.append(["EMP-9004", "", "", "", "", "Tamil", "", "", ""])
+        ws.append(["EMP-9005", "", "", "", "", "Tamil", "", "", "Hindi"])
+        path = tempfile.mktemp(suffix=".xlsx")
+        wb.save(path)
+        out = StringIO()
+        call_command("set_worker_languages", sheet=path, stdout=out)
+        self.assertIn("Dry run", out.getvalue())
+        self.assertFalse(Employee.objects.exclude(preferred_language="")
+                         .exclude(emp_no="EMP-9007").exists())
+        call_command("set_worker_languages", sheet=path, apply=True,
+                     stdout=StringIO())
+        got = dict(Employee.objects.values_list("emp_no",
+                                                "preferred_language"))
+        self.assertEqual(got, {"EMP-9001": "BN", "EMP-9002": "NE",
+                               "EMP-9003": "DV", "EMP-9004": "TA",
+                               "EMP-9005": "HI", "EMP-9006": "",
+                               "EMP-9007": "EN"})
