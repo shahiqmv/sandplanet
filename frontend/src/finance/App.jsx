@@ -5,7 +5,7 @@
 // the books — chart of accounts, journals, trial balance, ledgers. Same
 // login and same database as Planet, so nothing is keyed twice. Documents
 // (a PYR, a PO, an import order) still open in Projects, where they live.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, resetSessionNotice, SESSION_EXPIRED } from "../api.js";
 import { AppSwitcher, Btn, card } from "../ui.jsx";
 import { getBrand, nameParts, onBrand } from "../brand.js";
@@ -229,9 +229,49 @@ function SettingsPage({ me, settings, onSaved }) {
   );
 }
 
+// ---- open pages: several at once, parked in a bar at the bottom -----------
+// (owner 2026-10-27). Finance often has a bill half entered when a supplier
+// rings about another, or a reconciliation open while checking a ledger.
+// Every open page stays alive — what was typed, the filters, the scroll —
+// and only the one in front is shown. The page list (not what was typed)
+// survives a reload.
+const MAX_PAGES = 6;
+const WIN_KEY = "f-open-pages";
+let winSeq = 0;
+const newWin = (page, sub = null) => ({ id: ++winSeq, page, sub, dirty: false, nonce: 0, scroll: 0 });
+
+function loadWindows() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WIN_KEY) || "null");
+    if (saved && Array.isArray(saved.pages) && saved.pages.length) {
+      const wins = saved.pages.slice(0, MAX_PAGES).map((w) => newWin(w.page, w.sub || null));
+      return { wins, active: wins[Math.min(saved.active || 0, wins.length - 1)].id };
+    }
+  } catch { /* storage unavailable or bad */ }
+  return null;
+}
+
 export default function App() {
   const [me, setMe] = useState(null);
-  const [route, setRoute] = useState(routeFromHash);
+  const [wins, setWins] = useState(() => {
+    const r = routeFromHash();
+    const saved = loadWindows();
+    if (!saved) return [newWin(r.page, r.sub)];
+    // the address the page was opened on wins over what was saved
+    const at = saved.wins.find((w) => w.page === r.page && (w.sub || null) === r.sub);
+    if (!at && window.location.hash) saved.wins[saved.wins.findIndex((w) => w.id === saved.active)] = newWin(r.page, r.sub);
+    return saved.wins;
+  });
+  const [activeId, setActiveId] = useState(() => wins.find((w) => {
+    const r = routeFromHash();
+    return w.page === r.page && (w.sub || null) === r.sub;
+  })?.id || wins[0].id);
+  const [winMsg, setWinMsg] = useState(null);
+  const winsRef = useRef(wins);
+  winsRef.current = wins;
+  const activeRef = useRef(activeId);
+  activeRef.current = activeId;
+  const route = wins.find((w) => w.id === activeId) || wins[0];
   const [brand, setBrand] = useState(getBrand());
   const [settings, setSettings] = useState(null);
   useEffect(() => onBrand(setBrand), []);
@@ -242,19 +282,96 @@ export default function App() {
   useEffect(() => {
     const onExpired = () => setMe({ authenticated: false, expired: true });
     window.addEventListener(SESSION_EXPIRED, onExpired);
-    const onHash = () => setRoute(routeFromHash());
+    // back / forward in the browser moves the page in front
+    const onHash = () => {
+      const r = routeFromHash();
+      const cur = winsRef.current.find((w) => w.id === activeRef.current);
+      if (cur && (cur.page !== r.page || (cur.sub || null) !== r.sub)) navWin(activeRef.current, r.page, r.sub, false);
+    };
     window.addEventListener("hashchange", onHash);
     return () => { window.removeEventListener(SESSION_EXPIRED, onExpired); window.removeEventListener("hashchange", onHash); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- navWin reads refs only
   useEffect(() => {
     if (me?.authenticated && BOOKS.has(me.role)) api("/ledger/settings").then(setSettings).catch(() => {});
   }, [me]);
 
-  function go(key, sub = null) {
-    window.location.hash = sub ? `#/${key}/${sub}` : `#/${key}`;
-    setRoute(routeFromHash());
-    window.scrollTo({ top: 0 });
+  // remember the page list (not what was typed) for the next visit
+  useEffect(() => {
+    try {
+      localStorage.setItem(WIN_KEY, JSON.stringify({
+        pages: wins.map((w) => ({ page: w.page, sub: w.sub })),
+        active: Math.max(0, wins.findIndex((w) => w.id === activeId)) }));
+    } catch { /* storage unavailable */ }
+  }, [wins, activeId]);
+
+  const setHash = (w) => {
+    const h = w.sub ? `#/${w.page}/${w.sub}` : `#/${w.page}`;
+    if (window.location.hash !== h) window.location.hash = h;
+  };
+  // move one open page to another screen — its own links do this
+  function navWin(id, key, sub = null, top = true) {
+    setWins((ws) => ws.map((w) => (w.id === id ? { ...w, page: key, sub: sub || null, dirty: false } : w)));
+    if (id === activeRef.current) {
+      setHash({ page: key, sub });
+      if (top) window.scrollTo({ top: 0 });
+    }
   }
+  // bring an open page to the front, keeping where each one was scrolled
+  function focusWin(id) {
+    if (id === activeRef.current) return;
+    const y = window.scrollY;
+    setWins((ws) => ws.map((w) => (w.id === activeRef.current ? { ...w, scroll: y } : w)));
+    setActiveId(id);
+    const w = winsRef.current.find((x) => x.id === id);
+    if (w) { setHash(w); setTimeout(() => window.scrollTo({ top: w.scroll || 0 }), 0); }
+  }
+  // a new page in front; the oldest untouched page makes room past the cap
+  function openWin(key, sub = null) {
+    let ws = winsRef.current;
+    if (ws.length >= MAX_PAGES) {
+      const spare = ws.find((w) => w.id !== activeRef.current && !w.dirty);
+      if (!spare) { setWinMsg(`${MAX_PAGES} pages are open with entries in them — save or close one first.`); return; }
+      ws = ws.filter((w) => w.id !== spare.id);
+    }
+    const w = newWin(key, sub);
+    const y = window.scrollY;
+    setWins([...ws.map((x) => (x.id === activeRef.current ? { ...x, scroll: y } : x)), w]);
+    setActiveId(w.id);
+    setHash(w);
+    window.scrollTo({ top: 0 });
+    setWinMsg(null);
+  }
+  // the menu: replace the page in front — unless something was typed on it,
+  // in which case it is parked in the bar and the new page opens beside it
+  function go(key, sub = null) {
+    const cur = winsRef.current.find((w) => w.id === activeRef.current);
+    if (cur && cur.dirty && (cur.page !== key || (cur.sub || null) !== sub)) openWin(key, sub);
+    else navWin(activeRef.current, key, sub);
+  }
+  function minimize() {
+    const home = winsRef.current.find((w) => w.id !== activeRef.current && w.page === "home" && !w.dirty);
+    if (home) focusWin(home.id); else openWin("home");
+  }
+  function closeWin(id) {
+    const w = winsRef.current.find((x) => x.id === id);
+    if (w?.dirty && !window.confirm("This page has entries that may not be saved. Close it?")) return;
+    const rest = winsRef.current.filter((x) => x.id !== id);
+    if (!rest.length) { setWins([newWin("home")]); setActiveId(winSeq); setHash({ page: "home" }); return; }
+    setWins(rest);
+    if (id === activeRef.current) {
+      const next = rest[rest.length - 1];
+      setActiveId(next.id); setHash(next);
+      setTimeout(() => window.scrollTo({ top: next.scroll || 0 }), 0);
+    }
+    setWinMsg(null);
+  }
+  const refreshWin = (id) => setWins((ws) => ws.map((w) => (w.id === id ? { ...w, nonce: w.nonce + 1, dirty: false } : w)));
+  const markDirty = (id, e) => {
+    const t = e.target;
+    // searching and filtering a list is not unsaved work
+    if (t && (t.type === "search" || /search|filter/i.test(t.placeholder || "") || t.closest?.("[data-not-entry]"))) return;
+    setWins((ws) => (ws.find((w) => w.id === id)?.dirty ? ws : ws.map((w) => (w.id === id ? { ...w, dirty: true } : w))));
+  };
   async function signOut() {
     try { await api("/auth/logout", { method: "POST", body: {} }); } catch { /* gone anyway */ }
     setMe({ authenticated: false });
@@ -268,13 +385,55 @@ export default function App() {
   const sections = SECTIONS.map(([key, label, pages]) => [key, label, pages.filter(([k]) => can(k))])
     .filter(([, , pages]) => pages.length);
   const page = can(route.page) ? route.page : "home";
-  const { sub } = route;
   const active = sections.find(([, , pages]) => pages.some(([k]) => k === page)) || sections[0];
   const canWrite = ["FINANCE", "ADMIN"].includes(me.role);
-  // A document opens where it lives — in Projects, in its own tab.
-  const openDoc = (ref) => (/^RENT-/i.test(ref || "") ? go("rentals", ref)
-    : /^UTL-/i.test(ref || "") ? go("utilities", ref)
-    : window.open(`${planetUrl}#/open/${encodeURIComponent(ref)}`, "_blank", "noopener"));
+  const label = (key) => ALL_PAGES.find(([k]) => k === key)?.[1] || "Overview";
+  const title = (w) => label(can(w.page) ? w.page : "home") + (w.sub ? ` · ${w.sub}` : "");
+
+  // one page's screen; its own links move that page, not the one in front
+  function screen(w) {
+    const pg = can(w.page) ? w.page : "home";
+    const { sub } = w;
+    const go = (key, s = null) => navWin(w.id, key, s);
+    // A document opens where it lives — in Projects, in its own tab.
+    const openDoc = (ref) => (/^RENT-/i.test(ref || "") ? go("rentals", ref)
+      : /^UTL-/i.test(ref || "") ? go("utilities", ref)
+      : window.open(`${planetUrl}#/open/${encodeURIComponent(ref)}`, "_blank", "noopener"));
+    return (<>
+        {pg === "home" && <Home me={me} go={go} can={can} settings={settings} />}
+        {pg === "dashboard" && (
+          <FinanceDashboard me={me} onVouchers={() => go("vouchers")}
+            onNewPayment={["FINANCE", "ADMIN"].includes(me.role)
+              ? () => window.open(`${planetUrl}#/doc/central-pyr-form`, "_blank", "noopener") : null} />
+        )}
+        {pg === "vouchers" && <PaymentVouchersPage me={me} onOpenDoc={openDoc} openRef={sub} key={sub || "list"} />}
+        {pg === "payables" && <PayablesPage me={me} onOpenDoc={openDoc} />}
+        {pg === "rentals" && <RentalsPage sub={sub} go={go} key={sub || "list"} />}
+        {pg === "audits" && <AuditsPage sub={sub} go={go} key={sub || "list"} />}
+        {pg === "utilities" && <UtilitiesPage sub={sub} go={go} />}
+        {pg === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
+        {pg === "receivables" && <ReceivablesPage me={me} />}
+        {pg === "banking" && <BankingPage sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "home"} />}
+        {pg === "reconcile" && <ReconcilePage sub={sub} go={go} />}
+        {pg === "bills" && <DocsPage side="AP" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
+        {pg === "suppliers" && <PartiesPage side="AP" sub={sub} go={go} canEdit={canWrite} />}
+        {pg === "ap-aging" && <AgingPage side="AP" go={go} />}
+        {pg === "invoices" && <DocsPage side="AR" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
+        {pg === "customers" && <PartiesPage side="AR" sub={sub} go={go} canEdit={canWrite} />}
+        {pg === "ar-aging" && <AgingPage side="AR" go={go} />}
+        {pg === "pnl" && <ProfitLossPage go={go} settings={settings} />}
+        {pg === "bs" && <BalanceSheetPage go={go} />}
+        {pg === "gst" && <GstPage go={go} />}
+        {pg === "journals" && <JournalsPage sub={sub} go={go} settings={settings} planetUrl={planetUrl} key={sub || "list"} />}
+        {pg === "accounts" && <AccountsPage go={go} />}
+        {pg === "import" && <ImportPage canEdit={canWrite} />}
+        {pg === "tb" && <TrialBalancePage go={go} settings={settings} />}
+        {pg === "ledger" && <LedgerPage accountId={sub ? Number(sub) : null} go={go} settings={settings} />}
+        {pg === "posting" && <PostingPage />}
+        {pg === "cost-heads" && <CostHeadsPage me={me} />}
+        {pg === "settings" && <SettingsPage me={me} settings={settings} onSaved={setSettings} />}
+    </>);
+  }
 
   return (
     <div className="t-app f-app">
@@ -305,39 +464,34 @@ export default function App() {
         </nav>
       )}
       <main className="t-main">
-        {page === "home" && <Home me={me} go={go} can={can} settings={settings} />}
-        {page === "dashboard" && (
-          <FinanceDashboard me={me} onVouchers={() => go("vouchers")}
-            onNewPayment={["FINANCE", "ADMIN"].includes(me.role)
-              ? () => window.open(`${planetUrl}#/doc/central-pyr-form`, "_blank", "noopener") : null} />
-        )}
-        {page === "vouchers" && <PaymentVouchersPage me={me} onOpenDoc={openDoc} openRef={sub} key={sub || "list"} />}
-        {page === "payables" && <PayablesPage me={me} onOpenDoc={openDoc} />}
-        {page === "rentals" && <RentalsPage sub={sub} go={go} key={sub || "list"} />}
-        {page === "audits" && <AuditsPage sub={sub} go={go} key={sub || "list"} />}
-        {page === "utilities" && <UtilitiesPage sub={sub} go={go} />}
-        {page === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
-        {page === "receivables" && <ReceivablesPage me={me} />}
-        {page === "banking" && <BankingPage sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "home"} />}
-        {page === "reconcile" && <ReconcilePage sub={sub} go={go} />}
-        {page === "bills" && <DocsPage side="AP" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
-        {page === "suppliers" && <PartiesPage side="AP" sub={sub} go={go} canEdit={canWrite} />}
-        {page === "ap-aging" && <AgingPage side="AP" go={go} />}
-        {page === "invoices" && <DocsPage side="AR" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
-        {page === "customers" && <PartiesPage side="AR" sub={sub} go={go} canEdit={canWrite} />}
-        {page === "ar-aging" && <AgingPage side="AR" go={go} />}
-        {page === "pnl" && <ProfitLossPage go={go} settings={settings} />}
-        {page === "bs" && <BalanceSheetPage go={go} />}
-        {page === "gst" && <GstPage go={go} />}
-        {page === "journals" && <JournalsPage sub={sub} go={go} settings={settings} planetUrl={planetUrl} key={sub || "list"} />}
-        {page === "accounts" && <AccountsPage go={go} />}
-        {page === "import" && <ImportPage canEdit={canWrite} />}
-        {page === "tb" && <TrialBalancePage go={go} settings={settings} />}
-        {page === "ledger" && <LedgerPage accountId={sub ? Number(sub) : null} go={go} settings={settings} />}
-        {page === "posting" && <PostingPage />}
-        {page === "cost-heads" && <CostHeadsPage me={me} />}
-        {page === "settings" && <SettingsPage me={me} settings={settings} onSaved={setSettings} />}
+        {wins.map((w) => (
+          <div key={w.id} hidden={w.id !== activeId}
+               onInputCapture={(e) => markDirty(w.id, e)} onChangeCapture={(e) => markDirty(w.id, e)}>
+            {wins.length > 1 && w.id === activeId && (
+              <div className="f-winbar">
+                <span className="f-winbar-title">{title(w)}{w.dirty && <span className="f-dot" title="Has entries that may not be saved"> •</span>}</span>
+                <span className="spacer" />
+                <button className="f-link" onClick={() => refreshWin(w.id)} title="Load this page again with the latest figures">Refresh</button>
+                <button className="f-winbtn" onClick={minimize} title="Park this page in the bar below and keep what is on it">– Minimize</button>
+              </div>
+            )}
+            <div key={w.nonce}>{screen(w)}</div>
+          </div>
+        ))}
       </main>
+      {winMsg && <div className="f-winmsg">{winMsg}</div>}
+      <nav className="f-dock" aria-label="Open pages">
+        {wins.map((w) => (
+          <span key={w.id} className={"f-chip" + (w.id === activeId ? " is-active" : "")}>
+            <button className="f-chip-open" onClick={() => focusWin(w.id)} title={w.id === activeId ? "In front" : "Bring to the front"}>
+              {title(w)}{w.dirty && <span className="f-dot"> •</span>}
+            </button>
+            {wins.length > 1 && <button className="f-chip-x" onClick={() => closeWin(w.id)} title="Close this page" aria-label={`Close ${title(w)}`}>×</button>}
+          </span>
+        ))}
+        <button className="f-chip-new" onClick={() => openWin("home")} disabled={wins.length >= MAX_PAGES}
+                title={wins.length >= MAX_PAGES ? `At most ${MAX_PAGES} pages` : "Open another page"}>+ New page</button>
+      </nav>
     </div>
   );
 }
