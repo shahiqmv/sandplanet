@@ -277,6 +277,55 @@ def timelapses(request):
 
 
 @api_view(["POST"])
+def timelapse_upload_start(request):
+    """Begin a week's video in chunks: camera_id, week_from, week_to, note,
+    file_name, size → {token, chunk_size} (owner 2026-10-27)."""
+    from . import timelapse as tl
+    from .models import TimelapseCamera
+    cam = TimelapseCamera.objects.select_related("site").filter(
+        pk=request.data.get("camera_id") or None).first()
+    if cam is None:
+        return Response({"detail": "Pick the camera."}, status=400)
+    ids = _tl_sites(request)
+    if ids is not None and cam.site_id not in ids:
+        return Response({"detail": "Not your site."}, status=403)
+    token, chunk, msg = tl.start_upload(cam, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"token": token, "chunk_size": chunk}, status=201)
+
+
+@api_view(["GET"])
+def timelapse_upload_status(request, token):
+    """Which chunks have arrived — to carry on after a dropped link."""
+    from . import timelapse as tl
+    d, meta = tl._meta(token)
+    if meta is None or meta["user_id"] != request.user.id:
+        return Response({"detail": "That upload has expired."}, status=404)
+    return Response({"received": tl.received(d)})
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser])
+def timelapse_upload_chunk(request, token):
+    from . import timelapse as tl
+    n, msg = tl.put_chunk(token, request.data.get("index"),
+                          request.FILES.get("chunk"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"received": n})
+
+
+@api_view(["POST"])
+def timelapse_upload_finish(request, token):
+    from . import timelapse as tl
+    clip, msg = tl.finish_upload(token, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(tl.clip_dict(clip, request), status=201)
+
+
+@api_view(["POST"])
 def timelapse_cameras(request):
     """Register a time-lapse camera: site_id, name, location, project_id."""
     from . import timelapse as tl

@@ -121,12 +121,13 @@ function _label(method, path) {
 }
 
 
-export function apiUpload(path, formData, method = "POST") {
+export function apiUpload(path, formData, method = "POST", { quiet = false } = {}) {
   // XMLHttpRequest, not fetch: fetch cannot report how much of a body has been
   // sent, and a 15MB enclosure over a site connection needs a real percentage
   // rather than a spinner that might mean anything (owner 2026-08-20).
   return new Promise((resolve, reject) => {
-    const id = _start("Uploading", true);
+    // quiet: a caller sending many pieces shows its own overall progress
+    const id = quiet ? null : _start("Uploading", true);
     const xhr = new XMLHttpRequest();
     xhr.open(method, `${API_BASE}${path}`, true);
     xhr.withCredentials = true;

@@ -40,6 +40,10 @@ function SiteField({ d, siteId, setSiteId }) {
       </select></label>);
 }
 
+const MAX_BYTES = 4 * 1024 ** 3;     // the server's limit, checked before sending
+const gb = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)} GB`
+  : `${Math.max(1, Math.round(b / 1024 ** 2))} MB`);
+
 const camText = (c) => [c.project_code || "whole site", c.location]
   .filter(Boolean).join(" · ");
 
@@ -59,22 +63,44 @@ function Upload({ d, onDone, onCancel }) {
     setCamId(cams.length === 1 ? String(cams[0].id) : "");
   }, [siteId, cams.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [progress, setProgress] = useState(null);   // 0..1 while sending
+  const tooBig = file && file.size > MAX_BYTES;
+
+  // A week's video runs to gigabytes: it goes up in 8 MB pieces, each its
+  // own short request and retried on its own, so a dropped island link costs
+  // one piece rather than the whole upload (owner 2026-10-27, SJR's 2 GB).
   async function send() {
     if (!cam || !file) {
       setError("Pick the camera and attach the video.");
       return;
     }
-    setBusy(true); setError(null);
+    if (tooBig) return;
+    setBusy(true); setError(null); setProgress(0);
     try {
-      const fd = new FormData();
-      fd.append("camera_id", cam.id);
-      fd.append("week_from", from);
-      fd.append("week_to", to);
-      fd.append("file", file);
-      await apiUpload("/timelapses", fd, "POST");
+      const start = await api("/timelapses/uploads", { method: "POST", body: {
+        camera_id: cam.id, week_from: from, week_to: to,
+        file_name: file.name, size: file.size } });
+      const size = start.chunk_size;
+      const n = Math.max(1, Math.ceil(file.size / size));
+      for (let i = 0; i < n; i += 1) {
+        const fd = new FormData();
+        fd.append("index", String(i));
+        fd.append("chunk", file.slice(i * size, Math.min(file.size, (i + 1) * size)), "chunk");
+        for (let attempt = 1; ; attempt += 1) {
+          try {
+            await apiUpload(`/timelapses/uploads/${start.token}/chunk`, fd, "POST", { quiet: true });
+            break;
+          } catch (e) {
+            if (attempt >= 5 || (e.status && e.status < 500)) throw e;
+            await new Promise((r) => setTimeout(r, 2000 * attempt));   // the link came back?
+          }
+        }
+        setProgress((i + 1) / n);
+      }
+      await api(`/timelapses/uploads/${start.token}/finish`, { method: "POST", body: {} });
       onDone();
     } catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(null); }
   }
 
   return (
@@ -82,8 +108,8 @@ function Upload({ d, onDone, onCancel }) {
       <h3 style={{ marginTop: 0, fontSize: 15 }}>Upload this week's time-lapse</h3>
       <p style={{ fontSize: 12.5, color: "#667", marginTop: 0 }}>
         Copy the video off the camera's card and upload it as it is — the AVI
-        file is fine. It is joined onto the camera's video within about ten
-        minutes.</p>
+        or MP4 file, up to 4 GB. Keep this page open while it sends; it is
+        joined onto the camera's video within about ten minutes.</p>
       <div style={{ display: "grid", gap: 10,
                     gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))" }}>
         <SiteField d={d} siteId={siteId} setSiteId={setSiteId} />
@@ -102,7 +128,11 @@ function Upload({ d, onDone, onCancel }) {
             onChange={(e) => setTo(e.target.value)} /></label>
         <label style={{ fontSize: 12.5, gridColumn: "1 / -1" }}>Video
           <input type="file" accept="video/*,.avi" style={{ display: "block", marginTop: 4 }}
-            onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>
+            onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null); }} />
+          {file && (
+            <span style={{ fontSize: 12, color: tooBig ? "#b00" : "#667" }}>
+              {gb(file.size)}{tooBig ? " — over the 4 GB limit: split the week on the card and upload it in two" : ""}</span>)}
+        </label>
       </div>
       {siteId && cams.length === 0 && (
         <p style={{ fontSize: 13, color: "#8a5200" }}>
@@ -115,8 +145,9 @@ function Upload({ d, onDone, onCancel }) {
                             : "Whole site"} · {cam.location}</p>)}
       {error && <p style={{ color: "#b00", fontSize: 13 }}>{error}</p>}
       <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-        <Btn variant="primary" disabled={busy || !cam} onClick={send}>
-          {busy ? "Uploading…" : "Upload"}</Btn>
+        <Btn variant="primary" disabled={busy || !cam || tooBig} onClick={send}>
+          {busy ? (progress == null || progress >= 1 ? "Saving…"
+            : `Uploading ${Math.floor(progress * 100)}% of ${gb(file.size)}`) : "Upload"}</Btn>
         <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
       </div>
     </div>

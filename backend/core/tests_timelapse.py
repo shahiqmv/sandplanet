@@ -232,3 +232,84 @@ class TimelapseTests(TestCase):
         d = self.c.get("/api/v1/timelapses").data
         self.assertEqual(d["behind"], ["SJR · Brinno north"])
         self.assertTrue(d["can_publish"])
+
+
+@override_settings(STORAGES={
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage",
+                "OPTIONS": {"location": MEDIA}},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage."
+                               "StaticFilesStorage"}})
+class ChunkedUploadTests(TestCase):
+    """A week's video sent in pieces (owner 2026-10-27): SJR's 2 GB file
+    never arrived in one request — the server gave up and answered 500."""
+
+    def setUp(self):
+        from unittest import mock
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.se = make_user("ch_se", User.Role.SITE_ENGINEER, site=self.site)
+        self.other = make_user("ch_pm", User.Role.PM, site=self.site)
+        self.cam = TimelapseCamera.objects.create(
+            site=self.site, name="Brinno north", location="Roof")
+        self.c = APIClient()
+        self.c.force_authenticate(self.se)
+        # tiny pieces and a private folder for the test
+        for name, value in (("CHUNK_BYTES", 4),
+                            ("UPLOAD_DIR", tempfile.mkdtemp(prefix="tlup-"))):
+            p = mock.patch.object(tl, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def start(self, size, name="TLC00001.MP4", **extra):
+        body = {"camera_id": self.cam.id, "week_from": "2026-10-18",
+                "week_to": "2026-10-23", "file_name": name, "size": size}
+        body.update(extra)
+        return self.c.post("/api/v1/timelapses/uploads", body, format="json")
+
+    def chunk(self, token, i, data, user=None):
+        if user:
+            self.c.force_authenticate(user)
+        return self.c.post(f"/api/v1/timelapses/uploads/{token}/chunk",
+                           {"index": i, "chunk": SimpleUploadedFile("c", data)},
+                           format="multipart")
+
+    def test_pieces_in_any_order_make_the_week(self):
+        data = b"0123456789"                      # 3 pieces of 4, 4, 2
+        r = self.start(len(data))
+        self.assertEqual(r.status_code, 201, r.data)
+        token = r.data["token"]
+        for i in (2, 0, 0, 1):                     # out of order, one twice
+            self.assertEqual(self.chunk(token, i, data[i * 4:(i + 1) * 4])
+                             .status_code, 200)
+        self.assertEqual(self.c.get(f"/api/v1/timelapses/uploads/{token}")
+                         .data["received"], [0, 1, 2])
+        r = self.c.post(f"/api/v1/timelapses/uploads/{token}/finish", {},
+                        format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        clip = SiteTimelapse.objects.get()
+        self.assertEqual((clip.size_bytes, clip.file_name, clip.status),
+                         (10, "TLC00001.MP4", "PENDING"))
+        with clip.file.open("rb") as f:
+            self.assertEqual(f.read(), data)
+
+    def test_a_missing_piece_is_named_and_nothing_is_saved(self):
+        token = self.start(10).data["token"]
+        self.chunk(token, 0, b"0123")
+        r = self.c.post(f"/api/v1/timelapses/uploads/{token}/finish", {},
+                        format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("did not arrive", r.data["detail"])
+        self.assertFalse(SiteTimelapse.objects.exists())
+
+    def test_too_big_is_refused_before_a_byte_is_sent(self):
+        r = self.start(5 * 1024 ** 3)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("over 4 GB", r.data["detail"])
+        self.assertEqual(self.start(10, name="notes.pdf").status_code, 400)
+
+    def test_someone_else_cannot_add_to_an_upload(self):
+        token = self.start(4).data["token"]
+        self.assertEqual(self.chunk(token, 0, b"0123", user=self.other)
+                         .status_code, 400)
+        # a token that is not one of ours never becomes a path
+        self.assertEqual(self.chunk("..evil", 0, b"x").status_code, 400)

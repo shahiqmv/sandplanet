@@ -29,7 +29,13 @@ PUBLISH_ROLES = ("PM", "DIRECTOR", "ADMIN")
 # the cameras are registered like the live ones — by whoever installs and
 # answers for them, not by whoever happens to upload
 CAMERA_ROLES = PUBLISH_ROLES
-MAX_BYTES = 1024 * 1024 * 1024          # 1 GB: an AVI week can be large
+# A week off a Brinno card runs to a couple of gigabytes (SJR's first was
+# 2 GB, 2026-10-24) — sent in chunks, so the size is not one long request.
+# 4 GB keeps the final save to storage inside the server's time limit.
+MAX_BYTES = 4 * 1024 * 1024 * 1024
+CHUNK_BYTES = 8 * 1024 * 1024           # under the proxy's 16 MB buffer
+UPLOAD_DIR = os.environ.get("TIMELAPSE_UPLOAD_DIR") or os.path.join(
+    tempfile.gettempdir(), "planet-timelapse-uploads")
 ALLOWED = (".mp4", ".m4v", ".mov", ".webm", ".avi", ".mkv")
 
 # One standard every piece is converted to, so the pieces join without
@@ -141,7 +147,8 @@ def create(camera, data, upload, actor):
     if not (upload.name or "").lower().endswith(ALLOWED):
         return None, "Upload the camera's video file (AVI or MP4)."
     if upload.size > MAX_BYTES:
-        return None, "That video is over 1 GB — split the week and upload twice."
+        return None, ("That video is over 4 GB — split the week on the "
+                      "card and upload it in two.")
     if not camera.is_active:
         return None, "That camera is retired — pick the one now in its place."
     try:
@@ -164,6 +171,159 @@ def create(camera, data, upload, actor):
           detail={"site": site.code, "camera": camera.name,
                   "week": f"{wf}..{wt}"})
     return clip, None
+
+
+# ---- uploading a big video in chunks (owner 2026-10-27) ----------------------
+# A week's video went up in one request, and a 2 GB file over an island link
+# never arrived: the server gave up part way and answered "500" (SJR, 24 Oct).
+# The browser now sends it in 8 MB chunks, each its own short request and
+# retried on its own; the chunks wait on the server's disk until the last
+# arrives, are joined, and the week is saved as before.
+
+def _session_dir(token):
+    if not token or not all(c in "0123456789abcdef" for c in token) \
+            or len(token) != 32:
+        return None
+    return os.path.join(UPLOAD_DIR, token)
+
+
+def _meta(token):
+    import json
+    d = _session_dir(token)
+    if d is None or not os.path.exists(os.path.join(d, "meta.json")):
+        return None, None
+    with open(os.path.join(d, "meta.json")) as f:
+        return d, json.load(f)
+
+
+def _validate(camera, data, name, size, actor):
+    """The checks a week's upload must pass, before a byte is sent."""
+    if actor.role not in UPLOAD_ROLES:
+        return "The site team, PM or Director uploads time-lapses."
+    if not (name or "").lower().endswith(ALLOWED):
+        return "Upload the camera's video file (AVI or MP4)."
+    if not size or size <= 0:
+        return "Choose the week's video."
+    if size > MAX_BYTES:
+        return ("That video is over 4 GB — split the week on the card and "
+                "upload it in two.")
+    if not camera.is_active:
+        return "That camera is retired — pick the one now in its place."
+    try:
+        wf = date.fromisoformat(str(data.get("week_from"))[:10])
+        wt = date.fromisoformat(str(data.get("week_to"))[:10])
+    except ValueError:
+        return "Give the week the video covers."
+    if wt < wf:
+        return "The week ends before it starts."
+    if wf > date.today():
+        return "That week has not started yet."
+    return None
+
+
+def start_upload(camera, data, actor):
+    """(token, chunk_size, error) for a new chunked upload."""
+    import json
+    import uuid
+    name = (data.get("file_name") or "").strip()[:200]
+    try:
+        size = int(data.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    err = _validate(camera, data, name, size, actor)
+    if err:
+        return None, None, err
+    _sweep()
+    token = uuid.uuid4().hex
+    d = os.path.join(UPLOAD_DIR, token)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "meta.json"), "w") as f:
+        json.dump({"camera_id": camera.id, "file_name": name, "size": size,
+                   "chunk": CHUNK_BYTES, "user_id": actor.id,
+                   "week_from": str(data.get("week_from"))[:10],
+                   "week_to": str(data.get("week_to"))[:10],
+                   "note": (data.get("note") or "")[:300]}, f)
+    return token, CHUNK_BYTES, None
+
+
+def _expected(meta):
+    return max(1, -(-meta["size"] // meta["chunk"]))
+
+
+def received(d):
+    return sorted(int(n.split(".")[0]) for n in os.listdir(d)
+                  if n.endswith(".part"))
+
+
+def put_chunk(token, index, chunk, actor):
+    """Store one chunk; sending the same one twice is harmless. Returns
+    (received count, error)."""
+    d, meta = _meta(token)
+    if meta is None:
+        return None, "That upload has expired — start it again."
+    if meta["user_id"] != actor.id:
+        return None, "That upload is someone else's."
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        return None, "Bad chunk."
+    if not 0 <= index < _expected(meta) or chunk is None:
+        return None, "Bad chunk."
+    if chunk.size > CHUNK_BYTES:
+        return None, "Chunk too large."
+    tmp = os.path.join(d, f"{index:06d}.tmp")
+    with open(tmp, "wb") as out:
+        for piece in chunk.chunks():
+            out.write(piece)
+    os.replace(tmp, os.path.join(d, f"{index:06d}.part"))
+    return len(received(d)), None
+
+
+def finish_upload(token, actor):
+    """Join the chunks and save the week. Returns (clip, error)."""
+    d, meta = _meta(token)
+    if meta is None:
+        return None, "That upload has expired — start it again."
+    if meta["user_id"] != actor.id:
+        return None, "That upload is someone else's."
+    have = received(d)
+    if have != list(range(_expected(meta))):
+        return None, (f"{_expected(meta) - len(have)} piece(s) of the video "
+                      "did not arrive — send it again.")
+    camera = TimelapseCamera.objects.select_related("site").filter(
+        pk=meta["camera_id"]).first()
+    if camera is None:
+        return None, "That camera is no longer on the register."
+    whole = os.path.join(d, "whole")
+    with open(whole, "wb") as out:
+        for i in have:
+            with open(os.path.join(d, f"{i:06d}.part"), "rb") as part:
+                shutil.copyfileobj(part, out, 1024 * 1024)
+    if os.path.getsize(whole) != meta["size"]:
+        shutil.rmtree(d, ignore_errors=True)
+        return None, "The video arrived damaged — send it again."
+    try:
+        with open(whole, "rb") as f:
+            clip, err = create(camera, meta, File(f, name=meta["file_name"]),
+                               actor)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return clip, err
+
+
+def _sweep(days=2):
+    """Uploads abandoned part way are cleared after two days."""
+    import time
+    if not os.path.isdir(UPLOAD_DIR):
+        return
+    cutoff = time.time() - days * 86400
+    for name in os.listdir(UPLOAD_DIR):
+        path = os.path.join(UPLOAD_DIR, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
 
 
 @transaction.atomic

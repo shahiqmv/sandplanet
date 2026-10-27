@@ -181,6 +181,15 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Files: Spaces/MinIO when configured (design §1); local-disk fallback for
 # dev without Docker only (DECISIONS.md D3). Production must set S3_* env.
+def _s3_client_config():
+    from botocore.config import Config
+    try:
+        return Config(request_checksum_calculation="when_required",
+                      response_checksum_validation="when_required")
+    except TypeError:             # a botocore from before the setting
+        return Config()
+
+
 if os.environ.get("S3_ENDPOINT_URL"):
     import re as _re
 
@@ -199,6 +208,11 @@ if os.environ.get("S3_ENDPOINT_URL"):
                 "secret_key": os.environ.get("S3_SECRET_KEY"),
                 "bucket_name": os.environ.get("S3_BUCKET", "sandplanet-local"),
                 "region_name": _s3_region,
+                # botocore 1.36+ checksums every upload by default, which
+                # DigitalOcean Spaces does not accept on a multipart (large)
+                # upload; checksum only when the store asks for one
+                # (owner 2026-10-27, after the time-lapse failures).
+                "client_config": _s3_client_config(),
             },
         },
         # Compression only, no manifest re-hashing — Vite already
