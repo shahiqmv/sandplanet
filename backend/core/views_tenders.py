@@ -253,6 +253,8 @@ def tender_action(request, pk, action):
         msg = svc.cancel_event(t, request.data.get("event_id"), request.user)
     elif action == "send-for-approval":
         msg = svc.send_for_approval(t, request.data, request.user)
+    elif action == "back-cost":
+        msg = svc.back_cost(t, request.data, request.user)
     elif action == "approve":
         msg = svc.approve(t, request.user)
     elif action == "return":

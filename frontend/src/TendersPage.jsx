@@ -642,6 +642,8 @@ function Snapshot({ t, can, act, busy }) {
         <div style={{ fontSize: 12, marginTop: 8 }}>
           <span style={{ color: "var(--muted)" }}>Payment terms: </span>
           {s.payment_terms}</div>)}
+      {can && t.status === "DRAFT" && s.priced_lines > s.costed_lines && (
+        <BackCost t={t} act={act} busy={busy} left={s.priced_lines - s.costed_lines} />)}
       <div style={{ marginTop: 8 }}>
         <div style={{ fontSize: 11, color: "var(--muted)",
                       textTransform: "uppercase", letterSpacing: 0.3 }}>
@@ -664,6 +666,34 @@ function Snapshot({ t, can, act, busy }) {
   );
 }
 
+
+/* A bill priced outside Planet: state the markup and the cost of every
+ * uncosted line is worked back from its rate — cost = rate ÷ (1 + markup) —
+ * instead of typing a cost on each (owner 2026-10-27). Rates stay as priced. */
+function BackCost({ act, busy, left }) {
+  const [m, setM] = useState("");
+  const [lm, setLm] = useState("");
+  return (
+    <div style={{ marginTop: 10, padding: "8px 10px", border: "1px dashed #c9a227",
+                  borderRadius: 6, background: "#fffbea", fontSize: 12.5 }}>
+      <b>Priced outside Planet?</b>{" "}
+      <span style={{ color: "var(--muted)" }}>
+        Give the markup and the cost of the {left} uncosted line{left === 1 ? "" : "s"} is
+        worked back from the rates. The rates do not change.</span>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+        <label>Markup %{" "}
+          <input value={m} onChange={(e) => setM(e.target.value)} inputMode="decimal"
+                 placeholder="20" style={{ ...inputStyle, width: 70 }} /></label>
+        <label>Labour markup %{" "}
+          <input value={lm} onChange={(e) => setLm(e.target.value)} inputMode="decimal"
+                 placeholder="same" style={{ ...inputStyle, width: 70 }} /></label>
+        <Btn disabled={busy || !m.trim()}
+             onClick={() => act("back-cost", { markup_percent: m, labour_markup_percent: lm })}>
+          Work out the costs</Btn>
+      </div>
+    </div>
+  );
+}
 
 /* Awarding creates the project, so it asks for the code the register will
    read by (SOUT JT, NORTH JT) rather than inventing a serial. */

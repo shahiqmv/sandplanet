@@ -246,6 +246,43 @@ class TenderRegisterTests(GateMixin, TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("cost", r.data["detail"].lower())
 
+    def test_a_bill_priced_outside_planet_is_costed_from_a_markup(self):
+        """State the markup and each uncosted line's cost is worked back from
+        its rate; the rates stay, costed lines stay, the basis says so
+        (owner 2026-10-27, TDR-SLP-001)."""
+        from .models import BoqItem
+        t = self.open_one()
+        self.client.post(f"/api/v1/tenders/{t['id']}/boq/items",
+                         {"rows": [
+                             {"section": "Bill 1", "is_heading": True},
+                             {"description": "Piling", "unit": "m",
+                              "qty": "100", "rate_combined": "600"},
+                             {"description": "Deck", "unit": "m2", "qty": "10",
+                              "rate_supply": "120", "rate_install": "115"},
+                             {"description": "Kept", "unit": "no", "qty": "1",
+                              "unit_cost": "50", "rate_combined": "90"}]},
+                         format="json")
+        url = f"/api/v1/tenders/{t['id']}/back-cost"
+        self.assertEqual(self.client.post(url, {"markup_percent": ""},
+                                          format="json").status_code, 400)
+        r = self.client.post(url, {"markup_percent": "20",
+                                   "labour_markup_percent": "15"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        got = {i.description: i for i in BoqItem.objects.filter(
+            boq__tender_id=t["id"]) if not i.is_heading}
+        self.assertEqual(str(got["Piling"].unit_cost), "500.000")
+        self.assertEqual(str(got["Deck"].unit_cost), "100.000")
+        self.assertEqual(str(got["Deck"].labour_cost), "100.000")
+        self.assertEqual(str(got["Kept"].unit_cost), "50.000")     # untouched
+        self.assertEqual(str(got["Piling"].rate_total), "600.000")  # rate stays
+        self.assertIn("worked back from the rates at 20% markup (labour 15%) "
+                      "on 2 lines", r.data["cost_note"])
+        # every line now costed, so it can go up
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                             {"value": "62440"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
     def test_the_snapshot_puts_the_markup_in_front_of_the_approvers(self):
         t = self.open_one()
         r = self.client.post(f"/api/v1/tenders/{t['id']}/boq/items",

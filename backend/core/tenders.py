@@ -314,6 +314,66 @@ def send_for_approval(t, data, actor):
     return None
 
 
+def back_cost(t, data, actor):
+    """A bill priced outside Planet: work each uncosted line's cost back from
+    its rate at a stated markup — cost = rate ÷ (1 + markup) — so it can go
+    to the Director without retyping a cost on every line (owner
+    2026-10-27, TDR-SLP-001). The rates are left exactly as priced; lines
+    already costed are left alone; the basis says how it was done, so the
+    approvers know the markup was stated, not built up."""
+    doc = t.document
+    if doc.status != "DRAFT":
+        return "Only a tender being priced can be costed."
+    boq = boq_for(t)
+    if boq is None:
+        return "This tender has no bill yet."
+
+    def pct(v):
+        d = _dec(v)
+        return d if d is not None and Decimal("0") <= d < Decimal("1000") \
+            else None
+    m = pct(data.get("markup_percent"))
+    if m is None:
+        return "Enter the markup — 20 for 20%."
+    raw_lm = data.get("labour_markup_percent")
+    lm = m if raw_lm in (None, "") else pct(raw_lm)
+    if lm is None:
+        return "Enter the labour markup — 15 for 15% — or leave it blank."
+    one, q, n = Decimal("1"), Decimal("0.001"), 0
+    with transaction.atomic():
+        for it in boq.items.all():
+            if it.is_heading or it.is_discount or it.is_costed:
+                continue
+            if it.rate_supply is None and it.rate_install is None:
+                continue
+            fields = []
+            if it.rate_supply is not None:
+                it.markup_percent = m
+                it.unit_cost = (it.rate_supply / (one + m / 100)).quantize(q)
+                fields += ["markup_percent", "unit_cost"]
+            if it.rate_install is not None:
+                it.labour_markup_percent = lm
+                it.labour_cost = (it.rate_install
+                                  / (one + lm / 100)).quantize(q)
+                fields += ["labour_markup_percent", "labour_cost"]
+            it.save(update_fields=fields)
+            n += 1
+        if not n:
+            return "Every priced line already has a cost."
+        line = (f"Costs worked back from the rates at {m.normalize():f}% "
+                "markup" + (f" (labour {lm.normalize():f}%)" if lm != m
+                            else "")
+                + f" on {n} line{'s' if n != 1 else ''} — priced outside "
+                "Planet.")
+        t.cost_note = f"{t.cost_note}\n{line}".strip() if t.cost_note \
+            else line
+        t.save(update_fields=["cost_note"])
+    audit("tender", t.id, "TENDER_COST_BACK_WORKED", actor=actor,
+          detail={"ref": doc.ref, "lines": n, "markup": str(m),
+                  "labour_markup": str(lm)})
+    return None
+
+
 def approve(t, actor):
     """The Director's review, then the signatory's clearance."""
     doc = t.document
