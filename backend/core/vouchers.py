@@ -471,6 +471,165 @@ def _unauthorise_source(doc, actor):
           to_state=doc.status, detail={"ref": doc.ref})
 
 
+# ---- reversing a payment already recorded (owner 2026-10-27) ------------
+# Voiding refused a voucher that had a payment recorded on it — "reverse the
+# payment before voiding it" — and nothing anywhere reversed a payment, so a
+# voucher paid wrongly could never be voided and its requests never paid
+# again. Voiding now takes the payment back first: the Paid rows come off the
+# cost ledger as negative mirrors, the paid marks are cleared, and the void
+# then returns each request to Finance's queue as before. A payment whose
+# effects reach beyond the ledger — a permit extended, a float restored — is
+# refused by name rather than half undone.
+
+def _reverse_rows(rows, actor):
+    """A negative mirror of every posting in `rows` not already reversed,
+    keeping all its links (the drill-down shows the reversal, nothing is
+    erased)."""
+    from .models import CostPosting
+    rows = list(rows.filter(reversal_of__isnull=True))
+    done = set(CostPosting.objects.filter(reversal_of__in=rows)
+               .values_list("reversal_of_id", flat=True))
+    for r in rows:
+        if r.id in done:
+            continue
+        costing.post(
+            site=r.site, cost_head=r.cost_head, state=r.state,
+            source=r.source, amount=-r.amount, currency=r.currency,
+            document=r.document, document_line=r.document_line,
+            petty_cash_entry=r.petty_cash_entry, ipr_line=r.ipr_line,
+            ipr_milestone=r.ipr_milestone, is_stock_pool=r.is_stock_pool,
+            staff_year=r.staff_year, staff_month=r.staff_month,
+            work_package=r.work_package, rent_due=r.rent_due,
+            bill_charge=r.bill_charge, payroll_run=r.payroll_run,
+            payroll_line=r.payroll_line, import_shipment=r.import_shipment,
+            reversal_of=r, actor=actor)
+
+
+def _cannot_unpay(line):
+    """Why this paid line's payment can't be taken back here, or None."""
+    from .models import Payable, ProjectBond
+    if line.source_document_id:
+        doc = line.source_document
+        if doc.doc_type == "PYR":
+            from . import subcontract
+            pr = doc.payment_request
+            if pr.payment_type == "PETTY_CASH_REPLENISH":
+                return (f"{doc.ref} replenished a petty-cash float, which "
+                        "was restored when it was paid")
+            if doc.salary_advances.exists():
+                return (f"{doc.ref} paid a salary advance that payroll "
+                        "recovers")
+            if subcontract.is_advance_prepayment(pr):
+                return (f"{doc.ref} paid a subcontract advance that the "
+                        "certificates recover")
+            if pr.payment_type == "PERMIT_RENEWAL":
+                return (f"{doc.ref} paid a permit renewal, which extended "
+                        "the permits")
+            if hasattr(doc, "onboarding_fee"):
+                return (f"{doc.ref} paid an onboarding fee, which cleared "
+                        "its stage")
+            if ProjectBond.objects.filter(pyr=doc).exclude(
+                    status__in=("PAYMENT_RAISED", "PAID")).exists():
+                return f"{doc.ref} paid a premium whose cover is issued"
+        if doc.doc_type == "PR":
+            settled = Payable.objects.filter(document=doc, status="SETTLED")
+            if settled.exists():
+                p = settled.first()
+                return (f"{doc.ref}'s credit to {p.vendor} has been paid "
+                        f"too ({p.settled_ref or 'its own voucher'}) — void "
+                        "that payment first")
+    if line.source_payable_id:
+        p = line.source_payable
+        dl = p.document_line
+        if (not (p.rent_due_id or p.bill_charge_id or p.payroll_line_id)
+                and p.document.doc_type == "PR" and dl is not None
+                and (dl.amount_cash or 0) > 0 and (dl.amount_credit or 0) > 0):
+            return (f"the balance to {p.vendor} was half of an advance-and-"
+                    "balance row")
+    return None
+
+
+def _unpay(line, actor):
+    """Take a recorded payment back: its Paid rows off the ledger, its paid
+    marks cleared, the source back where the signatory left it."""
+    from .models import CostPosting, ProjectBond
+    rows = CostPosting.objects.none()
+    if line.source_milestone_id:
+        m = line.source_milestone
+        rows = CostPosting.objects.filter(ipr_milestone=m, state="PAID")
+        _reverse_rows(rows, actor)
+        m.status = "AUTHORISED"
+        m.tt_ref, m.mvr_paid, m.actual_rate = "", None, None
+        m.paid_by, m.paid_at = None, None
+        m.save(update_fields=["status", "tt_ref", "mvr_paid", "actual_rate",
+                              "paid_by", "paid_at"])
+        subject = m.order.document
+    elif line.source_payable_id:
+        p = line.source_payable
+        subject = p.document
+        if p.rent_due_id:
+            rows = CostPosting.objects.filter(rent_due=p.rent_due,
+                                              state="PAID")
+            due = p.rent_due
+            due.status, due.paid_on, due.paid_ref = "RAISED", None, ""
+            due.save(update_fields=["status", "paid_on", "paid_ref"])
+        elif p.bill_charge_id:
+            rows = CostPosting.objects.filter(bill_charge=p.bill_charge,
+                                              state="PAID")
+            c = p.bill_charge
+            c.status, c.paid_on, c.paid_ref = "RAISED", None, ""
+            c.save(update_fields=["status", "paid_on", "paid_ref"])
+        elif p.payroll_line_id:
+            rows = CostPosting.objects.filter(payroll_line=p.payroll_line,
+                                              state="PAID")
+        elif p.document.doc_type == "SVC":
+            rows = CostPosting.objects.filter(document=p.document,
+                                              state="PAID",
+                                              source="SUBCONTRACT")
+        else:
+            rows = CostPosting.objects.filter(document=p.document,
+                                              document_line=p.document_line,
+                                              state="PAID")
+        _reverse_rows(rows, actor)
+        p.status, p.settled_on, p.settled_ref = "OUTSTANDING", None, ""
+        p.save(update_fields=["status", "settled_on", "settled_ref"])
+        if (p.payroll_line_id or p.document.doc_type == "SVC") \
+                and p.document.status == "PAID":
+            p.document.status = "AUTHORISED"
+            p.document.save(update_fields=["status", "updated_at"])
+    else:
+        doc = subject = line.source_document
+        if doc.doc_type == "PYR":
+            _reverse_rows(CostPosting.objects.filter(
+                document=doc, state__in=("PAID", "INCURRED")), actor)
+            pr = doc.payment_request
+            pr.amount_paid = pr.fx_rate = pr.paid_date = pr.paid_by = None
+            pr.payment_ref = pr.variance_reason = ""
+            pr.save(update_fields=["amount_paid", "fx_rate", "paid_date",
+                                   "paid_by", "payment_ref",
+                                   "variance_reason"])
+            ProjectBond.objects.filter(pyr=doc, status="PAID").update(
+                status="PAYMENT_RAISED")
+        else:   # a PR's cash side
+            _reverse_rows(CostPosting.objects.filter(document=doc,
+                                                     state="PAID"), actor)
+            if doc.current_revision:
+                doc.current_revision.lines.filter(
+                    amount_cash__gt=0).exclude(action_taken="").update(
+                    action_taken="")
+        doc.status = "AUTHORISED"
+        doc.save(update_fields=["status", "updated_at"])
+    Approval.objects.create(document=subject,
+                            revision=subject.current_revision,
+                            action="RETURN", actor=actor,
+                            actor_role=actor.role,
+                            comment=f"Payment reversed — voucher "
+                                    f"{line.voucher.ref} voided")
+    audit("document", subject.id, "PAYMENT_REVERSED", actor=actor,
+          detail={"ref": subject.ref, "voucher": line.voucher.ref,
+                  "amount": str(line.amount), "currency": line.currency})
+
+
 def void_voucher(pv, actor, reason):
     """Void a payment voucher and unwind its commitments: reverse each approved
     line's source (postings, payables, generated POs) and return the source to
@@ -483,10 +642,16 @@ def void_voucher(pv, actor, reason):
         return "A reason is required to void a voucher."
     lines = list(pv.voucher_lines.select_related(
         "source_document", "source_milestone", "source_payable"))
-    if any(_source_paid(ln) for ln in lines if ln.status == "APPROVED"):
-        return ("A payment has already been recorded against this voucher — "
-                "reverse the payment before voiding it.")
+    paid = [ln for ln in lines if ln.status == "APPROVED" and _source_paid(ln)]
+    for ln in paid:
+        why = _cannot_unpay(ln)
+        if why:
+            return (f"This voucher can't be voided here: {why}. That can't "
+                    "be undone automatically — ask Admin.")
     with transaction.atomic():
+        # payments recorded on it are taken back first, then unwound below
+        for ln in paid:
+            _unpay(ln, actor)
         for ln in lines:
             if ln.status == "APPROVED":
                 if ln.source_document_id:
@@ -521,7 +686,16 @@ def void_voucher(pv, actor, reason):
                                 action="VOID", actor=actor,
                                 actor_role=actor.role, comment=reason)
     audit("document", pv.id, "DOC_VOIDED", actor=actor, from_state=pv.status,
-          to_state="VOID", detail={"ref": pv.ref, "reason": reason})
+          to_state="VOID", detail={"ref": pv.ref, "reason": reason,
+                                   "payments_reversed": len(paid)})
+    if paid:
+        # money that was marked as gone is back on the books: the Director
+        # hears of it (owner 2026-10-27)
+        from .notify import _role_users, notify_user
+        for u in _role_users("DIRECTOR"):
+            notify_user(u, f"{pv.ref} voided — {len(paid)} payment"
+                           f"{'s' if len(paid) != 1 else ''} reversed",
+                        body=f"{reason[:120]} · by {actor.get_full_name() or actor.username}")
     return None
 
 

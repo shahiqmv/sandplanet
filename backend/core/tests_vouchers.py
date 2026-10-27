@@ -7,7 +7,8 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import costing
-from .models import (CostHead, CostPosting, Document, Site, SitePmHistory, User)
+from .models import (CostHead, CostPosting, Document, Notification, Site,
+                     SitePmHistory, User)
 from .tests import make_user
 
 
@@ -348,16 +349,50 @@ class VoucherVoidTests(VoucherBase):
                     self.client.get("/api/v1/finance/awaiting-voucher").data]
         self.assertIn(a, awaiting)
 
-    def test_cannot_void_after_a_payment_is_recorded(self):
+    def test_voiding_a_paid_voucher_reverses_the_payment(self):
+        """It used to refuse — "reverse the payment before voiding it" —
+        with nothing anywhere to reverse one (owner 2026-10-27). The Paid
+        rows come off, the paid marks clear, the request is back in
+        Finance's queue and goes on a new voucher."""
+        from . import vouchers
+        a, pv = self._approved_voucher(1000)
+        r = self.act(a, "pay", self.finance, amount_paid="1000",
+                     payment_ref="TT-77")
+        self.assertEqual(r.status_code, 200, r.data)
+        pyr = Document.objects.get(ref=a)
+        self.assertEqual(pyr.status, "PAID")
+        self.assertEqual(costing.document_net(pyr, "PAID"), Decimal("1000"))
+        self.voucher_action(pv, "request-void", self.finance,
+                            reason="paid to the wrong account")
+        r = self.voucher_action(pv, "void", self.signatory)
+        self.assertEqual(r.status_code, 200, r.data)
+        pyr.refresh_from_db()
+        pyr.payment_request.refresh_from_db()
+        self.assertEqual(pyr.status, "DIRECTOR_APPROVED")
+        self.assertIsNone(pyr.payment_request.amount_paid)
+        self.assertEqual(pyr.payment_request.payment_ref, "")
+        for state in ("PAID", "INCURRED", "COMMITTED"):
+            self.assertEqual(costing.document_net(pyr, state), Decimal("0"),
+                             state)
+        self.assertIn(pyr, vouchers.awaiting_voucher())
+        self.assertEqual(self.create_voucher([a]).status_code, 201)
+        # the Director hears of it
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.director, title__contains="payment reversed").exists())
+
+    def test_a_payment_with_effects_beyond_the_ledger_is_refused_by_name(self):
         a, pv = self._approved_voucher(1000)
         pyr = Document.objects.get(ref=a)
+        pyr.payment_request.payment_type = "PERMIT_RENEWAL"
+        pyr.payment_request.save(update_fields=["payment_type"])
         costing.post(site=self.site, cost_head=self.head, state="PAID",
                      source="PYR", amount=Decimal("1000"), document=pyr,
                      actor=self.finance)
-        self.voucher_action(pv, "request-void", self.finance, reason="too late")
+        self.voucher_action(pv, "request-void", self.finance, reason="x")
         r = self.voucher_action(pv, "void", self.signatory)
         self.assertEqual(r.status_code, 400)
-        self.assertIn("payment", r.data["detail"].lower())
+        self.assertIn("permit renewal", r.data["detail"])
+        self.assertFalse(Document.objects.get(ref=pv).is_void)
 
 
 class VoucherListPerfTests(VoucherBase):
@@ -476,3 +511,61 @@ class VoucherBatchApproveTests(VoucherBase):
         self.assertEqual(self._batch(self.signatory, [
             {"ref": f"PV-{i}", "total": "1", "lines": 1}
             for i in range(101)]).status_code, 400)
+
+
+class VoidReversesOtherPaymentsTests(VoucherBase):
+    """The same for an overseas TT and a payable (owner 2026-10-27)."""
+
+    def _pv(self, status="APPROVED"):
+        return Document.objects.create(
+            doc_type="PV", ref=f"PV-T{Document.objects.count()}", status=status,
+            site=self.site, doc_date=date.today(), created_by=self.finance)
+
+    def test_a_paid_overseas_tt_goes_back_to_due(self):
+        from . import vouchers
+        from .models import (ImportOrder, ImportPaymentMilestone,
+                             PaymentVoucherLine, Supplier)
+        ipr = Document.objects.create(
+            doc_type="IPR", ref="IPR-VD-001", status="AUTHORISED",
+            site=self.site, doc_date=date.today(), created_by=self.finance)
+        order = ImportOrder.objects.create(
+            document=ipr, supplier=Supplier.objects.create(name="Overseas"),
+            exchange_rate=Decimal("15.42"))
+        m = ImportPaymentMilestone.objects.create(
+            order=order, seq=1, label="Advance", trigger="ADVANCE",
+            percent=Decimal("100"), status="PAID", tt_ref="TT1",
+            mvr_paid=Decimal("1542"))
+        pv = self._pv()
+        PaymentVoucherLine.objects.create(voucher=pv, source_milestone=m,
+                                          amount=Decimal("100"),
+                                          currency="USD", status="APPROVED")
+        costing.post(site=self.site, cost_head=self.head, state="PAID",
+                     source="IPR", amount=Decimal("1542"), document=ipr,
+                     ipr_milestone=m, actor=self.finance)
+        self.assertIsNone(vouchers.void_voucher(pv, self.signatory, "wrong"))
+        m.refresh_from_db()
+        self.assertEqual((m.status, m.tt_ref, m.mvr_paid), ("DUE", "", None))
+        self.assertEqual(costing.document_net(ipr, "PAID"), Decimal("0"))
+
+    def test_a_settled_payable_is_outstanding_again(self):
+        from . import vouchers
+        from .models import Payable, PaymentVoucherLine
+        svc = Document.objects.create(
+            doc_type="SVC", ref="SVC-VD-001", status="AUTHORISED",
+            site=self.site, doc_date=date.today(), created_by=self.finance)
+        p = Payable.objects.create(document=svc, site=self.site,
+                                   vendor="Atoll Civil", amount=Decimal("800"))
+        pv = self._pv()
+        PaymentVoucherLine.objects.create(voucher=pv, source_payable=p,
+                                          amount=Decimal("800"),
+                                          status="APPROVED")
+        self.assertIsNone(vouchers.settle_payable(p, self.finance, "TT9"))
+        svc.refresh_from_db()
+        self.assertEqual(svc.status, "PAID")
+        self.assertIsNone(vouchers.void_voucher(pv, self.signatory, "dup"))
+        p.refresh_from_db()
+        svc.refresh_from_db()
+        self.assertEqual((p.status, p.settled_ref, svc.status),
+                         ("OUTSTANDING", "", "AUTHORISED"))
+        self.assertEqual(costing.document_net(svc, "PAID"), Decimal("0"))
+        self.assertIn(p, list(vouchers.awaiting_payables()))

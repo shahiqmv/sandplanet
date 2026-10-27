@@ -252,9 +252,15 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
 
   // An authorised (approved) voucher takes two hands: Finance requests the
   // void with a reason, a signatory then authorises (or declines) it.
+  // A voucher with payments recorded can be voided too: the payments are
+  // reversed first, so its requests can be paid again (owner 2026-10-27).
+  const paidNote = (pv) => (pv.paid_count > 0
+    ? ` ${pv.paid_count} payment${pv.paid_count === 1 ? " is" : "s are"} already recorded on it — `
+      + "they will be reversed (taken off the books), and the Director is told."
+    : "");
   const requestVoid = (pv) => {
     const reason = window.prompt(
-      `Request to void ${pv.ref}? A signatory must authorise the reversal. `
+      `Request to void ${pv.ref}? A signatory must authorise the reversal.${paidNote(pv)} `
       + "Reason:");
     if (reason && reason.trim())
       voucherAction(pv.ref, "request-void", { reason });
@@ -263,7 +269,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const authoriseVoid = (pv) => {
     if (window.confirm(
       `Authorise the void of ${pv.ref}? This reverses its commitments and `
-      + "returns the requisitions to be re-vouchered."))
+      + `returns the requisitions to be re-vouchered.${paidNote(pv)}`))
       voucherAction(pv.ref, "void", {});
   };
 
@@ -283,7 +289,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const closeVoucher = () => openVoucher(null);
 
   const perms = (pv) => {
-    const notPaid = !pv.is_void && !(pv.paid_count > 0);
+    const live = !pv.is_void;   // paid ones too: the void reverses the payments
     return {
       canSubmit: isFinance && pv.status === "DRAFT",
       canApprove: isSignatory && pv.status === "SUBMITTED",
@@ -291,11 +297,11 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
       // Void (owner 2026-07-16). A submitted-but-unauthorised voucher
       // Finance voids directly with a reason. An authorised one is a
       // two-step: Finance requests the void, a signatory authorises it.
-      canVoid: notPaid && pv.status === "SUBMITTED"
+      canVoid: live && pv.status === "SUBMITTED"
         && (isFinance || isSignatory),
-      canRequestVoid: notPaid && pv.status === "APPROVED" && isFinance
+      canRequestVoid: live && pv.status === "APPROVED" && isFinance
         && !pv.void_requested,
-      canAuthoriseVoid: notPaid && pv.status === "APPROVED" && isSignatory
+      canAuthoriseVoid: live && pv.status === "APPROVED" && isSignatory
         && pv.void_requested,
       payable: pv.lines.filter((l) => l.status === "APPROVED"
         && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE"
