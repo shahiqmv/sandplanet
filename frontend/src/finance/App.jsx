@@ -467,12 +467,15 @@ export default function App() {
         {wins.map((w) => (
           <div key={w.id} hidden={w.id !== activeId}
                onInputCapture={(e) => markDirty(w.id, e)} onChangeCapture={(e) => markDirty(w.id, e)}>
-            {wins.length > 1 && w.id === activeId && (
+            {w.id === activeId && (wins.length > 1 || w.page !== "home") && (
               <div className="f-winbar">
                 <span className="f-winbar-title">{title(w)}{w.dirty && <span className="f-dot" title="Has entries that may not be saved"> •</span>}</span>
                 <span className="spacer" />
                 <button className="f-link" onClick={() => refreshWin(w.id)} title="Load this page again with the latest figures">Refresh</button>
-                <button className="f-winbtn" onClick={minimize} title="Park this page in the bar below and keep what is on it">– Minimize</button>
+                <span className="f-winctl">
+                  <button onClick={minimize} title="Minimize — park this page in the bar below, keeping what is on it" aria-label="Minimize">–</button>
+                  <button className="is-close" onClick={() => closeWin(w.id)} title="Close this page" aria-label="Close">×</button>
+                </span>
               </div>
             )}
             <div key={w.nonce}>{screen(w)}</div>
