@@ -1836,6 +1836,14 @@ class ImportPaymentMilestone(models.Model):
                                 blank=True, related_name="+")
     paid_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # A balance left unpaid on purpose — a discount, a short delivery —
+    # closed by Finance with a reason (owner 2026-10-27).
+    closed_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    closed_reason = models.CharField(max_length=300, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    closed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["seq"]
@@ -5917,6 +5925,11 @@ class CostPosting(models.Model):
                                         on_delete=models.PROTECT, null=True,
                                         blank=True,
                                         related_name="cost_postings")
+    # The voucher line (one payment, or one part of a payment) a Paid row was
+    # posted for, so a part can be reversed alone (owner 2026-10-27).
+    voucher_line = models.ForeignKey("PaymentVoucherLine",
+                                     on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="postings")
     is_stock_pool = models.BooleanField(default=False)  # HO pool posting
     staff_year = models.IntegerField(null=True, blank=True)
     staff_month = models.IntegerField(null=True, blank=True)
@@ -6030,6 +6043,14 @@ class PaymentRequest(models.Model):
     variance_reason = models.TextField(blank=True)
     paid_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                 blank=True, related_name="+")
+    # A balance left unpaid on purpose — a discount, a short delivery —
+    # closed by Finance with a reason (owner 2026-10-27).
+    closed_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    closed_reason = models.CharField(max_length=300, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    closed_at = models.DateTimeField(null=True, blank=True)
     # Advances settlement
     is_settled = models.BooleanField(null=True, blank=True)
     settled_at = models.DateTimeField(null=True, blank=True)
@@ -6083,6 +6104,14 @@ class Payable(models.Model):
     status = models.CharField(max_length=12, default="OUTSTANDING")  # /SETTLED
     settled_on = models.DateField(null=True, blank=True)
     settled_ref = models.TextField(blank=True)
+    # A balance left unpaid on purpose — a discount, a short delivery —
+    # closed by Finance with a reason (owner 2026-10-27).
+    closed_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    closed_reason = models.CharField(max_length=300, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    closed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -6358,6 +6387,19 @@ class PaymentVoucherLine(models.Model):
     # say what it was, or a void leaves an amount with no subject
     # (owner 2026-08-31, IPR-047).
     source_note = models.CharField(max_length=160, blank=True)
+    # Part payment (owner 2026-10-27): a line is one payment — the whole of
+    # what is owed, or a part of it, the balance left for a later voucher.
+    # For a PR, the cash rows this voucher pays (none listed = all of them).
+    pr_rows = models.JSONField(default=list, blank=True)
+    # what actually went out on this line, once Finance records it
+    paid_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)
+    paid_local = models.DecimalField(max_digits=14, decimal_places=2,
+                                     null=True, blank=True)   # MVR of a TT
+    paid_on = models.DateField(null=True, blank=True)
+    paid_ref = models.CharField(max_length=120, blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

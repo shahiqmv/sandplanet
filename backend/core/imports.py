@@ -1220,9 +1220,17 @@ def pay_milestone(milestone, mvr_paid, tt_ref, actor):
     due_ccy = milestone.due_amount(total)
     if due_ccy <= ZERO:
         return "This milestone has no amount."
-    fraction = due_ccy / total
-    committed_mvr = (due_ccy * order.exchange_rate).quantize(Decimal("0.01"))
-    with transaction.atomic():
+    # One part of a milestone paid in parts (owner 2026-10-27): the TT for
+    # the approved part, its rows tagged to the line; the milestone is PAID
+    # with the last part and DUE again while a balance is left.
+    from . import costing as _costing
+    from . import vouchers
+    line = vouchers.unpaid_line(milestone=milestone)
+    part_ccy = line.amount if line else due_ccy
+    final = vouchers.is_final(line, milestone=milestone) if line else True
+    fraction = part_ccy / total
+    committed_mvr = (part_ccy * order.exchange_rate).quantize(Decimal("0.01"))
+    with transaction.atomic(), _costing.for_line(line):
         _post_split(order, doc, "PAID", fraction, order.exchange_rate, actor,
                     milestone=milestone)
         fx_delta = (mvr_paid - committed_mvr).quantize(Decimal("0.01"))
@@ -1233,10 +1241,22 @@ def pay_milestone(milestone, mvr_paid, tt_ref, actor):
                 book="TRADING" if order.trading_order_id else "PROJECT",
                 amount=fx_delta, currency="MVR", document=doc,
                 ipr_milestone=milestone, is_stock_pool=True, actor=actor)
-        milestone.status = "PAID"
+        if line:
+            vouchers.mark_line_paid(line, part_ccy, actor, tt_ref,
+                                    local=mvr_paid)
+        paid_mvr = (milestone.mvr_paid or ZERO) + mvr_paid if line \
+            else mvr_paid
+        paid_ccy = vouchers.paid_so_far(milestone=milestone) if line \
+            else due_ccy
+        if final:
+            milestone.status = "PAID"
+        else:
+            waiting = vouchers.unpaid_line(milestone=milestone)
+            milestone.status = "AUTHORISED" if waiting else "DUE"
         milestone.tt_ref = tt_ref or ""
-        milestone.mvr_paid = mvr_paid
-        milestone.actual_rate = (mvr_paid / due_ccy).quantize(Decimal("0.0001"))
+        milestone.mvr_paid = paid_mvr
+        milestone.actual_rate = (paid_mvr / paid_ccy).quantize(Decimal("0.0001")) \
+            if paid_ccy else None
         milestone.paid_by = actor
         milestone.paid_at = timezone.now()
         milestone.save(update_fields=["status", "tt_ref", "mvr_paid",

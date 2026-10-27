@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BalanceNote, PartAmount, PrRowPicker, closeBalance, partBody, pickedAmount } from "./PartPayment.jsx";
 import Discussion from "./Discussion.jsx";
 import { api, apiUpload } from "./api.js";
 import { Btn, RefStamp, StatusChip, card, ghostButton, inputStyle, td, th }
@@ -53,6 +54,11 @@ function cardDetail(l) {
 }
 
 // A stable pick key for an awaiting row (docs by ref, milestones by id)
+// a line paying part of what is owed says so (owner 2026-10-27)
+const partNote = (l) => (l.is_part ? (
+  <span style={{ display: "block", fontSize: 10.5, color: "#8a6d00", fontWeight: 600 }}>
+    part of {money(l.full_amount)}</span>) : null);
+
 const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}`
   : d.kind === "PAYABLE" ? `P:${d.payable_id}` : d.ref;
 
@@ -66,6 +72,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const [vHasMore, setVHasMore] = useState(false);
   const [vq, setVq] = useState("");              // voucher search box (ref)
   const [picked, setPicked] = useState({});     // source ref -> bool
+  // part payment (owner 2026-10-27): what this voucher pays of each, and
+  // for a PR the suppliers it pays now
+  const [partAmt, setPartAmt] = useState({});   // awKey -> amount typed
+  const [prPick, setPrPick] = useState({});     // PR ref -> [row ids]
   // Opened straight from My Tasks: expand that voucher rather than dropping
   // the signatory on the list to hunt for it (owner 2026-08-16).
   const [open, setOpen] = useState(openRef || null);
@@ -160,7 +170,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   }, [openRef]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickedRows = awaiting.filter((d) => picked[awKey(d)]);
-  const pickedTotal = pickedRows.reduce((s, d) => s + Number(d.amount || 0), 0);
+  const pickedTotal = pickedRows.reduce(
+    (s, d) => s + pickedAmount(d, partAmt, prPick, awKey), 0);
   const pickedCurrencies = [...new Set(pickedRows.map(
     (d) => d.currency || "MVR"))];
   const mixed = pickedCurrencies.length > 1;
@@ -201,8 +212,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     await api("/payment-vouchers",
               { method: "POST", body: { source_refs, milestone_ids,
                                         payable_ids,
+                                        ...partBody(pickedRows, partAmt, prPick, awKey),
                                         bank_account_id: debitPick || null } });
-    setPicked({}); setDebitPick(""); reload();
+    setPicked({}); setPartAmt({}); setPrPick({}); setDebitPick(""); reload();
   });
 
   // Active bank accounts whose currency fits the picked payments.
@@ -357,7 +369,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                                 ? "var(--muted)" : "inherit" }}>
                                 {lineDetail(l)}</td>
                               <td style={{ ...td, textAlign: "right", ...mono }}>
-                                {money(l.amount)}</td>
+                                {money(l.amount)}{partNote(l)}</td>
                               <td style={td}>
                                 {l.status !== "INCLUDED"
                                   ? <StatusChip status={l.status} /> : ""}
@@ -692,10 +704,24 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
         <td style={td}>{d.site_code}</td>
         <td style={{ ...td, whiteSpace: "nowrap" }}>{d.doc_date || d.due_date || "—"}</td>
         <td style={{ ...td, whiteSpace: "nowrap" }}>{d.approved_at || "—"}</td>
-        <td style={td}>{d.payee}</td>
+        <td style={td}>{d.payee}
+          {picked[key] && d.doc_type === "PR" && (
+            <PrRowPicker row={d} chosen={prPick[d.ref]}
+                         onChange={(ids) => setPrPick({ ...prPick, [d.ref]: ids })} />)}
+        </td>
         <td style={td}>{d.cost_head}</td>
         <td style={{ ...td, textAlign: "right", ...mono }}>
-          {cur(d.amount, d.currency)}</td>
+          {cur(d.amount, d.currency)}
+          <BalanceNote row={d} />
+          {picked[key] && d.doc_type !== "PR" && (
+            <PartAmount row={d} value={partAmt[key] ?? ""}
+                        onChange={(v) => setPartAmt({ ...partAmt, [key]: v })} />)}
+          {!picked[key] && isFinance && Number(d.paid_so_far) > 0 && (
+            <div><a href="#" style={{ fontSize: 11 }}
+                    onClick={(e) => { e.preventDefault();
+                      run(async () => { if (await closeBalance(d)) reload(); }); }}>
+              Close balance</a></div>)}
+        </td>
       </tr>
     );
   };
@@ -1097,7 +1123,7 @@ function PayLinePyr({ l, payKey, startPay, form }) {
         <RefStamp small>{l.ref}</RefStamp>
         <span style={{ fontSize: 13.5 }}>{l.payee}</span>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 13.5,
-                       fontWeight: 600 }}>{cur(l.amount, l.currency)}</span>
+                       fontWeight: 600 }}>{cur(l.amount, l.currency)}{partNote(l)}</span>
         {l.paid ? (
           <span style={{ color: "var(--green-fg)", fontSize: 13,
                          marginLeft: "auto" }}>

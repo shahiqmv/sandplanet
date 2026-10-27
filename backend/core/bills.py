@@ -352,11 +352,14 @@ def company_share(charge):
     return net, borne - net
 
 
-def _post(charge, state, actor, on):
+def _post(charge, state, actor, on, part=None):
     """The company's share of the bill in Planet's cost ledger; its GST to
-    the recoverable pool."""
+    the recoverable pool. `part` takes one part payment's share of each
+    (owner 2026-10-27)."""
     a = charge.account
     net, gst = company_share(charge)
+    if part:
+        net, gst = part(net), part(gst)
     if net:
         costing.post(site=a.site, cost_head=a.cost_head, state=state,
                      source="UTILITY", amount=net, currency=charge.currency,

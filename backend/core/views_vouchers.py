@@ -15,7 +15,13 @@ from .models import Document
 
 def _line_paid(ln):
     """Whether a voucher line is paid — the same rule as _line_info but without
-    building the full dict (used by the dashboard's settled count)."""
+    building the full dict (used by the dashboard's settled count). A line
+    is one payment or one part of one (owner 2026-10-27): it is paid when
+    its own payment is recorded; before part payment, by its source."""
+    if ln.paid_amount is not None:
+        return True
+    if ln.source_document_id and ln.pr_rows:
+        return False    # its own suppliers, not all paid yet
     if ln.source_milestone_id:
         return ln.source_milestone.status == "PAID"
     if ln.source_payable_id:
@@ -72,6 +78,21 @@ def _released_line(line):
             "paid": False}
 
 
+def _part_info(line):
+    """Whether a line pays only part of what is owed, and of how much."""
+    from decimal import Decimal as _D
+    if line.source_milestone_id:
+        full = vouchers.milestone_amount(line.source_milestone)
+    elif line.source_payable_id:
+        full = line.source_payable.amount
+    elif line.source_document_id and line.source_document.doc_type == "PYR":
+        full = line.source_document.payment_request.amount_requested
+    else:
+        return {}
+    return {"is_part": (line.amount or _D("0")) < (full or _D("0")),
+            "full_amount": full, "paid_amount": line.paid_amount}
+
+
 def _line_info(line):
     if line.source_milestone_id:
         m = line.source_milestone
@@ -83,9 +104,10 @@ def _line_info(line):
                 "source_status": m.status,
                 "payee": order.supplier.name, "cost_head": "Imports",
                 "purpose": m.label, "milestone_label": m.label,
-                "payment_ref": m.tt_ref, "mvr_paid": m.mvr_paid,
+                "payment_ref": line.paid_ref or m.tt_ref,
+                "mvr_paid": line.paid_local or m.mvr_paid,
                 # the TT itself is executed on the Import Payments page
-                "paid": m.status == "PAID"}
+                "paid": _line_paid(line), **_part_info(line)}
     if line.source_payable_id:
         p = line.source_payable
         pay = p.payroll_line if p.payroll_line_id else None
@@ -110,8 +132,8 @@ def _line_info(line):
                 "payee": p.vendor,
                 "cost_head": "Salary" if pay is not None else "Materials",
                 "purpose": purpose,
-                "payment_ref": p.settled_ref,
-                "paid": p.status == "SETTLED"}
+                "payment_ref": line.paid_ref or p.settled_ref,
+                "paid": _line_paid(line), **_part_info(line)}
     if line.source_document_id is None:
         return _released_line(line)
     src = line.source_document
@@ -127,18 +149,19 @@ def _line_info(line):
                      "has_supporting_doc": pr.has_supporting_doc,
                      "currency": pr.currency,
                      "payment_method": pr.payment_method,
-                     "amount_paid": pr.amount_paid,
-                     "payment_ref": pr.payment_ref,
-                     "paid": src.status == "PAID"})
+                     "amount_paid": line.paid_amount or pr.amount_paid,
+                     "payment_ref": line.paid_ref or pr.payment_ref,
+                     "paid": _line_paid(line), **_part_info(line)})
     if src.doc_type == "PR":
         # Only CASH vendors are paid on the voucher; credit vendors are
         # committed as payables and settled via the payables flow, so they are
         # not shown here as payments (owner 2026-07-16).
         rows = []
+        mine = vouchers.line_pr_rows(line)
         for ln in src.current_revision.lines.all():
             cash = ln.amount_cash or 0
-            if cash <= 0:
-                continue
+            if cash <= 0 or ln.id not in mine:
+                continue    # a supplier on another part's voucher
             # an advance carries its share of the row's GST, not all of it
             from .procurement import _gst_share
             gst = _gst_share(ln, cash)
@@ -214,11 +237,22 @@ def awaiting_voucher(request):
         # oldest first (owner 2026-09-12).
         last = (doc.approvals.filter(action__in=("APPROVE", "CLEAR_TO_VOUCHER"))
                 .order_by("-acted_at").first())
+        b = vouchers.balance(doc=doc)
         row = {"kind": "DOC", "ref": doc.ref, "doc_type": doc.doc_type,
                "site_code": doc.site.code, "doc_date": doc.doc_date,
                "approved_at": last.acted_at.date() if last else None,
-               "amount": vouchers._source_amount(doc),
+               # what is left to pay — all of it, unless part is already
+               # vouchered or paid (owner 2026-10-27)
+               "amount": b["balance"], "full_amount": b["full"],
+               "paid_so_far": vouchers.paid_so_far(doc=doc),
+               "part_paid": b["vouchered"] > 0,
+               "whole_only": vouchers.paid_whole(doc=doc),
                "currency": vouchers.source_currency(doc)}
+        if doc.doc_type == "PR":
+            row["pr_rows"] = [
+                {"id": r.id, "vendor": r.vendor or r.free_text_desc,
+                 "amount": vouchers.pr_row_amount(r)}
+                for r in vouchers.pr_open_rows(doc)]
         if doc.doc_type == "PYR" and hasattr(doc, "payment_request"):
             pr = doc.payment_request
             row.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
@@ -255,7 +289,11 @@ def _payable_row(p, today):
         "site_code": p.site.code if p.site_id else "HO",
         "doc_date": p.due_date, "due_date": p.due_date,
         "overdue": bool(p.due_date and p.due_date < today),
-        "amount": p.amount, "currency": vouchers.payable_currency(p),
+        "amount": vouchers.balance(payable=p)["balance"],
+        "full_amount": p.amount,
+        "paid_so_far": vouchers.paid_so_far(payable=p),
+        "whole_only": vouchers.paid_whole(payable=p),
+        "currency": vouchers.payable_currency(p),
         "payee": p.vendor, "group": "SALARY" if line else "CREDIT",
         "cost_head": ("Salary" if line else "Rent" if p.rent_due_id
                       else "Phone / utility bill" if p.bill_charge_id
@@ -274,6 +312,32 @@ def _payable_row(p, today):
         "cost_head": "Salary",
         "purpose": f"Salary {line.run.year}-{line.run.month:02d}"})
     return row
+
+
+@api_view(["POST"])
+def close_balance(request):
+    """Close what is left unpaid with a reason (owner 2026-10-27):
+    {kind: DOC|PAYABLE|MILESTONE, ref | id, reason}."""
+    from .models import ImportPaymentMilestone, Payable
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance closes a balance."}, status=403)
+    d = request.data
+    kind = (d.get("kind") or "").upper()
+    target = {}
+    if kind == "DOC":
+        target["doc"] = Document.objects.filter(ref=d.get("ref"),
+                                                is_void=False).first()
+    elif kind == "PAYABLE":
+        target["payable"] = Payable.objects.filter(pk=d.get("id")).first()
+    elif kind == "MILESTONE":
+        target["milestone"] = ImportPaymentMilestone.objects.filter(
+            pk=d.get("id")).select_related("order__document").first()
+    if not target or not next(iter(target.values())):
+        return Response({"detail": "Not found."}, status=404)
+    err = vouchers.close_balance(request.user, d.get("reason"), **target)
+    if err:
+        return Response({"detail": err}, status=400)
+    return Response({"ok": True})
 
 
 @api_view(["GET"])
@@ -395,7 +459,9 @@ def payment_vouchers(request):
             request.data.get("source_refs") or [], request.user,
             milestone_ids=request.data.get("milestone_ids") or [],
             payable_ids=request.data.get("payable_ids") or [],
-            bank_account_id=request.data.get("bank_account_id"))
+            bank_account_id=request.data.get("bank_account_id"),
+            amounts=request.data.get("amounts") or {},
+            pr_rows=request.data.get("pr_rows") or {})
         if err:
             return Response({"detail": err}, status=400)
         return Response(_voucher_info(pv), status=201)
@@ -712,8 +778,12 @@ def payment_voucher_action(request, ref, action):
         if not line:
             return Response({"detail": "That payable is not an approved line "
                              "on this voucher."}, status=400)
+        if line.paid_amount is not None:
+            return Response({"detail": "This part is already paid."},
+                            status=400)
         err = vouchers.settle_payable(line.source_payable, user,
-                                      request.data.get("payment_ref") or "")
+                                      request.data.get("payment_ref") or "",
+                                      voucher=pv)
     elif action == "request-void":
         # Reversing an AUTHORISED voucher is a two-handed move: Finance raises
         # the request (with a reason), a signatory then authorises it

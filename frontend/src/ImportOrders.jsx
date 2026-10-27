@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { BalanceNote, PartAmount, closeBalance, partBody } from "./PartPayment.jsx";
 import { api, apiUpload } from "./api.js";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, SectionTitle,
          StatusChip, td, th } from "./ui.jsx";
@@ -3133,6 +3134,7 @@ export function ImportPaymentsDue({ onOpenIpr }) {
   const [error, setError] = useState(null);
   const [msg, setMsg] = useState(null);
   const [picked, setPicked] = useState({});
+  const [partAmt, setPartAmt] = useState({});   // M:id -> amount (part payment)
   const [busy, setBusy] = useState(false);
   const isFinance = true;
 
@@ -3156,7 +3158,9 @@ export function ImportPaymentsDue({ onOpenIpr }) {
     setBusy(true); setError(null); setMsg(null);
     try {
       const pv = await api("/payment-vouchers", { method: "POST",
-        body: { milestone_ids: pickedRows.map((r) => r.milestone_id) } });
+        body: { milestone_ids: pickedRows.map((r) => r.milestone_id),
+                ...partBody(pickedRows, partAmt, {}, (r) => `M:${r.milestone_id}`) } });
+      setPartAmt({});
       setMsg(`Voucher ${pv.ref} raised for ${pickedRows.length} `
              + `milestone${pickedRows.length > 1 ? "s" : ""} — `
              + `${pickedRows[0].supplier}. A signatory approves it on the `
@@ -3277,7 +3281,19 @@ export function ImportPaymentsDue({ onOpenIpr }) {
                   {" "}<a href="#" style={{ fontSize: 11 }}
                     onClick={(e) => { e.preventDefault(); movePayBy(r); }}>edit</a>
                 </td>
-                {amountCells(r)}
+                <td style={{ ...td, textAlign: "right" }}>{r.currency} {money(r.due_amount)}
+                  <BalanceNote row={r} />
+                  {picked[r.milestone_id] && (
+                    <PartAmount row={r} value={partAmt[`M:${r.milestone_id}`] ?? ""}
+                                onChange={(v) => setPartAmt({ ...partAmt, [`M:${r.milestone_id}`]: v })} />)}
+                  {!picked[r.milestone_id] && Number(r.paid_so_far) > 0 && (
+                    <div><a href="#" style={{ fontSize: 11 }}
+                            onClick={async (e) => { e.preventDefault();
+                              try { if (await closeBalance(r)) load(); }
+                              catch (err) { setError(err.message); } }}>
+                      Close balance</a></div>)}
+                </td>
+                <td style={{ ...td, textAlign: "right" }}>{money(r.expected_mvr)}</td>
               </tr>))}
             </tbody>
           </table>

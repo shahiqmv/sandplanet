@@ -309,6 +309,8 @@ urlpatterns = [
          name="finance-dashboard"),
     path("payment-vouchers", vouchers.payment_vouchers,
          name="payment-vouchers"),
+    path("payment-vouchers/close-balance", vouchers.close_balance,
+         name="payment-vouchers-close-balance"),
     path("payment-vouchers/batch-approve",
          vouchers.payment_vouchers_batch_approve,
          name="payment-vouchers-batch-approve"),

@@ -8,6 +8,8 @@ Segregation of duties (build brief, non-negotiable): a FINANCE user may
 never authorise a document whose amount is at or above signatory_threshold
 — authorisation belongs to SIGNATORY. Enforced in can_authorise().
 """
+import contextlib
+import contextvars
 from datetime import date
 from decimal import Decimal
 
@@ -42,13 +44,30 @@ def can_authorise(user, amount):
     return False
 
 
+# The payment being recorded, if any: every Paid row posted inside
+# `for_line(line)` carries that voucher line, so a part payment can later be
+# reversed alone (owner 2026-10-27). A context, not a parameter, so the many
+# typed posting paths (rent, bills, payroll, imports, PRs) need no change.
+_paying = contextvars.ContextVar("costing_paying_line", default=None)
+
+
+@contextlib.contextmanager
+def for_line(line):
+    token = _paying.set(line)
+    try:
+        yield
+    finally:
+        _paying.reset(token)
+
+
 def post(*, site, cost_head, state, source, amount, posted_on=None,
          document=None, document_line=None, petty_cash_entry=None,
          ipr_line=None, ipr_milestone=None, is_stock_pool=False,
          staff_year=None, staff_month=None,
          work_package="", reversal_of=None, actor=None, currency="MVR",
          book="PROJECT", vehicle=None, rent_due=None, bill_charge=None,
-         payroll_run=None, payroll_line=None, import_shipment=None):
+         payroll_run=None, payroll_line=None, import_shipment=None,
+         voucher_line=None):
     """Append one cost posting. The single low-level writer — callers are
     the typed trigger functions below, never views directly.
 
@@ -57,6 +76,9 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
     if reversal_of is not None:
         book = reversal_of.book
         vehicle = vehicle or reversal_of.vehicle
+        voucher_line = voucher_line or reversal_of.voucher_line
+    elif voucher_line is None:
+        voucher_line = _paying.get()
     return CostPosting.objects.create(
         site=site, cost_head=cost_head, state=state, source=source, book=book,
         vehicle=vehicle,
@@ -67,7 +89,7 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
         ipr_milestone=ipr_milestone, rent_due=rent_due,
         bill_charge=bill_charge, payroll_run=payroll_run,
         payroll_line=payroll_line, import_shipment=import_shipment,
-        is_stock_pool=is_stock_pool, staff_year=staff_year,
+        voucher_line=voucher_line, is_stock_pool=is_stock_pool, staff_year=staff_year,
         staff_month=staff_month, work_package=work_package,
         reversal_of=reversal_of, created_by=actor,
     )

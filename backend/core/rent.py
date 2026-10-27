@@ -144,17 +144,19 @@ def _ho_site():
     return ho()
 
 
-def _post(due, state, actor, on):
+def _post(due, state, actor, on, part=None):
     """The due's cost in Planet's cost ledger: rent to the contract's site
-    and head, GST to the recoverable pool."""
+    and head, GST to the recoverable pool. `part` (a function of an amount)
+    takes one part payment's share of each (owner 2026-10-27)."""
     c = due.contract
+    part = part or (lambda v: v)
     costing.post(site=c.site, cost_head=c.cost_head, state=state,
-                 source="RENT", amount=due.amount, currency=due.currency,
+                 source="RENT", amount=part(due.amount), currency=due.currency,
                  posted_on=on, rent_due=due, actor=actor)
     if due.gst:
         costing.post(site=_ho_site(),
                      cost_head=costing.by_code(costing.INPUT_GST),
-                     state=state, source="RENT", amount=due.gst,
+                     state=state, source="RENT", amount=part(due.gst),
                      currency=due.currency, posted_on=on, rent_due=due,
                      is_stock_pool=True, actor=actor)
 

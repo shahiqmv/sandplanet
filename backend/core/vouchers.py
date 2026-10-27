@@ -22,6 +22,9 @@ from .numbering import next_ref
 # An import order (IPR) never goes on a voucher — placing it is a commitment,
 # not a payment; a signatory authorises the order directly (§6C.2).
 AWAITING_STATUS = {"PR": "APPROVED", "PYR": "DIRECTOR_APPROVED"}
+# what can go on a voucher: approved, or part paid with a balance left
+PYR_PAYING = ("DIRECTOR_APPROVED", "PART_PAID")
+PR_PAYING = ("APPROVED", "AUTHORISED", "PAYMENT_PROCESSING")
 
 
 def ho_site():
@@ -56,6 +59,276 @@ def source_currency(doc):
         from .procurement import pr_currency
         return pr_currency(doc)
     return "MVR"
+
+
+# ---- part payment (owner 2026-10-27) -------------------------------------
+# A request used to go on a voucher whole. Finance can now put part of it on
+# a voucher and leave the balance for a later one: each voucher line is one
+# payment — all of what is owed, or a part — and what it actually paid is
+# recorded on the line, with every Paid row it posts tagged to it
+# (costing.for_line). The balance is worked out from the lines, never
+# stored: the whole, less what is on vouchers not voided or queried, less any
+# balance Finance closed with a reason. A PR is paid supplier by supplier —
+# the voucher takes the cash rows Finance ticks; one supplier split in two is
+# what the quotation's advance % is for.
+
+ZERO = Decimal("0")
+
+
+def _live(**kw):
+    """Lines that still count: on a voucher not voided, not queried."""
+    return PaymentVoucherLine.objects.filter(
+        voucher__is_void=False, **kw).exclude(status="QUERIED")
+
+
+def _sum(qs):
+    from django.db.models import Sum
+    return qs.aggregate(t=Sum("amount"))["t"] or ZERO
+
+
+def pr_cash_rows(doc):
+    if doc.current_revision_id is None:
+        return []
+    return [ln for ln in doc.current_revision.lines.all()
+            if (ln.amount_cash or 0) > 0]
+
+
+def pr_row_amount(ln):
+    """What a cash row costs on a voucher: its cash and the GST share."""
+    from .procurement import _gst_share
+    cash = ln.amount_cash or ZERO
+    return cash + _gst_share(ln, cash)
+
+
+def line_pr_rows(line):
+    """The cash rows a PR line pays — all of them for a line from before
+    part payment, which listed none."""
+    if line.pr_rows:
+        return set(int(i) for i in line.pr_rows)
+    return {r.id for r in pr_cash_rows(line.source_document)}
+
+
+def pr_open_rows(doc):
+    """Cash rows still to put on a voucher: not on one, not already paid."""
+    taken = set()
+    for ln in _live(source_document=doc):
+        taken |= line_pr_rows(ln)
+    return [r for r in pr_cash_rows(doc)
+            if r.id not in taken and not (r.action_taken or "").strip()]
+
+
+def balance(doc=None, payable=None, milestone=None):
+    """{full, vouchered, closed, balance} for one thing Finance pays."""
+    closed = ZERO
+    if doc is not None:
+        if doc.doc_type == "PR":
+            full = sum((pr_row_amount(r) for r in pr_cash_rows(doc)), ZERO)
+            open_amount = sum((pr_row_amount(r) for r in pr_open_rows(doc)),
+                              ZERO)
+            return {"full": full, "vouchered": full - open_amount,
+                    "closed": ZERO, "balance": open_amount}
+        full = doc.payment_request.amount_requested
+        closed = doc.payment_request.closed_amount or ZERO
+        vouchered = _sum(_live(source_document=doc))
+    elif payable is not None:
+        full = payable.amount
+        closed = payable.closed_amount or ZERO
+        vouchered = _sum(_live(source_payable=payable))
+    else:
+        full = milestone_amount(milestone)
+        closed = milestone.closed_amount or ZERO
+        vouchered = _sum(_live(source_milestone=milestone))
+    return {"full": full, "vouchered": vouchered, "closed": closed,
+            "balance": max(full - vouchered - closed, ZERO)}
+
+
+def paid_so_far(doc=None, payable=None, milestone=None):
+    from django.db.models import Sum
+    kw = ({"source_document": doc} if doc is not None
+          else {"source_payable": payable} if payable is not None
+          else {"source_milestone": milestone})
+    return (_live(**kw).filter(paid_amount__isnull=False)
+            .aggregate(t=Sum("paid_amount"))["t"] or ZERO)
+
+
+def paid_whole(doc=None, payable=None):
+    """Why this has to be paid in one go, or None. A payment that does more
+    than move money — restores a float, extends permits, pays a run — is not
+    split (owner 2026-10-27)."""
+    if payable is not None:
+        if payable.payroll_line_id:
+            return "a salary is paid whole"
+        return None
+    if doc is None or doc.doc_type != "PYR":
+        return None
+    from . import subcontract
+    from .payments import _payroll_run_paid_here
+    pr = doc.payment_request
+    if pr.payment_type == "PETTY_CASH_REPLENISH":
+        return "a petty-cash replenishment is paid whole"
+    if pr.payment_type == "PERMIT_RENEWAL":
+        return "a permit renewal is paid whole"
+    if doc.salary_advances.exists():
+        return "a salary advance is paid whole"
+    if subcontract.is_advance_prepayment(pr):
+        return "a subcontract advance is paid whole"
+    if _payroll_run_paid_here(doc):
+        return "a payroll run is paid whole"
+    if hasattr(doc, "onboarding_fee"):
+        return "an onboarding fee is paid whole"
+    from .models import ProjectBond
+    if ProjectBond.objects.filter(pyr=doc).exists():
+        return "an insurance or bond premium is paid whole"
+    return None
+
+
+def share(full, line, lines, whole):
+    """This line's share of an amount `full` that belongs to a request of
+    `whole` paid in parts by `lines` (its own included, in order):
+    proportional to what each pays. When the parts cover the whole, the last
+    takes the remainder, so they add up to the cent; a balance closed early
+    simply leaves its share unposted."""
+    if not whole:
+        return full
+    parts = [(full * ln.amount / whole).quantize(Decimal("0.01"))
+             for ln in lines]
+    i = [ln.id for ln in lines].index(line.id)
+    if i == len(lines) - 1 and sum((ln.amount for ln in lines), ZERO) >= whole:
+        return full - sum(parts[:-1], ZERO)
+    return parts[i]
+
+
+def unpaid_line(doc=None, payable=None, milestone=None, voucher=None):
+    """The approved part not yet paid — the one a payment now settles."""
+    kw = ({"source_document": doc} if doc is not None
+          else {"source_payable": payable} if payable is not None
+          else {"source_milestone": milestone})
+    qs = _live(**kw).filter(status="APPROVED", paid_amount__isnull=True)
+    if voucher is not None:
+        qs = qs.filter(voucher=voucher)
+    return qs.order_by("id").first()
+
+
+def is_final(line, doc=None, payable=None, milestone=None):
+    """Does paying this line finish the request — nothing left to voucher,
+    no other approved part waiting?"""
+    if balance(doc=doc, payable=payable, milestone=milestone)["balance"] > 0:
+        return False
+    kw = ({"source_document": doc} if doc is not None
+          else {"source_payable": payable} if payable is not None
+          else {"source_milestone": milestone})
+    return not _live(**kw).filter(status="APPROVED",
+                                  paid_amount__isnull=True).exclude(
+        pk=line.pk).exists()
+
+
+def mark_line_paid(line, amount, actor, ref="", local=None):
+    line.paid_amount = amount
+    line.paid_local = local
+    line.paid_on = timezone.localdate()
+    line.paid_ref = (ref or "")[:120]
+    line.paid_by = actor
+    line.save(update_fields=["paid_amount", "paid_local", "paid_on",
+                             "paid_ref", "paid_by"])
+
+
+def close_balance(actor, reason, doc=None, payable=None, milestone=None):
+    """Close what is left unpaid on purpose — a discount, a short delivery —
+    with a reason (owner 2026-10-27). The unpaid part of the commitment
+    comes off the cost ledger and the request counts as paid. For a PYR, a
+    PR's credit payable and an overseas TT; a rent due, a bill, a valuation
+    or a salary is cancelled or corrected where it was raised instead."""
+    from . import costing as _c
+    reason = (reason or "").strip()
+    if not reason:
+        return "Say why the balance is not being paid."
+    kw = ({"source_document": doc} if doc is not None
+          else {"source_payable": payable} if payable is not None
+          else {"source_milestone": milestone})
+    if PaymentVoucherLine.objects.filter(
+            voucher__is_void=False,
+            voucher__status__in=("DRAFT", "SUBMITTED"), **kw).exists():
+        return "It is on a voucher still being processed — finish that first."
+    if _live(status="APPROVED", paid_amount__isnull=True, **kw).exists():
+        return "An approved part is still to be paid — pay or void it first."
+    if paid_so_far(doc=doc, payable=payable, milestone=milestone) <= 0:
+        return ("Nothing has been paid on it yet — return or cancel it "
+                "instead of closing the whole of it.")
+    left = balance(doc=doc, payable=payable, milestone=milestone)["balance"]
+    if left <= 0:
+        return "There is no balance left to close."
+    now = timezone.now()
+    with transaction.atomic():
+        if doc is not None:
+            if doc.doc_type != "PYR":
+                return "A PR's suppliers are closed by withdrawing the award."
+            pr = doc.payment_request
+            committed = left
+            if pr.currency == "USD":
+                from . import fx
+                committed = (left * fx.usd_rate()).quantize(Decimal("0.01"))
+            if not pr.is_capitalized:
+                from .payments import cost_centre
+                _c.post(site=doc.site, cost_head=pr.cost_head,
+                        state="COMMITTED", source="PYR", amount=-committed,
+                        currency="MVR", document=doc, actor=actor,
+                        **cost_centre(pr))
+            obj, subject = pr, doc
+            doc.status = "PAID"
+            doc.save(update_fields=["status", "updated_at"])
+        elif payable is not None:
+            if (payable.rent_due_id or payable.bill_charge_id
+                    or payable.payroll_line_id
+                    or payable.document.doc_type != "PR"):
+                return ("Only a supplier's credit balance is closed here — "
+                        "correct a rent due, a bill, a valuation or a salary "
+                        "where it was raised.")
+            from .procurement import _gst_share, _ho_site, row_currency
+            ln = payable.document_line
+            net = (left * (ln.amount_credit or 0) / payable.amount).quantize(
+                Decimal("0.01")) if payable.amount else left
+            gst = _gst_share(ln, net) if ln is not None else ZERO
+            head = (ln.cost_head if ln is not None and ln.cost_head_id
+                    else _c.by_code(_c.MATERIALS))
+            for state in ("COMMITTED", "INCURRED"):
+                _c.post(site=payable.document.site, cost_head=head,
+                        state=state, source="PR", amount=-net,
+                        document=payable.document, document_line=ln,
+                        actor=actor, currency=row_currency(ln))
+                if gst > 0:
+                    _c.post(site=_ho_site(), cost_head=_c.by_code(_c.INPUT_GST),
+                            state=state, source="PR", amount=-gst,
+                            document=payable.document, document_line=ln,
+                            is_stock_pool=True, actor=actor,
+                            currency=row_currency(ln))
+            payable.status, payable.settled_on = "SETTLED", now.date()
+            payable.settled_ref = f"balance closed: {reason}"[:200]
+            payable.save(update_fields=["status", "settled_on", "settled_ref"])
+            obj, subject = payable, payable.document
+        else:
+            from .imports import _post_split, ipr_order_total
+            order = milestone.order
+            total = ipr_order_total(order)
+            if total:
+                _post_split(order, order.document, "COMMITTED",
+                            -(left / total), order.exchange_rate, actor,
+                            milestone=milestone)
+            milestone.status = "PAID"
+            milestone.save(update_fields=["status"])
+            obj, subject = milestone, order.document
+        obj.closed_amount = left
+        obj.closed_reason = reason[:300]
+        obj.closed_by, obj.closed_at = actor, now
+        obj.save(update_fields=["closed_amount", "closed_reason",
+                                "closed_by", "closed_at"])
+        Approval.objects.create(document=subject,
+                                revision=subject.current_revision,
+                                action="CLOSE_BALANCE", actor=actor,
+                                actor_role=actor.role,
+                                comment=f"Balance {left:,.2f} closed: {reason}")
+    audit("document", subject.id, "BALANCE_CLOSED", actor=actor,
+          detail={"ref": subject.ref, "closed": str(left), "reason": reason})
+    return None
 
 
 def milestone_amount(m):
@@ -98,17 +371,91 @@ def _on_live_payable():
 def awaiting_payables():
     """Outstanding credit payables that can be pulled onto a voucher — any of
     them (due or early, an owner may pay ahead if a vendor withdraws credit)."""
-    return Payable.objects.filter(status="OUTSTANDING").exclude(
+    qs = Payable.objects.filter(status="OUTSTANDING").exclude(
         id__in=_on_live_payable()).select_related(
         "document", "site", "rent_due__contract",
         "bill_charge__account").order_by("due_date", "id")
+    # one part paid and a balance left still owes; a payable whose whole is
+    # already on vouchers does not (a queryset kept, as callers chain on it)
+    spent = [p.id for p in qs if balance(payable=p)["balance"] <= 0]
+    return qs.exclude(id__in=spent)
 
 
-def settle_payable(payable, actor, ref):
+def settle_payable(payable, actor, ref, voucher=None):
     """Finance pays a voucher-approved credit payable: posts the PAID leg for
-    the source and marks the payable SETTLED (owner 2026-07-15)."""
+    the source and marks the payable SETTLED (owner 2026-07-15) — or, for one
+    part of a payable paid in parts, that part's share, the payable settling
+    with the last (owner 2026-10-27)."""
     if payable.status != "OUTSTANDING":
         return "This payable is already settled or cancelled."
+    line = unpaid_line(payable=payable, voucher=voucher)
+    if line is not None:
+        final = is_final(line, payable=payable)
+        whole_line = final and line.amount == payable.amount
+        if not whole_line:
+            return _settle_part(payable, line, actor, ref, final)
+        with costing.for_line(line):
+            err = _settle_whole(payable, actor, ref)
+        if not err:
+            mark_line_paid(line, line.amount, actor, ref)
+        return err
+    return _settle_whole(payable, actor, ref)
+
+
+def _settle_part(payable, line, actor, ref, final):
+    """One part of a payable: its share of the cost Paid, tagged to the
+    line; the payable and what it pays for settle with the last part."""
+    if payable.payroll_line_id:
+        return "A salary is paid whole."
+    lines = list(_live(source_payable=payable).order_by("id"))
+
+    def part(v):
+        return share(Decimal(str(v or 0)), line, lines, payable.amount)
+    today = timezone.localdate()
+    with transaction.atomic(), costing.for_line(line):
+        if payable.rent_due_id:
+            from . import rent
+            rent._post(payable.rent_due, "PAID", actor, today, part=part)
+        elif payable.bill_charge_id:
+            from . import bills
+            bills._post(payable.bill_charge, "PAID", actor, today, part=part)
+        elif payable.document.doc_type == "SVC":
+            from .subcontract import _subcontract_head
+            costing.post(site=payable.document.site,
+                         cost_head=_subcontract_head(), state="PAID",
+                         source="SUBCONTRACT", amount=part(payable.amount),
+                         document=payable.document, actor=actor)
+        else:
+            from .procurement import post_pr_vendor_paid
+            post_pr_vendor_paid(payable.document, payable.document_line,
+                                actor, ref or "", side="credit", part=part)
+        mark_line_paid(line, line.amount, actor, ref)
+        if final:
+            payable.status = "SETTLED"
+            payable.settled_on = today
+            payable.settled_ref = ref or ""
+            payable.save(update_fields=["status", "settled_on",
+                                        "settled_ref"])
+            if payable.rent_due_id:
+                d = payable.rent_due
+                d.status, d.paid_on, d.paid_ref = "PAID", today, (ref or "")[:120]
+                d.save(update_fields=["status", "paid_on", "paid_ref"])
+            elif payable.bill_charge_id:
+                c = payable.bill_charge
+                c.status, c.paid_on, c.paid_ref = "PAID", today, (ref or "")[:120]
+                c.save(update_fields=["status", "paid_on", "paid_ref"])
+            elif (payable.document.doc_type == "SVC"
+                  and payable.document.status == "AUTHORISED"):
+                payable.document.status = "PAID"
+                payable.document.save(update_fields=["status", "updated_at"])
+    audit("payable", payable.id, "PAYABLE_PART_PAID", actor=actor,
+          detail={"vendor": payable.vendor, "ref": ref,
+                  "part": str(line.amount), "of": str(payable.amount),
+                  "settled": final})
+    return None
+
+
+def _settle_whole(payable, actor, ref):
     if payable.rent_due_id:
         from . import rent
         rent.settle_due(payable, actor, ref or "")
@@ -158,13 +505,16 @@ def awaiting_voucher():
     docs = Document.objects.filter(is_void=False).exclude(
         id__in=_on_live_voucher())
     out = []
-    for doc in docs.filter(doc_type="PR",
-                           status__in=("APPROVED", "PAYMENT_PROCESSING")) \
+    for doc in docs.filter(doc_type="PR", status__in=PR_PAYING) \
             .select_related("site"):
-        if pr_cash_total(doc) > 0:
+        # by its cash rows not yet on a voucher: a PR paid supplier by
+        # supplier stays until the last is vouchered (owner 2026-10-27)
+        if pr_cash_total(doc) > 0 and pr_open_rows(doc):
             out.append(doc)
-    for doc in docs.filter(doc_type="PYR", status="DIRECTOR_APPROVED") \
-            .select_related("site"):
+    for doc in docs.filter(doc_type="PYR", status__in=PYR_PAYING) \
+            .select_related("site", "payment_request"):
+        if balance(doc=doc)["balance"] <= 0:
+            continue
         # A payroll PYR whose salaries were raised per person is paid off the
         # payables queue, one transfer per account. Leaving it here too would
         # offer Finance two routes to the same money (owner 2026-09-10).
@@ -186,10 +536,12 @@ def _on_live_milestone():
 def awaiting_milestones():
     """Due overseas TT milestones (on an authorised order) that still need a
     signatory to authorise them on a voucher before Finance can pay."""
-    return ImportPaymentMilestone.objects.filter(
+    qs = ImportPaymentMilestone.objects.filter(
         status="DUE", order__document__status="AUTHORISED").exclude(
         id__in=_on_live_milestone()).select_related(
         "order__document", "order__supplier")
+    spent = [m.id for m in qs if balance(milestone=m)["balance"] <= 0]
+    return qs.exclude(id__in=spent)
 
 
 def _resolve_debit_account(bank_account_id, currency):
@@ -209,10 +561,32 @@ def _resolve_debit_account(bank_account_id, currency):
     return acc, None
 
 
+def _part(amounts, key, bal, whole_reason, label):
+    """(amount, error): what this voucher pays of something whose balance is
+    `bal` — the whole balance unless Finance entered less."""
+    raw = (amounts or {}).get(key)
+    if raw in (None, ""):
+        return bal, None
+    try:
+        amount = Decimal(str(raw)).quantize(Decimal("0.01"))
+    except (ArithmeticError, ValueError, TypeError):
+        return None, f"{label}: the amount is not a number."
+    if amount <= 0:
+        return None, f"{label}: enter an amount above zero."
+    if amount > bal:
+        return None, (f"{label}: {amount:,.2f} is more than the "
+                      f"{bal:,.2f} left to pay.")
+    if amount != bal and whole_reason:
+        return None, f"{label}: {whole_reason}."
+    return amount, None
+
+
 def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
-                   bank_account_id=None):
+                   bank_account_id=None, amounts=None, pr_rows=None):
     """Finance creates a draft voucher from chosen requisitions, overseas TT
-    milestones and/or credit-vendor payables."""
+    milestones and/or credit-vendor payables — each whole, or a part of it
+    (`amounts`, keyed "DOC:<ref>", "M:<id>", "P:<id>"; for a PR, `pr_rows`
+    {ref: [cash row ids]})."""
     source_refs = list(source_refs or [])
     milestone_ids = [int(m) for m in (milestone_ids or [])]
     payable_ids = [int(p) for p in (payable_ids or [])]
@@ -222,15 +596,34 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                                            is_void=False))
     if len(sources) != len(set(source_refs)):
         return None, "One or more references are unknown."
+    plan = {}            # key -> (amount, pr row ids)
     for doc in sources:
-        want = AWAITING_STATUS.get(doc.doc_type)
-        if want is None or doc.status != want:
+        ok = {"PR": PR_PAYING, "PYR": PYR_PAYING}.get(doc.doc_type, ())
+        if doc.status not in ok:
             return None, (f"{doc.ref} is not a Director-approved PR/PYR "
                           "awaiting payment.")
         if PaymentVoucherLine.objects.filter(
                 source_document=doc,
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
             return None, f"{doc.ref} is already on a voucher."
+        if doc.doc_type == "PR":
+            open_rows = {r.id: r for r in pr_open_rows(doc)}
+            want = [int(i) for i in ((pr_rows or {}).get(doc.ref) or [])]
+            want = want or list(open_rows)
+            if not want or any(i not in open_rows for i in want):
+                return None, (f"{doc.ref}: pick its suppliers still to pay "
+                              "— one is already on a voucher or paid.")
+            plan[doc.ref] = (sum((pr_row_amount(open_rows[i]) for i in want),
+                                 ZERO), want)
+            continue
+        bal = balance(doc=doc)["balance"]
+        if bal <= 0:
+            return None, f"{doc.ref} has nothing left to pay."
+        amount, err = _part(amounts, f"DOC:{doc.ref}", bal,
+                            paid_whole(doc=doc), doc.ref)
+        if err:
+            return None, err
+        plan[doc.ref] = (amount, [])
     milestones = list(ImportPaymentMilestone.objects.filter(
         id__in=milestone_ids).select_related("order__document"))
     if len(milestones) != len(set(milestone_ids)):
@@ -244,6 +637,14 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
             return None, f"{m.order.document.ref} · {m.label} is already on a " \
                          "voucher."
+        label = f"{m.order.document.ref} · {m.label}"
+        amount, err = _part(amounts, f"M:{m.id}",
+                            balance(milestone=m)["balance"], None, label)
+        if err:
+            return None, err
+        if amount <= 0:
+            return None, f"{label} has nothing left to pay."
+        plan[f"M:{m.id}"] = (amount, [])
     # One voucher pays one supplier: a TT has one payee, and that is how the
     # bank and the register see it (owner 2026-08-23).
     if len({m.order.supplier_id for m in milestones}) > 1:
@@ -260,6 +661,13 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                 source_payable=p,
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
             return None, f"The payable to {p.vendor} is already on a voucher."
+        amount, err = _part(amounts, f"P:{p.id}", balance(payable=p)["balance"],
+                            paid_whole(payable=p), f"The payable to {p.vendor}")
+        if err:
+            return None, err
+        if amount <= 0:
+            return None, f"The payable to {p.vendor} has nothing left to pay."
+        plan[f"P:{p.id}"] = (amount, [])
     # A voucher is single-currency (owner 2026-07-13): every chosen payment
     # must share one currency (MVR or a foreign currency), never mixed.
     currencies = ({source_currency(d) for d in sources}
@@ -285,16 +693,17 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
         pv.current_revision = revision
         pv.save(update_fields=["current_revision"])
         for doc in sources:
+            amount, rows = plan[doc.ref]
             PaymentVoucherLine.objects.create(
-                voucher=pv, source_document=doc, amount=_source_amount(doc),
-                currency=source_currency(doc))
+                voucher=pv, source_document=doc, amount=amount,
+                pr_rows=rows, currency=source_currency(doc))
         for m in milestones:
             PaymentVoucherLine.objects.create(
-                voucher=pv, source_milestone=m, amount=milestone_amount(m),
+                voucher=pv, source_milestone=m, amount=plan[f"M:{m.id}"][0],
                 currency=milestone_currency(m))
         for p in payables:
             PaymentVoucherLine.objects.create(
-                voucher=pv, source_payable=p, amount=payable_amount(p),
+                voucher=pv, source_payable=p, amount=plan[f"P:{p.id}"][0],
                 currency=payable_currency(p))
     audit("document", pv.id, "PV_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": ref,
@@ -424,8 +833,25 @@ def _return_source(doc, actor, note):
           detail={"ref": doc.ref, "note": note})
 
 
+def _live_rows(qs):
+    """Postings in `qs` that have not been reversed."""
+    from .models import CostPosting
+    reversed_ids = CostPosting.objects.filter(
+        reversal_of__in=qs).values_list("reversal_of_id", flat=True)
+    return qs.filter(reversal_of__isnull=True).exclude(id__in=reversed_ids)
+
+
+def _tagged(line):
+    """Is this a payment recorded line by line (since part payment), whose
+    rows carry the line?"""
+    return line.paid_amount is not None or _live_rows(
+        line.postings.all()).exists()
+
+
 def _source_paid(line):
-    """Has money actually gone out for this voucher line's source yet?"""
+    """Has money actually gone out for this voucher line yet?"""
+    if _tagged(line):
+        return True
     if line.source_milestone_id:
         return line.source_milestone.status == "PAID"
     if line.source_payable_id:
@@ -434,8 +860,16 @@ def _source_paid(line):
     if doc is None:
         return False
     from .models import CostPosting
-    return CostPosting.objects.filter(
-        document=doc, state="PAID", reversal_of__isnull=True).exists()
+    if doc.doc_type == "PR" and line.pr_rows and doc.current_revision_id:
+        # a supplier on this part paid, the part not yet whole
+        if doc.current_revision.lines.filter(id__in=line.pr_rows).exclude(
+                action_taken="").exists():
+            return True
+    # a payment from before part payment: its rows carry no line. One
+    # already reversed does not count — the request may have been
+    # re-vouchered since.
+    return _live_rows(CostPosting.objects.filter(
+        document=doc, state="PAID", voucher_line__isnull=True)).exists()
 
 
 def _unauthorise_source(doc, actor):
@@ -531,14 +965,14 @@ def _cannot_unpay(line):
             if ProjectBond.objects.filter(pyr=doc).exclude(
                     status__in=("PAYMENT_RAISED", "PAID")).exists():
                 return f"{doc.ref} paid a premium whose cover is issued"
-        if doc.doc_type == "PR":
+        if doc.doc_type == "PR" and not _tagged(line):
             settled = Payable.objects.filter(document=doc, status="SETTLED")
             if settled.exists():
                 p = settled.first()
                 return (f"{doc.ref}'s credit to {p.vendor} has been paid "
                         f"too ({p.settled_ref or 'its own voucher'}) — void "
                         "that payment first")
-    if line.source_payable_id:
+    if line.source_payable_id and not _tagged(line):
         p = line.source_payable
         dl = p.document_line
         if (not (p.rent_due_id or p.bill_charge_id or p.payroll_line_id)
@@ -549,10 +983,76 @@ def _cannot_unpay(line):
     return None
 
 
+def _unpay_part(line, actor):
+    """A payment recorded on its line (since part payment): exactly the rows
+    it posted come off, its marks clear, and the source is restated from
+    what its other parts still hold."""
+    from .models import ProjectBond
+    _reverse_rows(line.postings.all(), actor)
+    local = line.paid_local
+    line.paid_amount = line.paid_local = line.paid_on = line.paid_by = None
+    line.paid_ref = ""
+    line.save(update_fields=["paid_amount", "paid_local", "paid_on",
+                             "paid_by", "paid_ref"])
+    if line.source_milestone_id:
+        m = line.source_milestone
+        m.mvr_paid = max((m.mvr_paid or ZERO) - (local or ZERO), ZERO) or None
+        m.status = "AUTHORISED"
+        m.save(update_fields=["mvr_paid", "status"])
+        return m.order.document
+    if line.source_payable_id:
+        p = line.source_payable
+        if p.status == "SETTLED":
+            p.status, p.settled_on, p.settled_ref = "OUTSTANDING", None, ""
+            p.save(update_fields=["status", "settled_on", "settled_ref"])
+            for obj in (p.rent_due if p.rent_due_id else None,
+                        p.bill_charge if p.bill_charge_id else None):
+                if obj is not None and obj.status == "PAID":
+                    obj.status, obj.paid_on, obj.paid_ref = "RAISED", None, ""
+                    obj.save(update_fields=["status", "paid_on", "paid_ref"])
+            if p.document_id and p.document.status == "PAID":
+                p.document.status = "AUTHORISED"
+                p.document.save(update_fields=["status", "updated_at"])
+        return p.document or p.rent_due or p.bill_charge
+    doc = line.source_document
+    if doc.doc_type == "PYR":
+        pr = doc.payment_request
+        pr.amount_paid = paid_so_far(doc=doc) or None
+        if pr.amount_paid is None:
+            pr.fx_rate = pr.paid_date = pr.paid_by = None
+            pr.payment_ref = pr.variance_reason = ""
+        pr.save(update_fields=["amount_paid", "fx_rate", "paid_date",
+                               "paid_by", "payment_ref", "variance_reason"])
+        ProjectBond.objects.filter(pyr=doc, status="PAID").update(
+            status="PAYMENT_RAISED")
+    else:
+        doc.current_revision.lines.filter(
+            id__in=line_pr_rows(line)).update(action_taken="")
+    doc.status = "AUTHORISED"
+    doc.save(update_fields=["status", "updated_at"])
+    if doc.doc_type == "PR":
+        from .procurement import advance_pr_settlement
+        advance_pr_settlement(doc, actor)
+    return doc
+
+
 def _unpay(line, actor):
     """Take a recorded payment back: its Paid rows off the ledger, its paid
     marks cleared, the source back where the signatory left it."""
     from .models import CostPosting, ProjectBond
+    if _tagged(line) or (line.source_document_id and line.pr_rows):
+        subject = _unpay_part(line, actor)
+        if not hasattr(subject, "current_revision"):
+            subject = None
+        if subject is not None:
+            Approval.objects.create(
+                document=subject, revision=subject.current_revision,
+                action="RETURN", actor=actor, actor_role=actor.role,
+                comment=f"Payment reversed — voucher {line.voucher.ref} voided")
+        audit("voucher_line", line.id, "PAYMENT_REVERSED", actor=actor,
+              detail={"voucher": line.voucher.ref, "amount": str(line.amount),
+                      "currency": line.currency})
+        return
     rows = CostPosting.objects.none()
     if line.source_milestone_id:
         m = line.source_milestone
@@ -634,8 +1134,8 @@ def void_voucher(pv, actor, reason):
     """Void a payment voucher and unwind its commitments: reverse each approved
     line's source (postings, payables, generated POs) and return the source to
     its pre-voucher approved state so it can be re-vouchered; free a milestone
-    back to DUE. Blocked once any payment has been recorded on the voucher —
-    that must be reversed first (owner 2026-07-16)."""
+    back to DUE. Payments recorded on it are reversed first (owner
+    2026-10-27); a request paid in parts loses only this voucher's part."""
     if pv.is_void:
         return "This voucher is already void."
     if not (reason or "").strip():
@@ -655,10 +1155,24 @@ def void_voucher(pv, actor, reason):
         for ln in lines:
             if ln.status == "APPROVED":
                 if ln.source_document_id:
-                    _unauthorise_source(ln.source_document, actor)
+                    doc = ln.source_document
+                    others = _live(source_document=doc,
+                                   status="APPROVED").exclude(voucher=pv)
+                    if not others.exists():
+                        _unauthorise_source(doc, actor)
+                    elif doc.doc_type == "PYR":
+                        # other parts stand on other vouchers: only this part
+                        # goes, the authorisation and commitment stay
+                        waiting = others.filter(paid_amount__isnull=True)
+                        doc.status = "AUTHORISED" if waiting.exists() \
+                            else "PART_PAID"
+                        doc.save(update_fields=["status", "updated_at"])
                 elif ln.source_milestone_id:
                     m = ln.source_milestone
-                    m.status = "DUE"
+                    waiting = _live(source_milestone=m, status="APPROVED",
+                                    paid_amount__isnull=True).exclude(
+                        voucher=pv)
+                    m.status = "AUTHORISED" if waiting.exists() else "DUE"
                     m.voucher = None
                     m.save(update_fields=["status", "voucher"])
                 # a payable line posted nothing at approval; marking the PV
@@ -719,8 +1233,12 @@ def approve_voucher(pv, actor, queried_ids=None, note=""):
                 line.query_note = note
                 line.save(update_fields=["status", "query_note"])
                 # a queried milestone simply stays DUE (nothing to unwind);
-                # a queried requisition returns to its raiser
-                if line.source_document_id:
+                # a queried requisition returns to its raiser — unless part
+                # of it is already authorised or paid, when only this part
+                # drops and the rest stands (owner 2026-10-27)
+                if line.source_document_id and not _live(
+                        source_document=line.source_document).exclude(
+                        pk=line.pk).exists():
                     _return_source(line.source_document, actor,
                                    note or "queried")
             else:
@@ -729,7 +1247,26 @@ def approve_voucher(pv, actor, queried_ids=None, note=""):
                 if line.source_milestone_id:
                     authorise_milestone(line.source_milestone, pv, actor)
                 elif line.source_document_id:
-                    authorise_source(line.source_document, actor)
+                    doc = line.source_document
+                    first = not _live(source_document=doc,
+                                      status="APPROVED").exclude(
+                        pk=line.pk).exists()
+                    if doc.status in ("DIRECTOR_APPROVED", "APPROVED") or (
+                            doc.doc_type == "PR" and first):
+                        # the first part authorises the whole — a PR whose
+                        # credit order was signed first is already PAYMENT_
+                        # PROCESSING, its cash still unauthorised (22 such
+                        # PRs could never be vouchered, owner 2026-10-27)
+                        authorise_source(doc, actor)
+                    elif doc.doc_type == "PYR" and doc.status == "PART_PAID":
+                        # a balance: authorised already, committed already
+                        doc.status = "AUTHORISED"
+                        doc.save(update_fields=["status", "updated_at"])
+                        Approval.objects.create(
+                            document=doc, revision=doc.current_revision,
+                            action="AUTHORISE", actor=actor,
+                            actor_role=actor.role,
+                            comment=f"Balance authorised on {pv.ref}")
                 # A payable line: the commitment was already authorised at PR
                 # time, so approval simply green-lights the payment — Finance
                 # settles it (posts PAID + marks the payable SETTLED).

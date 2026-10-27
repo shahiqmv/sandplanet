@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BalanceNote, PartAmount, closeBalance, partBody, pickedAmount } from "./PartPayment.jsx";
 import { api } from "./api.js";
 import { Btn, Chip, RefStamp, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -24,6 +25,7 @@ export default function PayablesPage({ me, onOpenDoc }) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("CREDIT");
   const [picked, setPicked] = useState({});     // payable_id -> bool
+  const [partAmt, setPartAmt] = useState({});   // P:id -> amount typed (part payment)
   const [banks, setBanks] = useState([]);
   const [debit, setDebit] = useState("");
   const [error, setError] = useState(null);
@@ -47,7 +49,9 @@ export default function PayablesPage({ me, onOpenDoc }) {
   const onSalaries = tab === "SALARY";
   const rows = onSalaries ? salaries : credit;
   const pickedRows = rows.filter((r) => picked[r.payable_id]);
-  const pickedTotal = pickedRows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const pkey = (r) => `P:${r.payable_id}`;
+  const pickedTotal = pickedRows.reduce(
+    (s, r) => s + pickedAmount(r, partAmt, {}, pkey), 0);
   // one total per currency — a USD purchase, rent or salary beside rufiyaa
   // ones does not add up (owner 2026-10-25)
   const tabTotals = rows.reduce((t, r) => {
@@ -83,10 +87,11 @@ export default function PayablesPage({ me, onOpenDoc }) {
     try {
       const pv = await api("/payment-vouchers", { method: "POST",
         body: { payable_ids: pickedRows.map((r) => r.payable_id),
+                ...partBody(pickedRows, partAmt, {}, pkey),
                 bank_account_id: debit || null } });
       const what = onSalaries ? `${pickedRows.length} salaries`
         : `${pickedRows.length} payable(s)`;
-      setPicked({}); setDebit("");
+      setPicked({}); setPartAmt({}); setDebit("");
       setMsg(`Voucher ${pv.ref} raised for ${what} — submit it on the Payment `
         + `Vouchers page.${onSalaries ? " The transfer list downloads from "
           + "the voucher once it is approved." : ""}`);
@@ -283,7 +288,18 @@ export default function PayablesPage({ me, onOpenDoc }) {
                     </td>
                   )}
                   <td style={{ ...td, textAlign: "right", ...mono }}>
-                    {money(r.amount)}</td>
+                    {money(r.amount)}
+                    <BalanceNote row={r} />
+                    {picked[r.payable_id] && (
+                      <PartAmount row={r} value={partAmt[pkey(r)] ?? ""}
+                                  onChange={(v) => setPartAmt({ ...partAmt, [pkey(r)]: v })} />)}
+                    {!picked[r.payable_id] && isFinance && Number(r.paid_so_far) > 0 && (
+                      <div><a href="#" style={{ fontSize: 11 }}
+                              onClick={async (e) => { e.preventDefault();
+                                try { if (await closeBalance(r)) load(); }
+                                catch (err) { setError(err.message); } }}>
+                        Close balance</a></div>)}
+                  </td>
                 </tr>);
               })}
             </tbody>

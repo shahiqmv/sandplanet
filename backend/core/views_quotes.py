@@ -508,6 +508,16 @@ def pr_vendor_payment(request, ref):
     if not payment_ref:
         return Response({"detail": "payment_ref (slip / voucher no.) "
                                    "required."}, status=400)
+    # The voucher line that authorised paying this supplier: a PR paid in
+    # parts puts each supplier on its own voucher, and one not yet on an
+    # approved voucher is not Finance's to pay (owner 2026-10-27).
+    from . import vouchers
+    pv_line = next((vl for vl in vouchers._live(source_document=pr,
+                                                status="APPROVED")
+                    if line.id in vouchers.line_pr_rows(vl)), None)
+    if (line.amount_cash or 0) > 0 and pv_line is None:
+        return Response({"detail": f"{line.vendor} is not on an approved "
+                                   "voucher yet."}, status=400)
     line.action_taken = payment_ref
     line.save(update_fields=["action_taken"])
 
@@ -534,7 +544,17 @@ def pr_vendor_payment(request, ref):
     # Post the PAID cost leg for this vendor + settle its payable (M6c)
     from .procurement import advance_pr_settlement, post_pr_vendor_paid
 
-    post_pr_vendor_paid(pr, line, request.user, payment_ref, side="cash")
+    from . import costing
+    with costing.for_line(pv_line):
+        post_pr_vendor_paid(pr, line, request.user, payment_ref, side="cash")
+    if pv_line is not None:
+        # the line is paid once every supplier on it is
+        rows = vouchers.line_pr_rows(pv_line)
+        done = pr.current_revision.lines.filter(id__in=rows).exclude(
+            action_taken="").count()
+        if done == len(rows):
+            vouchers.mark_line_paid(pv_line, pv_line.amount, request.user,
+                                    payment_ref)
     # status follows the vendor rows (slip for cash, PO for credit)
     old = pr.status
     advance_pr_settlement(pr, request.user)

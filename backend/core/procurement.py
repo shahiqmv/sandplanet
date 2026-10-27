@@ -1135,7 +1135,13 @@ def authorise_pr(pr, actor):
 
     for ln in pr.current_revision.lines.all():
         cash = ln.amount_cash or 0
-        if cash > 0:
+        # a row already committed is not committed again — authorising a PR
+        # paid supplier by supplier runs once, but never twice for a row
+        # (owner 2026-10-27)
+        # (an advance-and-credit row: its order may have committed the
+        # credit side already, so the row is done only at cash + credit)
+        if cash > 0 and _already_committed(pr, ln) < cash + (
+                ln.amount_credit or 0):
             _post_pr_line(pr, ln, cash, _gst_share(ln, cash), actor)
         balance = ln.amount_credit or 0
         if cash > 0 and balance > 0 and ln.balance_before_collection:
@@ -1288,7 +1294,7 @@ def reverse_pr_authorisation(pr, actor):
     pr.payables.filter(status="OUTSTANDING").update(status="CANCELLED")
 
 
-def post_pr_vendor_paid(pr, line, actor, ref, side=None):
+def post_pr_vendor_paid(pr, line, actor, ref, side=None, part=None):
     """PAID leg when Finance records a vendor payment / settlement (§4A).
     Settles the vendor's payable if credit.
 
@@ -1308,6 +1314,10 @@ def post_pr_vendor_paid(pr, line, actor, ref, side=None):
         net = cash if side == "cash" else credit
         gst = _gst_share(line, net)
         settle = side == "credit"
+    if part:
+        # one part of a credit balance paid in parts: its share of the net
+        # and of the GST; the payable settles with the last (owner 2026-10-27)
+        net, gst, settle = part(net), part(gst), False
     if net > 0:
         materials = costing.by_code(costing.MATERIALS)
         ccy = row_currency(line)

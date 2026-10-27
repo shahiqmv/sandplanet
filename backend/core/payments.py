@@ -446,15 +446,22 @@ def pyr_action(request, doc, action_name):
         if user.role not in ("FINANCE", "ADMIN"):
             return Response({"detail": "Finance executes payment."},
                             status=403)
+        # The approved part this payment settles — the whole request, or a
+        # part of it with the balance left for a later voucher (owner
+        # 2026-10-27). None for a request authorised before part payment.
+        from . import vouchers
+        line = vouchers.unpaid_line(doc=doc)
+        expected = line.amount if line else pr.amount_requested
         try:
-            amount_paid = Decimal(str(data.get("amount_paid",
-                                                pr.amount_requested)))
+            amount_paid = Decimal(str(data.get("amount_paid", expected)))
         except (TypeError, ValueError):
             return Response({"detail": "Amount paid is invalid."}, status=400)
         variance = data.get("variance_reason", "")
-        if amount_paid != pr.amount_requested and not variance.strip():
+        if amount_paid != expected and not variance.strip():
             return Response({"detail": "A variance reason is required when "
                                        "the paid amount differs."}, status=400)
+        final = vouchers.is_final(line, doc=doc) if line else True
+        before = vouchers.paid_so_far(doc=doc) if line else Decimal("0")
         # A USD request posts to the (MVR) cost ledger converted at the rate
         # applied when paying — entered, else the company MVR-per-USD rate.
         if pr.currency == "USD":
@@ -473,7 +480,7 @@ def pyr_action(request, doc, action_name):
             ledger_amount = (amount_paid * rate).quantize(Decimal("0.01"))
         else:
             ledger_amount = amount_paid
-        pr.amount_paid = amount_paid
+        pr.amount_paid = before + amount_paid
         pr.paid_date = data.get("paid_date") or date.today()
         pr.payment_ref = data.get("payment_ref", "")
         pr.payment_method = data.get("payment_method", pr.payment_method)
@@ -492,62 +499,75 @@ def pyr_action(request, doc, action_name):
                 kind="PAYMENT_SLIP", file=slip, file_name=slip.name,
                 content_type=slip.content_type or "", size_bytes=slip.size,
                 caption=pr.payment_ref or "payment slip", uploaded_by=user)
-        from . import subcontract
+        # every row this payment posts is tagged to its voucher line
+        with costing.for_line(line):
+            from . import subcontract
 
-        if pr.payment_type == "PETTY_CASH_REPLENISH":
-            # The Paid leg is posted per expense (under each entry's cost
-            # head) and the float restored — never double-counting the
-            # already-Incurred expenses (§6B.3.4, §6C.3.3)
-            from . import petty_cash
+            if pr.payment_type == "PETTY_CASH_REPLENISH":
+                # The Paid leg is posted per expense (under each entry's cost
+                # head) and the float restored — never double-counting the
+                # already-Incurred expenses (§6B.3.4, §6C.3.3)
+                from . import petty_cash
 
-            petty_cash.on_replenish_paid(doc, user)
-        elif doc.salary_advances.exists():
-            # A salary advance/loan is a prepayment recouped from payroll — the
-            # labour expense is recognised in the payroll month-lock, so this
-            # PYR posts nothing to the cost ledger to avoid double counting.
-            pass
-        elif subcontract.is_advance_prepayment(pr):
-            # A subcontract advance is a prepayment recovered from the
-            # certificates, and each certificate posts the work it certifies —
-            # so the advance itself posts no project cost. Its GST is still
-            # recoverable input tax and goes to the pool.
-            subcontract.on_advance_paid(doc, pr, user)
-        elif pr.is_capitalized and _payroll_run_paid_here(doc):
-            # A run's salaries, paid as one payment: the run booked the
-            # labour as Incurred when it locked; the money leaving is the
-            # Paid side, split by site as the cost was (owner 2026-10-12).
-            from . import payroll
-            payroll.post_run_paid(_payroll_run_paid_here(doc), user,
-                                  posted_on=pr.paid_date, document=doc)
-        elif pr.is_capitalized:
-            # An import charge already capitalized into the material's landed
-            # cost at receipt — the PYR pays the agent but posts nothing here,
-            # to avoid double counting (import-charge-payments).
-            pass
+                petty_cash.on_replenish_paid(doc, user)
+            elif doc.salary_advances.exists():
+                # A salary advance/loan is a prepayment recouped from payroll — the
+                # labour expense is recognised in the payroll month-lock, so this
+                # PYR posts nothing to the cost ledger to avoid double counting.
+                pass
+            elif subcontract.is_advance_prepayment(pr):
+                # A subcontract advance is a prepayment recovered from the
+                # certificates, and each certificate posts the work it certifies —
+                # so the advance itself posts no project cost. Its GST is still
+                # recoverable input tax and goes to the pool.
+                subcontract.on_advance_paid(doc, pr, user)
+            elif pr.is_capitalized and _payroll_run_paid_here(doc):
+                # A run's salaries, paid as one payment: the run booked the
+                # labour as Incurred when it locked; the money leaving is the
+                # Paid side, split by site as the cost was (owner 2026-10-12).
+                from . import payroll
+                payroll.post_run_paid(_payroll_run_paid_here(doc), user,
+                                      posted_on=pr.paid_date, document=doc)
+            elif pr.is_capitalized:
+                # An import charge already capitalized into the material's landed
+                # cost at receipt — the PYR pays the agent but posts nothing here,
+                # to avoid double counting (import-charge-payments).
+                pass
+            else:
+                costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
+                             source="PYR", amount=ledger_amount,
+                             currency="MVR", document=doc, actor=user,
+                             posted_on=pr.paid_date, **cost_centre(pr))
+                costing.post(site=doc.site, cost_head=pr.cost_head,
+                             state="INCURRED", source="PYR", amount=ledger_amount,
+                             currency="MVR", document=doc, actor=user,
+                             posted_on=pr.paid_date, **cost_centre(pr))
+            # Work-permit renewals extend the expiries only now, on payment
+            if final and pr.payment_type == "PERMIT_RENEWAL":
+                from . import permits
+
+                permits.apply_for_document(doc, user)
+            # An onboarding fee paid clears that stage's gate — tell HR
+            if final and hasattr(doc, "onboarding_fee"):
+                from . import onboarding
+
+                onboarding.on_fee_paid(doc, user)
+            # A bond/insurance premium paid → the cover can now be issued
+            from . import bonds
+
+            if final:
+                bonds.on_pyr_paid(doc, user)
+        if line:
+            vouchers.mark_line_paid(line, amount_paid, user,
+                                    pr.payment_ref)
+        if final:
+            _set_status(doc, "PAID", "PAY", user, comment)
         else:
-            costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
-                         source="PYR", amount=ledger_amount,
-                         currency="MVR", document=doc, actor=user,
-                         posted_on=pr.paid_date, **cost_centre(pr))
-            costing.post(site=doc.site, cost_head=pr.cost_head,
-                         state="INCURRED", source="PYR", amount=ledger_amount,
-                         currency="MVR", document=doc, actor=user,
-                         posted_on=pr.paid_date, **cost_centre(pr))
-        # Work-permit renewals extend the expiries only now, on payment
-        if pr.payment_type == "PERMIT_RENEWAL":
-            from . import permits
-
-            permits.apply_for_document(doc, user)
-        # An onboarding fee paid clears that stage's gate — tell HR
-        if hasattr(doc, "onboarding_fee"):
-            from . import onboarding
-
-            onboarding.on_fee_paid(doc, user)
-        # A bond/insurance premium paid → the cover can now be issued
-        from . import bonds
-
-        bonds.on_pyr_paid(doc, user)
-        _set_status(doc, "PAID", "PAY", user, comment)
+            # a balance left, or another approved part still to pay
+            waiting = vouchers.unpaid_line(doc=doc)
+            _set_status(doc, "AUTHORISED" if waiting else "PART_PAID", "PAY",
+                        user, comment or f"Part paid {amount_paid:,.2f} of "
+                        f"{pr.amount_requested:,.2f}")
         return None
 
     if action_name == "return":
@@ -586,6 +606,15 @@ def pyr_action(request, doc, action_name):
         if not note.strip():
             return Response({"detail": "A reason note is required."},
                             status=400)
+        from . import vouchers
+        if vouchers.paid_so_far(doc=doc) > 0:
+            return Response({"detail": "Part of it is already paid — void "
+                                       "the voucher of the part still to pay "
+                                       "instead."}, status=400)
+        # its voucher line no longer holds anything: marked queried, so the
+        # request counts in full again when it comes back (owner 2026-10-27)
+        vouchers._live(source_document=doc, status="APPROVED").update(
+            status="QUERIED", query_note=f"Authorisation withdrawn: {note}"[:500])
         pr.withdrawn_by = user
         pr.withdrawn_at = timezone.now()
         pr.withdrawn_reason = note

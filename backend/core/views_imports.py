@@ -1136,19 +1136,32 @@ def ipr_payments_due(request):
     on_live = set(_on_live_milestone())
     today = _date.today()
     rows = []
+    from . import vouchers
     for m in ipr_svc.payments_due():
         total = ipr_svc.ipr_order_total(m.order)
         band = {"PENDING": "COMING", "DUE": "PAYABLE",
                 "AUTHORISED": "TT_READY"}[m.status]
+        # part payment (owner 2026-10-27): a due milestone shows what is
+        # left to voucher; a TT-ready one the approved part to transfer
+        full = m.due_amount(total)
+        due = full
+        if m.status == "DUE":
+            due = vouchers.balance(milestone=m)["balance"]
+        elif m.status == "AUTHORISED":
+            waiting = vouchers.unpaid_line(milestone=m)
+            due = waiting.amount if waiting else full
         rows.append({
+            "kind": "MILESTONE", "ref": m.order.document.ref,
+            "amount": due, "full_amount": full,
+            "paid_so_far": vouchers.paid_so_far(milestone=m),
             "ipr_ref": m.order.document.ref, "milestone_id": m.id,
             "label": m.label, "trigger": m.trigger,
             "trigger_label": m.get_trigger_display(),
             "supplier": m.order.supplier.name,
             "supplier_id": m.order.supplier_id,
             "currency": m.order.order_currency,
-            "due_amount": m.due_amount(total),
-            "expected_mvr": (m.due_amount(total) * m.order.exchange_rate)
+            "due_amount": due,
+            "expected_mvr": (due * m.order.exchange_rate)
             .quantize(Decimal("0.01")),
             "due_date": m.due_date, "credit_days": m.credit_days,
             "fell_due_on": m.fell_due_on, "pay_by": m.pay_by,

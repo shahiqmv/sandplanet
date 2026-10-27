@@ -1685,11 +1685,22 @@ def _do_withdraw(request, doc, comment):
         if err is None:
             ipr_svc.reverse_ipr_authorisation(doc, request.user)
         return err
+    from . import vouchers
     from .procurement import reverse_pr_authorisation
+    if doc.doc_type == "PR" and doc.current_revision_id and \
+            doc.current_revision.lines.filter(amount_cash__gt=0).exclude(
+                action_taken="").exists():
+        return Response({"detail": "A supplier on it is already paid — void "
+                                   "that voucher instead."}, status=400)
     err = _apply(request, doc, "DRAFT", "WITHDRAW_AUTHORISATION",
                  roles={"FINANCE"}, comment=comment)
     if err is None:
         reverse_pr_authorisation(doc, request.user)
+        # its voucher lines hold nothing now: marked queried, so its
+        # suppliers can go on a voucher again (owner 2026-10-27)
+        vouchers._live(source_document=doc, status="APPROVED").update(
+            status="QUERIED",
+            query_note=f"Authorisation withdrawn: {comment}"[:500])
     return err
 
 
