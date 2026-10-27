@@ -63,24 +63,20 @@ def can_record(user, site):
     return user.role in RECORD_ROLES and _site_ok(user, site)
 
 
-def _other_pms(w):
-    return [u for u in w.site.current_pms() if u.id != w.raised_by_id]
-
-
 def can_approve(user, w):
-    """The site's PM (any co-PM); the Director where a site has no PM, for
-    head office, and where the site's only PM raised it himself; Admin.
-    Never the person who raised it. (A warning the PM raised used to wait
-    for nobody: he could not approve his own, and the Director only stood
-    in where there was no PM — owner 2026-10-26.)"""
+    """The site's PM (any co-PM) — his own warnings included: on many sites
+    the PM does the safety and admin work himself and prepares the warning
+    as well as approving it (owner 2026-10-27). The Director where a site
+    has no PM, and for head office; Admin. Anyone else never approves what
+    they raised."""
+    if user.role == "PM":
+        return w.site.is_current_pm(user)
     if user.id == w.raised_by_id:
         return False
     if user.role == "ADMIN":
         return True
-    if user.role == "PM":
-        return w.site.is_current_pm(user)
     if user.role == "DIRECTOR":
-        return w.site.is_head_office or not _other_pms(w)
+        return w.site.is_head_office or not w.site.current_pms()
     return False
 
 
@@ -234,8 +230,8 @@ def decide(w, user, approve, note=""):
     if w.status != "PENDING":
         return f"{w.ref} is {w.get_status_display().lower()}."
     if not can_approve(user, w):
-        return ("Only the site's PM approves a warning — and never the "
-                "person who raised it.")
+        return ("Only the site's PM approves a warning — anyone else "
+                "never the one they raised.")
     note = (note or "").strip()
     if not approve and not note:
         return "Say why it is going back to the site."
@@ -246,8 +242,10 @@ def decide(w, user, approve, note=""):
                           "decision_note"])
     audit("warning_notice", w.id,
           "WARNING_APPROVED" if approve else "WARNING_RETURNED", actor=user,
-          detail={"ref": w.ref, "note": note[:120]})
-    _notify_raiser(w, user)
+          detail={"ref": w.ref, "note": note[:120],
+                  "own": user.id == w.raised_by_id})
+    if user.id != w.raised_by_id:
+        _notify_raiser(w, user)
     return None
 
 
@@ -347,10 +345,10 @@ def _add_months(day, months):
 
 def _approvers(w):
     from .notify import _role_users
-    who = _other_pms(w)
+    who = w.site.current_pms()
     if not who or w.site.is_head_office:
-        who = list(_role_users("DIRECTOR"))
-    return [u for u in who if u.id != w.raised_by_id]
+        who = [u for u in _role_users("DIRECTOR") if u.id != w.raised_by_id]
+    return who
 
 
 def approver_names(w):
@@ -363,6 +361,8 @@ def _notify_approvers(w):
     body = (f"{w.site.code} · {w.employee.emp_no} {w.employee.full_name} · "
             f"{w.get_level_display()}")
     for u in _approvers(w):
+        if u.id == w.raised_by_id:
+            continue            # a PM's own warning: he approves it himself
         notify_user(u, f"Warning to approve — {w.ref}", body=body,
                     category="approval")
 

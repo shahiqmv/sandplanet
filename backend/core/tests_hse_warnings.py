@@ -8,8 +8,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from .models import (Employee, EmployeeSiteAllocation, ManpowerCategory, Site,
-                     SitePmHistory, Subcontractor, User, WarningNotice,
+from .models import (Employee, EmployeeSiteAllocation, ManpowerCategory,
+                     Notification, Site, SitePmHistory, Subcontractor, User, WarningNotice,
                      WorkerChangeRequest, WorkerFine)
 from .tests import make_user
 
@@ -216,26 +216,24 @@ class WarningNoticeTests(TestCase):
             self.assertEqual("explain the warning to him verbally" in text,
                              lang == "DV", lang)
 
-    def test_a_warning_the_pm_raised_goes_to_the_director(self):
-        """It used to wait for nobody: the PM cannot approve his own and the
-        Director only stood in where there was no PM (owner 2026-10-26)."""
+    def test_the_pm_raises_and_approves_his_own(self):
+        """On many sites the PM does the safety work himself, so he prepares
+        the warning and approves it (owner 2026-10-27). Anyone else still
+        can't approve what they raised; the Director stands in only where a
+        site has no PM."""
         director = make_user("wn_dir", User.Role.DIRECTOR)
         r = self.raise_(user=self.pm)
         self.assertEqual(r.status_code, 201, r.data)
         wid = r.data["id"]
-        self.assertIn("wn_dir", r.data["waiting_for"])
-        self.assertEqual(self.approve(wid, self.pm).status_code, 400)
-        tasks = self.as_(director).get("/api/v1/approvals/pending").data
-        refs = [i["ref"] for g in tasks["groups"] for i in g["items"]]
-        self.assertIn(r.data["ref"], refs)
-        self.assertEqual(self.approve(wid, director).data["status"],
-                         "APPROVED")
-        # one the site engineer raised is still the PM's, not the Director's
-        r = self.raise_()
+        self.assertFalse(Notification.objects.filter(
+            recipient=self.pm, title__contains="to approve").exists())
         self.assertFalse(self.as_(director).get(
-            f"/api/v1/hse-warnings/{r.data['id']}").data["can_decide"])
-        self.assertTrue(self.as_(self.pm).get(
-            f"/api/v1/hse-warnings/{r.data['id']}").data["can_decide"])
+            f"/api/v1/hse-warnings/{wid}").data["can_decide"])
+        r = self.approve(wid, self.pm)
+        self.assertEqual(r.data["status"], "APPROVED", r.data)
+        # the site engineer still can't approve his own
+        r = self.raise_()
+        self.assertEqual(self.approve(r.data["id"], self.se).status_code, 400)
 
     def test_the_form_language_is_chosen_on_the_warning(self):
         r = self.raise_(language="TA")

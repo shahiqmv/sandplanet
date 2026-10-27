@@ -631,7 +631,7 @@ function WarnBlock({ incident, me }) {
   return (
     <div style={{ marginTop: 8 }}>
       {open
-        ? <WarnFromIncident incident={incident} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
+        ? <WarnFromIncident incident={incident} pm={me?.role === "PM"} onDone={() => setOpen(false)} onCancel={() => setOpen(false)} />
         : <button onClick={() => setOpen(true)} style={ghostButton}>Warn a worker involved (SP-HSE-F02)</button>}
     </div>
   );
