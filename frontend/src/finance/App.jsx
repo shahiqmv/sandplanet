@@ -235,7 +235,9 @@ function SettingsPage({ me, settings, onSaved }) {
 // Every open page stays alive — what was typed, the filters, the scroll —
 // and only the one in front is shown. The page list (not what was typed)
 // survives a reload.
-const MAX_PAGES = 6;
+const MAX_PAGES = 10;
+// subs that are a page's own tabs, not a record: they switch in place
+const INNER_TABS = { utilities: new Set([null, "enter", "pay", "recoveries"]) };
 const WIN_KEY = "f-open-pages";
 let winSeq = 0;
 const newWin = (page, sub = null) => ({ id: ++winSeq, page, sub, dirty: false, nonce: 0, scroll: 0 });
@@ -341,12 +343,39 @@ export default function App() {
     window.scrollTo({ top: 0 });
     setWinMsg(null);
   }
-  // the menu: replace the page in front — unless something was typed on it,
-  // in which case it is parked in the bar and the new page opens beside it
+  // Opening something gives it its own page, as in any tabbed app (owner
+  // 2026-10-27): the menu, an account from the chart, a bill from the list.
+  // Already open → brought to the front instead of opened twice.
+  const findWin = (key, sub) => winsRef.current.find((w) => w.page === key && (w.sub || null) === (sub || null));
   function go(key, sub = null) {
-    const cur = winsRef.current.find((w) => w.id === activeRef.current);
-    if (cur && cur.dirty && (cur.page !== key || (cur.sub || null) !== sub)) openWin(key, sub);
-    else navWin(activeRef.current, key, sub);
+    const open = findWin(key, sub);
+    if (open) focusWin(open.id); else openWin(key, sub);
+  }
+  // A link inside a page. A record opened from its list gets its own page;
+  // a record moving on (a new bill saved, the next step) stays where it is;
+  // back to a list already open closes the record and shows that list.
+  function goFrom(id, key, sub = null) {
+    const here = winsRef.current.find((w) => w.id === id);
+    if (!here) return;
+    const same = here.page === key;
+    if (same && (here.sub || null) === (sub || null)) return;
+    // a page's own inner tabs switch in place
+    const tabs = INNER_TABS[key];
+    if (same && tabs && tabs.has(sub || null) && tabs.has(here.sub || null)) { navWin(id, key, sub); return; }
+    if (same && here.sub && sub) { navWin(id, key, sub); return; }
+    if (same && !sub) {
+      const list = winsRef.current.find((w) => w.id !== id && w.page === key && !w.sub);
+      if (list) { closeQuiet(id, list.id); return; }
+      navWin(id, key, null); return;
+    }
+    go(key, sub);
+  }
+  // close a page that finished its job (no question) and show another
+  function closeQuiet(id, showId) {
+    setWins((ws) => ws.filter((w) => w.id !== id));
+    const next = winsRef.current.find((w) => w.id === showId);
+    setActiveId(showId);
+    if (next) { setHash(next); setTimeout(() => window.scrollTo({ top: next.scroll || 0 }), 0); }
   }
   function minimize() {
     const home = winsRef.current.find((w) => w.id !== activeRef.current && w.page === "home" && !w.dirty);
@@ -394,7 +423,7 @@ export default function App() {
   function screen(w) {
     const pg = can(w.page) ? w.page : "home";
     const { sub } = w;
-    const go = (key, s = null) => navWin(w.id, key, s);
+    const go = (key, s = null) => goFrom(w.id, key, s);
     // A document opens where it lives — in Projects, in its own tab.
     const openDoc = (ref) => (/^RENT-/i.test(ref || "") ? go("rentals", ref)
       : /^UTL-/i.test(ref || "") ? go("utilities", ref)
