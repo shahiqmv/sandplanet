@@ -72,6 +72,28 @@ class PyrPartPaymentTests(VoucherBase):
         self.assertEqual(vouchers.balance(doc=doc)["balance"], Decimal("600"))
         self.assertFalse(Document.objects.get(ref=pv1).is_void)
 
+    def test_the_balance_is_vouchered_before_the_first_part_is_paid(self):
+        # PYR-SJR-224: 30,000 of 79,289.28 approved on PV-1298, not yet paid,
+        # and the balance had vanished from Finance's queue (2026-10-28)
+        a = self.director_approved_pyr(amount=1000)
+        doc = Document.objects.get(ref=a)
+        self._pv(a, 400)
+        self.client.force_authenticate(self.finance)
+        row = next(x for x in self.client.get(
+            "/api/v1/finance/awaiting-voucher").data if x.get("ref") == a)
+        self.assertEqual(row["amount"], Decimal("600"))
+        self._pv(a, 600)
+        self.assertNotIn(doc, vouchers.awaiting_voucher())
+        self.assertEqual(costing.document_net(doc, "COMMITTED"),
+                         Decimal("1000"))      # still committed once
+        self.act(a, "pay", self.finance, payment_ref="TT-1")
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, "AUTHORISED")   # the 600 still to pay
+        self.act(a, "pay", self.finance, payment_ref="TT-2")
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, "PAID")
+        self.assertEqual(costing.document_net(doc, "PAID"), Decimal("1000"))
+
     def test_a_payment_that_does_more_than_move_money_is_paid_whole(self):
         a = self.director_approved_pyr(amount=1000)
         pr = Document.objects.get(ref=a).payment_request
@@ -252,3 +274,39 @@ class MilestonePartPaymentTests(VoucherBase):
         self.assertEqual(vouchers.balance(milestone=m)["balance"],
                          Decimal("60"))
         self.assertIn(m, list(vouchers.awaiting_milestones()))
+
+    def test_a_milestone_balance_vouchered_before_its_part_is_paid(self):
+        from . import imports as ipr_svc
+        ipr = Document.objects.create(
+            doc_type="IPR", ref="IPR-PP-002", status="AUTHORISED",
+            site=self.site, doc_date=date.today(), created_by=self.finance)
+        order = ImportOrder.objects.create(
+            document=ipr, supplier=Supplier.objects.create(name="Overseas"),
+            exchange_rate=Decimal("15.42"))
+        ImportOrderLine.objects.create(order=order, line_no=1,
+                                       free_text_desc="Tiles",
+                                       order_qty=Decimal("10"),
+                                       unit_price=Decimal("10"),
+                                       cost_head=self.head)
+        m = ImportPaymentMilestone.objects.create(
+            order=order, seq=1, label="Balance", trigger="ADVANCE",
+            fixed_amount=Decimal("100"), status="DUE")
+        for amount in ("40", "60"):
+            self.assertIn(m, list(vouchers.awaiting_milestones()))
+            self.client.force_authenticate(self.finance)
+            r = self.client.post("/api/v1/payment-vouchers", {
+                "milestone_ids": [m.id], "amounts": {f"M:{m.id}": amount}},
+                format="json")
+            self.assertEqual(r.status_code, 201, r.data)
+            self.voucher_action(r.data["ref"], "submit", self.finance)
+            self.voucher_action(r.data["ref"], "approve", self.signatory)
+        self.assertNotIn(m, list(vouchers.awaiting_milestones()))
+        m.refresh_from_db()
+        self.assertIsNone(ipr_svc.pay_milestone(m, "620", "TT-40",
+                                                self.finance))
+        m.refresh_from_db()
+        self.assertEqual(m.status, "AUTHORISED")
+        self.assertIsNone(ipr_svc.pay_milestone(m, "930", "TT-60",
+                                                self.finance))
+        m.refresh_from_db()
+        self.assertEqual(m.status, "PAID")

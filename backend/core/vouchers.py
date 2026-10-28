@@ -492,6 +492,13 @@ def _on_live_voucher():
         "source_document_id", flat=True)
 
 
+def _part_authorised(**kw):
+    """Authorised on an earlier voucher for part of it: the balance can go on
+    another voucher while that part waits to be paid, rather than vanishing
+    from Finance's queue until it is (PYR-SJR-224, owner 2026-10-28)."""
+    return _live(**kw).filter(status="APPROVED").exists()
+
+
 def awaiting_voucher():
     """Director-approved PR / PYR not already on a live voucher.
 
@@ -511,8 +518,12 @@ def awaiting_voucher():
         # supplier stays until the last is vouchered (owner 2026-10-27)
         if pr_cash_total(doc) > 0 and pr_open_rows(doc):
             out.append(doc)
-    for doc in docs.filter(doc_type="PYR", status__in=PYR_PAYING) \
+    for doc in docs.filter(doc_type="PYR",
+                           status__in=PYR_PAYING + ("AUTHORISED",)) \
             .select_related("site", "payment_request"):
+        if doc.status == "AUTHORISED" and not _part_authorised(
+                source_document=doc):
+            continue
         if balance(doc=doc)["balance"] <= 0:
             continue
         # A payroll PYR whose salaries were raised per person is paid off the
@@ -537,10 +548,13 @@ def awaiting_milestones():
     """Due overseas TT milestones (on an authorised order) that still need a
     signatory to authorise them on a voucher before Finance can pay."""
     qs = ImportPaymentMilestone.objects.filter(
-        status="DUE", order__document__status="AUTHORISED").exclude(
+        status__in=("DUE", "AUTHORISED"),
+        order__document__status="AUTHORISED").exclude(
         id__in=_on_live_milestone()).select_related(
         "order__document", "order__supplier")
-    spent = [m.id for m in qs if balance(milestone=m)["balance"] <= 0]
+    spent = [m.id for m in qs if balance(milestone=m)["balance"] <= 0
+             or (m.status == "AUTHORISED"
+                 and not _part_authorised(source_milestone=m))]
     return qs.exclude(id__in=spent)
 
 
@@ -599,7 +613,9 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
     plan = {}            # key -> (amount, pr row ids)
     for doc in sources:
         ok = {"PR": PR_PAYING, "PYR": PYR_PAYING}.get(doc.doc_type, ())
-        if doc.status not in ok:
+        balance_left = (doc.doc_type == "PYR" and doc.status == "AUTHORISED"
+                        and _part_authorised(source_document=doc))
+        if doc.status not in ok and not balance_left:
             return None, (f"{doc.ref} is not a Director-approved PR/PYR "
                           "awaiting payment.")
         if PaymentVoucherLine.objects.filter(
@@ -629,7 +645,9 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
     if len(milestones) != len(set(milestone_ids)):
         return None, "One or more milestones are unknown."
     for m in milestones:
-        if m.status != "DUE" or m.order.document.status != "AUTHORISED":
+        due = m.status == "DUE" or (
+            m.status == "AUTHORISED" and _part_authorised(source_milestone=m))
+        if not due or m.order.document.status != "AUTHORISED":
             return None, (f"{m.order.document.ref} · {m.label} is not a due "
                           "overseas payment awaiting authorisation.")
         if PaymentVoucherLine.objects.filter(
