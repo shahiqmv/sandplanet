@@ -3,7 +3,7 @@ signatory approves or queries them."""
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Count
+from django.db.models import Count, Q
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -473,7 +473,22 @@ def payment_vouchers(request):
         qs = qs.filter(status=status)
     q = (request.GET.get("q") or "").strip()
     if q:
-        qs = qs.filter(ref__icontains=q)
+        # by what is on the voucher, not only its own number: the PR / PYR /
+        # IPR it pays, the supplier or payee, the transfer reference
+        # (owner 2026-10-31)
+        on = "voucher_lines__"
+        qs = qs.filter(
+            Q(ref__icontains=q)
+            | Q(**{on + "source_document__ref__icontains": q})
+            | Q(**{on + "source_document__payment_request__payee__icontains":
+                   q})
+            | Q(**{on + "source_milestone__order__document__ref__icontains":
+                   q})
+            | Q(**{on + "source_milestone__order__supplier__name__icontains":
+                   q})
+            | Q(**{on + "source_payable__document__ref__icontains": q})
+            | Q(**{on + "source_payable__vendor__icontains": q})
+            | Q(**{on + "paid_ref__icontains": q})).distinct()
     try:
         limit = min(int(request.GET.get("limit", 25)), 100)
     except (TypeError, ValueError):

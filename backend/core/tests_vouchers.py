@@ -422,6 +422,17 @@ class VoucherListPerfTests(VoucherBase):
         self.assertEqual(r3.data["total"], 1)
         self.assertEqual(r3.data["vouchers"][0]["ref"], a["ref"])
 
+    def test_search_by_what_the_voucher_pays(self):
+        # find the PV by the PYR on it, or its payee (owner 2026-10-31)
+        pyr = self.director_approved_pyr(payee="Ocean Traders")
+        a = self.create_voucher([pyr]).data["ref"]
+        self.create_voucher([self.director_approved_pyr(payee="Someone")])
+        self.client.force_authenticate(self.finance)
+        for q in (pyr, pyr.lower(), "ocean trad"):
+            r = self.client.get(f"/api/v1/payment-vouchers?q={q}")
+            self.assertEqual([v["ref"] for v in r.data["vouchers"]], [a], q)
+            self.assertEqual(r.data["total"], 1)
+
     def test_dashboard_returns_to_pay_count(self):
         pv = self.create_voucher(
             [self.director_approved_pyr(payee="C")]).data["ref"]

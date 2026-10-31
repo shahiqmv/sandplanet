@@ -70,7 +70,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const [vouchers, setVouchers] = useState([]);
   const [vTotal, setVTotal] = useState(0);       // matches on the server
   const [vHasMore, setVHasMore] = useState(false);
-  const [vq, setVq] = useState("");              // voucher search box (ref)
+  const [vq, setVq] = useState("");              // voucher search box
+  const [vSearch, setVSearch] = useState("");    // the search on screen
   const [picked, setPicked] = useState({});     // source ref -> bool
   // part payment (owner 2026-10-27): what this voucher pays of each, and
   // for a PR the suppliers it pays now
@@ -111,14 +112,16 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   // The signatory's queue loads a full batch at a time, so "select all"
   // covers what is waiting rather than the first screenful.
   const VPAGE = isSignatory && tab === "SUBMITTED" ? 100 : 25;
-  // Load a page of vouchers, filtered server-side by the status tab + ref
-  // search. reset=true restarts at the top; otherwise it appends (Load more).
-  const loadVouchers = (reset = true) => {
+  // Load a page of vouchers, filtered server-side by the status tab, or a
+  // search (PV, PR, PYR, IPR, supplier, transfer ref) across every status —
+  // a search for PR-028 from the Submitted tab must still find its approved
+  // voucher. reset=true restarts at the top; otherwise it appends (Load more).
+  const loadVouchers = (reset = true, query = vSearch) => {
     const offset = reset ? 0 : vouchers.length;
     const p = new URLSearchParams({ limit: String(VPAGE),
                                     offset: String(offset) });
-    if (tab !== "all") p.set("status", tab);
-    if (vq.trim()) p.set("q", vq.trim());
+    if (query) p.set("q", query);
+    else if (tab !== "all") p.set("status", tab);
     return api(`/payment-vouchers?${p.toString()}`).then((r) => {
       setVouchers(reset ? r.vouchers : [...vouchers, ...r.vouchers]);
       setVTotal(r.total);
@@ -136,7 +139,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   };
   useEffect(reload, []);
   // Refetch from the top whenever the status tab changes.
-  useEffect(() => { loadVouchers(true); setTicked({}); }, [tab]);   // eslint-disable-line
+  useEffect(() => {
+    setVq(""); setVSearch(""); loadVouchers(true, ""); setTicked({});
+  }, [tab]);   // eslint-disable-line
   // The company MVR/USD rate: prefills the field and calibrates the warning.
   useEffect(() => {
     api("/fx/usd-rate").then((r) => {
@@ -157,8 +162,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     if (!open) { setOpenPv(null); return; }
     const known = vouchers.find((v) => v.ref === open);
     if (known) { setOpenPv(known); return; }
-    api(`/payment-vouchers?q=${encodeURIComponent(open)}&limit=1`)
-      .then((r) => setOpenPv((r.vouchers || [])[0] || null))
+    api(`/payment-vouchers/${encodeURIComponent(open)}`)
+      .then((r) => setOpenPv(r || null))
       .catch(() => setOpenPv(null));
   }, [open, vouchers]);
 
@@ -798,15 +803,27 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                       flexWrap: "wrap", marginBottom: 12 }}>
           <h3 style={heading}>Vouchers</h3>
           <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
-            {vTotal} total</span>
-          <form onSubmit={(e) => { e.preventDefault(); loadVouchers(true); }}
+            {vSearch ? `${vTotal} found for “${vSearch}”, all statuses`
+              : `${vTotal} total`}</span>
+          <form onSubmit={(e) => {
+                  e.preventDefault();
+                  setVSearch(vq.trim()); loadVouchers(true, vq.trim());
+                }}
                 style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
             <input value={vq} onChange={(e) => setVq(e.target.value)}
-                   placeholder="Search PV ref…"
+                   placeholder="PV, PR, PYR, IPR, supplier, TT ref…"
+                   title="Find the voucher that pays a PR, PYR or IPR — or by supplier, payee or transfer reference"
                    style={{ ...inputStyle, padding: "4px 10px", fontSize: 13,
-                            width: 150 }} />
+                            width: 230 }} />
             <button type="submit" style={{ ...ghostButton, padding: "4px 12px",
               fontSize: 13 }}>Search</button>
+            {vSearch && (
+              <button type="button" style={{ ...ghostButton,
+                padding: "4px 10px", fontSize: 13 }}
+                      onClick={() => {
+                        setVq(""); setVSearch(""); loadVouchers(true, "");
+                      }}>Clear</button>
+            )}
           </form>
           <div style={{ display: "flex", gap: 6 }}>
             {TABS.map(([key, label]) => (
