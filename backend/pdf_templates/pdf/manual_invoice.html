@@ -43,7 +43,8 @@
   table.doc td { padding: 4.5px 4mm; font-size: 10.5pt;
     border-bottom: 0.6px solid #D8E3EC; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums;
-    white-space: nowrap; width: 42mm; }
+    white-space: nowrap; width: 34mm; }
+  table.doc td.q, table.doc th.q { width: 16mm; }
   table.doc tr.sub td { background: {% brand "soft2" %}; font-weight: 700; color: {% brand "heading" %}; }
   table.doc tr.net td { background: {% brand "soft3" %}; font-weight: 800; color: {% brand "heading" %};
     border-top: 1.3pt solid {% brand "accent_deep" %}; border-bottom: none;
@@ -63,6 +64,15 @@
             border-top: 0.8px solid #d6e2ec; padding-top: 3mm;
             font-size: 8.5pt; color: #5a6b78; }
   thead { display: table-header-group; }
+  table.doc tr.less td { color: #33424d; }
+  table.doc tr.lesshead td { font-size: 8.5pt; text-transform: uppercase;
+    letter-spacing: .06em; color: #61707C; border-bottom: none;
+    padding-top: 3mm; }
+  .draftmark { position: fixed; top: 95mm; left: 0; right: 0; text-align: center;
+    font-size: 64pt; font-weight: 800; color: rgba(190, 40, 40, .12);
+    transform: rotate(-28deg); letter-spacing: 6px; }
+  .draftnote { text-align: center; color: #b3261e; font-size: 9pt;
+    margin: -2mm 0 3mm; }
 </style>
 </head>
 <body>
@@ -74,7 +84,9 @@
 <div class="masthead"><img src="{{ logo_src }}"></div>
 <div class="accent"></div>
 
+{% if draft %}<div class="draftmark">DRAFT</div>{% endif %}
 <h1>TAX <strong>INVOICE</strong></h1>
+{% if draft %}<div class="draftnote">Draft for approval — not a valid tax invoice{% if not mi.invoice_no %}; the invoice number is given on approval{% endif %}.</div>{% endif %}
 
 <table class="parties"><tr>
   <td style="width: 54%">
@@ -86,7 +98,7 @@
   </td>
   <td>
     <table class="meta">
-      <tr><td class="k">Invoice No</td><td class="inv">{{ mi.invoice_no }}</td></tr>
+      <tr><td class="k">Invoice No</td><td class="inv">{{ mi.invoice_no|default:"—" }}{% if mi.revision %} <span style="font-weight:400;color:#61707C">Rev {{ mi.revision }}</span>{% endif %}</td></tr>
       <tr><td class="k">Date</td><td>{{ mi.invoice_date|date:"d M Y" }}</td></tr>
       <tr><td class="k">Due</td><td>{{ mi.effective_due_date|date:"d M Y" }}</td></tr>
       <tr><td class="k">Project</td><td>{{ project.code }}</td></tr>
@@ -100,19 +112,38 @@
 
 <table class="doc">
   <thead>
-    <tr><th>Description</th><th class="n">Qty</th><th class="n">Unit price</th>
+    <tr><th>Description</th><th class="n q">Qty</th><th class="n">Unit price</th>
         <th class="n">Amount {{ currency }}</th></tr>
   </thead>
   <tbody>
     {% for ln in lines %}
     <tr><td>{{ ln.description }}</td>
-        <td class="n">{{ ln.quantity }}</td>
+        <td class="n q">{{ ln.quantity }}</td>
         <td class="n">{{ ln.unit_price }}</td>
         <td class="n">{{ ln.amount_f }}</td></tr>
     {% endfor %}
-    <tr class="sub"><td colspan="3">Net</td><td class="n">{{ net_f }}</td></tr>
+    {% if less_before %}
+    <tr class="sub"><td colspan="3">Gross amount</td><td class="n">{{ charges_f }}</td></tr>
+    <tr class="lesshead"><td colspan="4">Less</td></tr>
+    {% for ln in less_before %}
+    <tr class="less"><td>{{ ln.description }}</td>
+        <td class="n q">{{ ln.quantity }}</td>
+        <td class="n">{{ ln.unit_price }}</td>
+        <td class="n">{{ ln.amount_f }}</td></tr>
+    {% endfor %}
+    {% endif %}
+    <tr class="sub"><td colspan="3">Net{% if less_before %} (taxable){% endif %}</td><td class="n">{{ net_f }}</td></tr>
     <tr><td colspan="3">Output GST @ {{ gst_pct }}%</td>
         <td class="n">{{ gst_f }}</td></tr>
+    {% if less_after %}
+    <tr class="lesshead"><td colspan="4">Less</td></tr>
+    {% for ln in less_after %}
+    <tr class="less"><td>{{ ln.description }}</td>
+        <td class="n q">{{ ln.quantity }}</td>
+        <td class="n">{{ ln.unit_price }}</td>
+        <td class="n">{{ ln.amount_f }}</td></tr>
+    {% endfor %}
+    {% endif %}
     <tr class="net"><td colspan="3">Total amount payable</td>
         <td class="n">{{ currency }} {{ amount_f }}</td></tr>
   </tbody>

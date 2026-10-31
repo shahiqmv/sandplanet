@@ -132,7 +132,7 @@ def create_official_receipt(data, actor):
         elif row.get("manual_invoice_id"):
             mi = ManualInvoice.objects.filter(
                 pk=row["manual_invoice_id"], project__site=site,
-                is_void=False).first()
+                is_void=False, status="APPROVED").first()
             if mi is None:
                 return None, ("An invoice on this receipt isn't a live invoice "
                               "for this client.")

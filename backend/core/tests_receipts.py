@@ -145,6 +145,9 @@ class ManualInvoiceReceiptTests(OfficialReceiptTests):
             format="json")
         self.assertIn(r.status_code, (200, 201), r.data)
         from .models import ManualInvoice
+        # owed only once a Director approves it (owner 2026-10-31)
+        ManualInvoice.objects.filter(pk=r.data["id"]).update(
+            status="APPROVED")
         return ManualInvoice.objects.get(invoice_no=no)
 
     def test_receipt_one_manual_invoice_leaves_the_other(self):

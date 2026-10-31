@@ -265,7 +265,7 @@ class SalesTests(PostingBase):
                     invoice_no="INV-2026-0002", invoice_date=ON,
                     currency="MVR", gst_pct=D("8"), net_amount=D("5000"),
                     gst_amount=D("400"), amount=D("5400"),
-                    created_by=self.finance)
+                    created_by=self.finance, status="APPROVED")
         base.update(kw)
         return ManualInvoice.objects.create(**base)
 

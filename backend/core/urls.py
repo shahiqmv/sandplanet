@@ -1,4 +1,4 @@
-from django.urls import include, path
+from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
@@ -706,6 +706,12 @@ urlpatterns = [
     # Manual client invoices (historical + Planet-issued, off the claim flow)
     path("receivables/manual-invoices", receivables_api.manual_invoices,
          name="rcv-manual-invoices"),
+    path("receivables/manual-invoices/<int:pk>",
+         receivables_api.manual_invoice_one, name="rcv-manual-invoice"),
+    re_path(r"^receivables/manual-invoices/(?P<pk>\d+)/"
+            r"(?P<step>submit|approve|return|reopen)$",
+            receivables_api.manual_invoice_step,
+            name="rcv-manual-invoice-step"),
     path("receivables/manual-invoices/<int:pk>/void",
          receivables_api.manual_invoice_void, name="rcv-manual-invoice-void"),
     # An invoice raised ahead of the claim that covers it, and the claim that

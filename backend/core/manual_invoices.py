@@ -38,9 +38,28 @@ def _dec(v):
         return None
 
 
+APPROVE_ROLES = ("DIRECTOR", "ADMIN")
+
+# What QS teams take off an invoice; offered as presets, any text is allowed.
+DEDUCTION_PRESETS = ("Advance recovery", "Retention", "Back charge",
+                     "Contra charge")
+
+
+def _truthy(v, default=True):
+    if v in (None, ""):
+        return default
+    return str(v).strip().lower() not in ("0", "false", "no", "off")
+
+
 def _parse_lines(raw):
     """Coerce incoming line dicts → clean line records. A line's amount is
-    qty × unit_price when both are given, else the amount typed directly."""
+    qty × unit_price when both are given, else the amount typed directly.
+
+    A deduction (advance recovery, retention, a back charge) is stored
+    negative whatever sign was typed. A charge typed negative is what QS did
+    before deductions existed — it is taken as a deduction before GST, rather
+    than dropped (owner 2026-10-31, INV-2026-0064 went out without its
+    advance recovery)."""
     out = []
     for r in (raw or []):
         desc = str(r.get("description") or "").strip()[:300]
@@ -49,76 +68,291 @@ def _parse_lines(raw):
         amt = _dec(r.get("amount"))
         if amt is None and qty is not None and unit is not None:
             amt = qty * unit
-        if not desc or amt is None:
+        if not desc or amt is None or amt == 0:
             continue
+        kind = "DEDUCTION" if (r.get("kind") == "DEDUCTION" or amt < 0) \
+            else "CHARGE"
+        before = _truthy(r.get("before_gst")) if kind == "DEDUCTION" else True
+        amt = -abs(amt) if kind == "DEDUCTION" else amt
+        if kind == "DEDUCTION" and unit is not None:
+            unit = -abs(unit)
         out.append({"description": desc, "quantity": qty,
-                    "unit_price": unit, "amount": _q2(amt)})
+                    "unit_price": unit, "amount": _q2(amt), "kind": kind,
+                    "before_gst": before})
     return out
 
 
-def create_manual_invoice(data, actor):
-    """Record a manual invoice from one or more line items. Net = Σ lines, GST
-    = net × gst_pct (auto), total = net + GST. HISTORICAL carries the client's
-    own number; ISSUED gets the next Planet INV-. Returns (invoice, error)."""
-    from django.db import transaction
+def totals(lines, gst_pct):
+    """The money of an invoice from its lines: charges, less the deductions
+    taken before GST = the taxable net; GST on that; less the deductions
+    taken after GST = the total the client owes. Same order as a claim's
+    waterfall (advance recovery and retention before GST)."""
+    def get(ln, k):
+        return ln[k] if isinstance(ln, dict) else getattr(ln, k)
+    charges = sum((get(ln, "amount") for ln in lines
+                   if get(ln, "kind") != "DEDUCTION"), ZERO)
+    pre = -sum((get(ln, "amount") for ln in lines
+                if get(ln, "kind") == "DEDUCTION" and get(ln, "before_gst")),
+               ZERO)
+    post = -sum((get(ln, "amount") for ln in lines
+                 if get(ln, "kind") == "DEDUCTION"
+                 and not get(ln, "before_gst")), ZERO)
+    net = _q2(charges - pre)
+    gst = _q2(net * (gst_pct or ZERO) / Decimal("100"))
+    return {"charges": _q2(charges), "deducted_before_gst": _q2(pre),
+            "net": net, "gst": gst, "deducted_after_gst": _q2(post),
+            "amount": _q2(net + gst - post)}
 
-    from .models import ManualInvoiceLine
 
-    if actor.role not in CREATE_ROLES:
-        return None, "You can't record client invoices."
-    project = Project.objects.filter(pk=data.get("project_id")).first()
+def _clean(data, actor, mi=None):
+    """Validate the editable fields. Returns (fields, lines, error)."""
+    project = Project.objects.filter(
+        pk=data.get("project_id") or (mi.project_id if mi else None)).first()
     if project is None:
-        return None, "Choose the project this invoice belongs to."
-    origin = data.get("origin")
+        return None, None, "Choose the project this invoice belongs to."
+    origin = data.get("origin") or (mi.origin if mi else None)
     if origin not in ("HISTORICAL", "ISSUED"):
-        return None, "Choose whether this is a historical or an issued invoice."
+        return None, None, ("Choose whether this is a historical or an issued "
+                            "invoice.")
     if not data.get("invoice_date"):
-        return None, "Enter the invoice date."
+        return None, None, "Enter the invoice date."
     lines = _parse_lines(data.get("lines"))
-    if not lines:
-        return None, ("Add at least one line item — a description and an "
-                      "amount.")
-    net = _q2(sum((ln["amount"] for ln in lines), ZERO))
-    if net <= ZERO:
-        return None, "The invoice net must be more than zero."
+    if not any(ln["kind"] == "CHARGE" for ln in lines):
+        return None, None, ("Add at least one line item — a description and "
+                            "an amount.")
     gst_pct = _dec(data.get("gst_pct"))
     if gst_pct is None:
         gst_pct = Decimal("8")           # local GST default
-    gst = _q2(net * gst_pct / Decimal("100"))
-    amount = _q2(net + gst)
-    if origin == "ISSUED":
-        invoice_no = _next_invoice_no()
-    else:
-        invoice_no = (data.get("invoice_no") or "").strip()
-        if not invoice_no:
-            return None, "Enter the client's invoice number."
-    # A single-line invoice titles itself from that line unless a summary is set.
+    t = totals(lines, gst_pct)
+    if t["net"] <= ZERO:
+        return None, None, ("The deductions take the invoice to nothing — the "
+                            "net must be more than zero.")
+    if t["amount"] <= ZERO:
+        return None, None, "The invoice total must be more than zero."
+    fields = {"project": project, "origin": origin,
+              "invoice_date": data["invoice_date"],
+              "due_date": data.get("due_date") or None,
+              "currency": (data.get("currency") or "USD")[:3].upper(),
+              "gst_pct": gst_pct, "net_amount": t["net"],
+              "gst_amount": t["gst"], "amount": t["amount"],
+              "note": (data.get("note") or "").strip()}
+    if origin == "HISTORICAL":
+        no = (data.get("invoice_no") or "").strip()
+        if not no:
+            return None, None, "Enter the client's invoice number."
+        fields["invoice_no"] = no[:40]
+    elif mi is None or mi.origin != "ISSUED":
+        fields["invoice_no"] = ""        # Planet numbers it on approval
+    # A single-charge invoice titles itself from that line unless a summary
+    # is set.
     description = (data.get("description") or "").strip()[:300]
-    if not description and len(lines) == 1:
-        description = lines[0]["description"]
+    charges = [ln for ln in lines if ln["kind"] == "CHARGE"]
+    if not description and len(charges) == 1:
+        description = charges[0]["description"]
+    fields["description"] = description
+    return fields, lines, None
+
+
+def _write_lines(mi, lines):
+    from .models import ManualInvoiceLine
+    mi.lines.all().delete()
+    ManualInvoiceLine.objects.bulk_create([
+        ManualInvoiceLine(
+            invoice=mi, sort_order=i * 10, description=ln["description"],
+            quantity=ln["quantity"], unit_price=ln["unit_price"],
+            amount=ln["amount"], kind=ln["kind"],
+            before_gst=ln["before_gst"])
+        for i, ln in enumerate(lines, 1)])
+
+
+def label(mi):
+    """How people know an invoice before it has a number."""
+    return mi.invoice_no or f"Draft invoice #{mi.id} ({mi.project.code})"
+
+
+def create_manual_invoice(data, actor):
+    """Draft a manual invoice from its line items (charges and deductions).
+    Nothing is owed until a Director approves it; `submit` sends it straight
+    on. HISTORICAL carries the client's own number; ISSUED is numbered at
+    approval. Returns (invoice, error)."""
+    if actor.role not in CREATE_ROLES:
+        return None, "You can't record client invoices."
+    fields, lines, err = _clean(data, actor)
+    if err:
+        return None, err
     with transaction.atomic():
-        mi = ManualInvoice(
-            project=project, origin=origin, invoice_no=invoice_no,
-            invoice_date=data["invoice_date"],
-            due_date=data.get("due_date") or None,
-            currency=(data.get("currency") or "USD")[:3].upper(),
-            gst_pct=gst_pct, net_amount=net, gst_amount=gst, amount=amount,
-            description=description,
-            note=(data.get("note") or "").strip(), created_by=actor)
+        mi = ManualInvoice(status="DRAFT", created_by=actor, **fields)
         att = data.get("attachment")
         if att is not None:
             mi.attachment = att
         mi.save()
-        ManualInvoiceLine.objects.bulk_create([
-            ManualInvoiceLine(
-                invoice=mi, sort_order=i * 10, description=ln["description"],
-                quantity=ln["quantity"], unit_price=ln["unit_price"],
-                amount=ln["amount"])
-            for i, ln in enumerate(lines, 1)])
-    audit("project", project.id, "MANUAL_INVOICE_CREATED", actor=actor,
-          detail={"invoice_no": invoice_no, "origin": origin,
+        _write_lines(mi, lines)
+    audit("project", mi.project_id, "MANUAL_INVOICE_CREATED", actor=actor,
+          detail={"invoice": label(mi), "origin": mi.origin,
                   "lines": len(lines), "amount": str(mi.amount)})
+    if _truthy(data.get("submit"), default=False):
+        err = submit(mi, actor)
+        if err:
+            return mi, err
     return mi, None
+
+
+def update_manual_invoice(mi, data, actor):
+    """Change a draft — its own, a returned one, or one reopened for a
+    revision. Returns an error or None."""
+    if actor.role not in CREATE_ROLES:
+        return "You can't change client invoices."
+    if mi.is_void:
+        return "This invoice is void."
+    if mi.approved_at and data.get("origin") not in (None, "", mi.origin):
+        return "A revision keeps its type — it can't change origin."
+    if mi.status != "DRAFT":
+        return ("Only a draft can be changed — "
+                + ("reopen it as a revision first." if mi.status == "APPROVED"
+                   else "it is waiting for approval; it can be returned."))
+    fields, lines, err = _clean(data, actor, mi)
+    if err:
+        return err
+    with transaction.atomic():
+        for k, v in fields.items():
+            setattr(mi, k, v)
+        att = data.get("attachment")
+        if att is not None:
+            mi.attachment = att
+        mi.save()
+        _write_lines(mi, lines)
+    audit("project", mi.project_id, "MANUAL_INVOICE_EDITED", actor=actor,
+          detail={"invoice": label(mi), "revision": mi.revision,
+                  "amount": str(mi.amount)})
+    if _truthy(data.get("submit"), default=False):
+        return submit(mi, actor)
+    return None
+
+
+def _approvers(mi):
+    from .models import User
+    return User.objects.filter(role="DIRECTOR", is_active=True)
+
+
+def submit(mi, actor):
+    """Send a draft to the Directors for approval."""
+    from django.utils import timezone
+
+    from .notify import notify_user
+    if actor.role not in CREATE_ROLES:
+        return "You can't submit client invoices."
+    if mi.is_void:
+        return "This invoice is void."
+    if mi.status != "DRAFT":
+        return "Only a draft can be submitted."
+    mi.status = "SUBMITTED"
+    mi.submitted_by = actor
+    mi.submitted_at = timezone.now()
+    mi.save(update_fields=["status", "submitted_by", "submitted_at",
+                           "updated_at"])
+    audit("project", mi.project_id, "MANUAL_INVOICE_SUBMITTED", actor=actor,
+          detail={"invoice": label(mi), "revision": mi.revision,
+                  "amount": str(mi.amount)})
+    what = label(mi) + (f" (revision {mi.revision})" if mi.revision else "")
+    for u in _approvers(mi).exclude(pk=actor.pk):
+        notify_user(u, f"Client invoice to approve: {what}",
+                    f"{mi.project.code} · {mi.currency} "
+                    f"{_fmt_money(mi.amount, 2)} — from {actor.full_name}. "
+                    "Receivables → Manual invoices.", category="approval")
+    return None
+
+
+def approve(mi, actor):
+    """A Director approves: the invoice is owed from now — receivables,
+    receipts and the books take it — and an issued one gets its number."""
+    from django.utils import timezone
+
+    from .notify import notify_user
+    if actor.role not in APPROVE_ROLES:
+        return "A Director approves client invoices."
+    if mi.status != "SUBMITTED" or mi.is_void:
+        return "Only a submitted invoice can be approved."
+    if actor.role != "ADMIN" and actor.id in (mi.submitted_by_id,):
+        return ("You submitted this invoice — another Director approves "
+                "it.")
+    with transaction.atomic():
+        if mi.origin == "ISSUED" and not mi.invoice_no:
+            mi.invoice_no = _next_invoice_no()
+        mi.status = "APPROVED"
+        mi.approved_by = actor
+        mi.approved_at = timezone.now()
+        mi.return_note = ""
+        mi.save(update_fields=["status", "invoice_no", "approved_by",
+                               "approved_at", "return_note", "updated_at"])
+    audit("project", mi.project_id, "MANUAL_INVOICE_APPROVED", actor=actor,
+          detail={"invoice_no": mi.invoice_no, "revision": mi.revision,
+                  "amount": str(mi.amount)})
+    if mi.submitted_by_id and mi.submitted_by_id != actor.id:
+        notify_user(mi.submitted_by, f"Invoice approved: {mi.invoice_no}",
+                    f"{mi.project.code} · {mi.currency} "
+                    f"{_fmt_money(mi.amount, 2)} — approved by "
+                    f"{actor.full_name}.")
+    return None
+
+
+def return_invoice(mi, actor, note):
+    """A Director sends a submitted invoice back to draft, with the reason."""
+    from .notify import notify_user
+    if actor.role not in APPROVE_ROLES:
+        return "A Director returns client invoices."
+    if mi.status != "SUBMITTED" or mi.is_void:
+        return "Only a submitted invoice can be returned."
+    note = (note or "").strip()
+    if not note:
+        return "Say what needs changing."
+    mi.status = "DRAFT"
+    mi.return_note = note[:1000]
+    mi.save(update_fields=["status", "return_note", "updated_at"])
+    audit("project", mi.project_id, "MANUAL_INVOICE_RETURNED", actor=actor,
+          detail={"invoice": label(mi), "note": note[:300]})
+    if mi.submitted_by_id:
+        notify_user(mi.submitted_by, f"Invoice returned: {label(mi)}",
+                    f"{actor.full_name}: {note}")
+    return None
+
+
+def reopen(mi, actor, reason):
+    """Reopen an approved invoice as a revision, to correct and resubmit it.
+    It keeps its number; until it is approved again it is not owed. Refused
+    once money is recorded against it, or a claim has taken it over."""
+    if actor.role not in CREATE_ROLES:
+        return "You can't change client invoices."
+    if mi.is_void or mi.status != "APPROVED":
+        return "Only an approved invoice can be reopened."
+    if mi.receipts.exists():
+        return ("A receipt is recorded against this invoice — it can't be "
+                "revised. Raise a correcting invoice instead.")
+    if mi.bills_claim_id or mi.superseded_at:
+        return ("This invoice is tied to a certified claim — unlink it "
+                "first.")
+    reason = (reason or "").strip()
+    if not reason:
+        return "Give the reason for the revision."
+    mi.status = "DRAFT"
+    mi.revision += 1
+    mi.return_note = f"Revision {mi.revision}: {reason}"[:1000]
+    mi.save(update_fields=["status", "revision", "return_note", "updated_at"])
+    audit("project", mi.project_id, "MANUAL_INVOICE_REOPENED", actor=actor,
+          detail={"invoice_no": mi.invoice_no, "revision": mi.revision,
+                  "reason": reason[:300]})
+    return None
+
+
+def delete_draft(mi, actor):
+    """Discard a draft that was never approved — it has no number to keep."""
+    if actor.role not in CREATE_ROLES:
+        return "You can't change client invoices."
+    if mi.status != "DRAFT" or mi.approved_at is not None:
+        return "Only a draft that was never approved can be deleted — void it."
+    audit("project", mi.project_id, "MANUAL_INVOICE_DELETED", actor=actor,
+          detail={"invoice": label(mi), "amount": str(mi.amount)})
+    mi.delete()
+    return None
 
 
 def void_manual_invoice(mi, actor):
@@ -134,7 +368,7 @@ def void_manual_invoice(mi, actor):
     mi.is_void = True
     mi.save(update_fields=["is_void", "updated_at"])
     audit("project", mi.project_id, "MANUAL_INVOICE_VOIDED", actor=actor,
-          detail={"invoice_no": mi.invoice_no})
+          detail={"invoice": label(mi)})
     return None
 
 
@@ -142,11 +376,37 @@ def received_for(mi):
     return _q2(mi.receipts.aggregate(s=Sum("amount"))["s"] or ZERO)
 
 
-def manual_invoice_dict(mi):
+def manual_invoice_dict(mi, user=None):
     got = received_for(mi)
     amt = _q2(mi.amount)
+    lines = list(mi.lines.all())
+    t = totals(lines, mi.gst_pct)
+    role = getattr(user, "role", None)
+    live = not mi.is_void
     return {
         "id": mi.id, "origin": mi.origin, "invoice_no": mi.invoice_no,
+        "label": label(mi), "status": mi.status, "revision": mi.revision,
+        "return_note": mi.return_note,
+        "submitted_by": (mi.submitted_by.full_name if mi.submitted_by_id
+                         else ""),
+        "submitted_at": mi.submitted_at,
+        "approved_by": mi.approved_by.full_name if mi.approved_by_id else "",
+        "approved_at": mi.approved_at,
+        "charges": t["charges"], "deducted_before_gst": t["deducted_before_gst"],
+        "deducted_after_gst": t["deducted_after_gst"],
+        # what the person looking can do with it now
+        "can_edit": live and mi.status == "DRAFT" and role in CREATE_ROLES,
+        "can_submit": live and mi.status == "DRAFT" and role in CREATE_ROLES,
+        "can_approve": (live and mi.status == "SUBMITTED"
+                        and role in APPROVE_ROLES
+                        and (role == "ADMIN"
+                             or getattr(user, "id", None)
+                             != mi.submitted_by_id)),
+        "can_reopen": (live and mi.status == "APPROVED"
+                       and role in CREATE_ROLES and got == ZERO
+                       and not mi.bills_claim_id and not mi.superseded_at),
+        "can_delete": (mi.status == "DRAFT" and mi.approved_at is None
+                       and role in CREATE_ROLES),
         # The claim taking this invoice over, and whether it has closed it.
         "superseded_by": (mi.superseded_by.ref if mi.superseded_by_id
                           else None),
@@ -161,7 +421,8 @@ def manual_invoice_dict(mi):
         "description": mi.description, "note": mi.note,
         "lines": [{"id": ln.id, "description": ln.description,
                    "quantity": ln.quantity, "unit_price": ln.unit_price,
-                   "amount": ln.amount} for ln in mi.lines.all()],
+                   "amount": ln.amount, "kind": ln.kind,
+                   "before_gst": ln.before_gst} for ln in lines],
         "has_attachment": bool(mi.attachment),
         "can_pdf": mi.origin == "ISSUED",
         "is_void": mi.is_void,
@@ -170,14 +431,21 @@ def manual_invoice_dict(mi):
     }
 
 
-def list_invoices(site_id=None, include_void=False):
-    qs = (ManualInvoice.objects.select_related("project", "project__site")
-          .prefetch_related("lines").order_by("-invoice_date", "-id"))
+def list_invoices(site_id=None, include_void=False, user=None):
+    qs = (ManualInvoice.objects.select_related(
+        "project", "project__site", "created_by", "submitted_by",
+        "approved_by").prefetch_related("lines")
+        .order_by("-invoice_date", "-id"))
     if site_id is not None:
         qs = qs.filter(project__site_id=site_id)
     if not include_void:
         qs = qs.filter(is_void=False)
-    return [manual_invoice_dict(mi) for mi in qs]
+    return [manual_invoice_dict(mi, user) for mi in qs]
+
+
+def _plain(d):
+    """1.000 → 1, 8.00 → 8, 2.50 → 2.5 — how a person writes a quantity."""
+    return f"{Decimal(d).normalize():f}"
 
 
 def manual_invoice_pdf_context(mi):
@@ -186,18 +454,33 @@ def manual_invoice_pdf_context(mi):
     net = _q2(mi.net_amount or ZERO)
     gst = _q2(mi.gst_amount or ZERO)
     amount = _q2(mi.amount)
-    lines = [{
-        "description": ln.description,
-        "quantity": (f"{ln.quantity:g}" if ln.quantity is not None else ""),
-        "unit_price": (_fmt_money(ln.unit_price, 2)
-                       if ln.unit_price is not None else ""),
-        "amount_f": _fmt_money(ln.amount, 2),
-    } for ln in mi.lines.all()]
+    all_lines = list(mi.lines.all())
+
+    def row(ln):
+        # a deduction reads as a bracketed figure, as on an IPC
+        neg = ln.amount < 0
+        return {
+            "description": ln.description,
+            "quantity": (_plain(ln.quantity) if ln.quantity is not None
+                         else ""),
+            "unit_price": (_fmt_money(abs(ln.unit_price), 2)
+                           if ln.unit_price is not None else ""),
+            "amount_f": (f"({_fmt_money(abs(ln.amount), 2)})" if neg
+                         else _fmt_money(ln.amount, 2)),
+        }
+    t = totals(all_lines, mi.gst_pct)
     return {
         "logo_src": logo_src(), "co": company_info(),
         "employer": _employer(mi.project), "mi": mi, "project": mi.project,
-        "currency": mi.currency, "lines": lines,
-        "gst_pct": f"{mi.gst_pct:g}",
+        "currency": mi.currency,
+        "lines": [row(ln) for ln in all_lines if ln.kind != "DEDUCTION"],
+        "less_before": [row(ln) for ln in all_lines
+                        if ln.kind == "DEDUCTION" and ln.before_gst],
+        "less_after": [row(ln) for ln in all_lines
+                       if ln.kind == "DEDUCTION" and not ln.before_gst],
+        "charges_f": _fmt_money(t["charges"], 2),
+        "draft": mi.status != "APPROVED",
+        "gst_pct": _plain(mi.gst_pct),
         "net_f": _fmt_money(net, 2), "gst_f": _fmt_money(gst, 2),
         "amount_f": _fmt_money(amount, 2),
         "amount_words": amount_in_words(amount, mi.currency),
@@ -221,6 +504,8 @@ def link_to_claim(mi, claim, actor):
         return "You can't change client invoices."
     if mi.is_void:
         return "This invoice is void."
+    if mi.status != "APPROVED":
+        return "Only an approved invoice can be linked to a claim."
     if claim.project_id != mi.project_id:
         return (f"{claim.ref} is a claim on {claim.project.code}, and this "
                 f"invoice is on {mi.project.code}.")
@@ -282,6 +567,8 @@ def bill_claim_by(claim, invoices, actor, drop_claim_invoice=False):
             return f"{m.invoice_no} is on another project."
         if m.is_void:
             return f"{m.invoice_no} is void."
+        if m.status != "APPROVED":
+            return f"{label(m)} is not approved yet."
         if m.superseded_at:
             return (f"{m.invoice_no} was closed when a claim took it over — "
                     "it cannot also bill one.")
@@ -350,6 +637,7 @@ def billing_options(claim):
                 "currency": m.currency, "description": m.description,
                 "received": got, "linked": m.bills_claim_id == claim.id}
     qs = (ManualInvoice.objects.filter(project=claim.project, is_void=False,
+                                       status="APPROVED",
                                        superseded_at__isnull=True)
           .filter(models_Q(bills_claim__isnull=True) | models_Q(
               bills_claim=claim))

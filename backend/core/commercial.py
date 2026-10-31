@@ -1324,7 +1324,7 @@ def record_client_receipt(project, data, actor):
     if data.get("manual_invoice_id"):
         manual = ManualInvoice.objects.filter(
             pk=data["manual_invoice_id"], project=project,
-            is_void=False).first()
+            is_void=False, status="APPROVED").first()
         if manual is None:
             return None, "That invoice isn't on this project."
     receipt = ClientReceipt.objects.create(

@@ -35,7 +35,8 @@ class InvoiceSupersededByClaimTests(TestCase):
             currency="USD", gst_pct=Decimal("0"),
             net_amount=Decimal("166168.97"), gst_amount=Decimal("0"),
             amount=Decimal("166168.97"),
-            description="20% advance against LOA", created_by=self.qs)
+            description="20% advance against LOA", created_by=self.qs,
+            status="APPROVED")
         self.claim = ProgressClaim.objects.create(
             project=self.project, seq=1, ref="IPA-01", claim_type="ADVANCE",
             basis="PERCENT", gst_pct=Decimal("0"), status="DRAFT",
@@ -175,7 +176,7 @@ class ClaimBilledByInvoicesTests(TestCase):
             project=self.project, origin="ISSUED", invoice_no=no,
             invoice_date=on, currency="USD", gst_pct=Decimal("0"),
             net_amount=amount, gst_amount=Decimal("0"), amount=amount,
-            description="Advance", created_by=self.qs)
+            description="Advance", created_by=self.qs, status="APPROVED")
 
     def _rows(self):
         return {r["invoice_no"]: r for r in

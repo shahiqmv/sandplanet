@@ -389,7 +389,7 @@ def _claims(ctx, hold):
 def _manual_invoices(ctx, hold):
     from .models import ManualInvoice
     ar, rev = ctx.account("AR_TRADE"), ctx.account("REVENUE_CONTRACT")
-    qs = (ManualInvoice.objects.filter(is_void=False,
+    qs = (ManualInvoice.objects.filter(is_void=False, status="APPROVED",
                                        superseded_at__isnull=True,
                                        invoice_date__gte=ctx.start)
           .select_related("project", "project__site"))

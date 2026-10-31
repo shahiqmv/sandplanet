@@ -123,7 +123,8 @@ def _planet_since(typ):
         claim = first(ProgressClaim.objects.exclude(invoice_no=""),
                       "certified_at")
         found = [timezone.localtime(claim).date() if claim else None,
-                 first(ManualInvoice.objects.filter(is_void=False),
+                 first(ManualInvoice.objects.filter(is_void=False,
+                                                    status="APPROVED"),
                        "invoice_date"),
                  first(TradingInvoice.objects.filter(
                      status__in=("ISSUED", "PAID")), "invoice_date")]

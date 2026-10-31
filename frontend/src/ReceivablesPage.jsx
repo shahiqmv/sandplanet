@@ -585,16 +585,66 @@ function NewReceipt({ onDone, onCancel }) {
 }
 
 const ORIGIN_LABEL = { HISTORICAL: "Historical", ISSUED: "Issued on Planet" };
+// Draft → submitted → approved by a Director; only an approved invoice is
+// owed (owner 2026-10-31).
+const MI_STATUS = { DRAFT: ["Draft", "info"],
+  SUBMITTED: ["Waiting for approval", "warn"], APPROVED: ["Approved", "ok"] };
+const linkish = { border: "none", background: "none", cursor: "pointer",
+  fontSize: 12, marginLeft: 8, padding: 0 };
 
 // Manual client invoices — historical (recorded) + Planet-issued, for a project
 // tracked mid-flight without rebuilding its BOQ / claims.
 function ManualInvoices({ canManual }) {
   const [list, setList] = useState(null);
+  const [presets, setPresets] = useState([]);
   const [error, setError] = useState(null);
-  const [creating, setCreating] = useState(false);
+  // null = the list; "new" = a new invoice; an invoice = editing that draft
+  const [editing, setEditing] = useState(null);
   const load = () => api("/receivables/manual-invoices")
-    .then((r) => setList(r.invoices)).catch((e) => setError(e.message));
+    .then((r) => { setList(r.invoices); setPresets(r.deduction_presets || []); })
+    .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
+
+  async function step(mi, name, body) {
+    setError(null);
+    try {
+      await api(`/receivables/manual-invoices/${mi.id}/${name}`,
+                { method: "POST", body: body || {} });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+  const approve = (mi) => {
+    if (window.confirm(`Approve ${mi.label} for ${mi.currency} `
+      + `${money(mi.amount)}? It becomes owed by the client`
+      + (mi.invoice_no ? "." : " and takes the next invoice number."))) {
+      step(mi, "approve");
+    }
+  };
+  const sendBack = (mi) => {
+    const note = window.prompt(`Return ${mi.label} to ${mi.submitted_by
+      || "the QS"} — what needs changing?`);
+    if (note && note.trim()) step(mi, "return", { note });
+  };
+  async function revise(mi) {
+    const reason = window.prompt(`Reopen ${mi.label} as revision `
+      + `${mi.revision + 1}? It keeps its number but is not owed until it is `
+      + "approved again. Reason for the revision:");
+    if (!reason || !reason.trim()) return;
+    setError(null);
+    try {
+      const fresh = await api(`/receivables/manual-invoices/${mi.id}/reopen`,
+                              { method: "POST", body: { reason } });
+      setEditing(fresh);
+    } catch (e) { setError(e.message); }
+  }
+  async function remove(mi) {
+    if (!window.confirm(`Delete ${mi.label}? It was never approved, so `
+      + "nothing else changes.")) return;
+    try {
+      await api(`/receivables/manual-invoices/${mi.id}`, { method: "DELETE" });
+      load();
+    } catch (e) { setError(e.message); }
+  }
 
   // Tie an invoice to the claim that will take it over, or undo it. The
   // claim list is fetched per invoice because it is its project's claims,
@@ -630,7 +680,7 @@ function ManualInvoices({ canManual }) {
   }
 
   async function voidInvoice(mi) {
-    if (!window.confirm(`Void invoice ${mi.invoice_no}? It will drop off the `
+    if (!window.confirm(`Void invoice ${mi.label}? It will drop off the `
       + "receivables. This can't be undone.")) return;
     try {
       await api(`/receivables/manual-invoices/${mi.id}/void`,
@@ -639,22 +689,27 @@ function ManualInvoices({ canManual }) {
     } catch (e) { setError(e.message); }
   }
 
-  if (creating) return <NewManualInvoice
-    onDone={() => { setCreating(false); load(); }}
-    onCancel={() => setCreating(false)} />;
+  if (editing) return <ManualInvoiceForm
+    invoice={editing === "new" ? null : editing} presets={presets}
+    onDone={() => { setEditing(null); load(); }}
+    onCancel={() => { setEditing(null); load(); }} />;
   if (!list) return <div style={card}>Loading…</div>;
 
+  const waiting = list.filter((mi) => mi.can_approve).length;
   return (
     <div>
       {error && <div style={{ color: "var(--red-fg)", marginBottom: 10,
         fontSize: 13 }}>{error}</div>}
       <div style={{ display: "flex", justifyContent: "space-between",
-        alignItems: "center", marginBottom: 10 }}>
+        alignItems: "center", marginBottom: 10, gap: 12 }}>
         <span style={{ color: "var(--muted)", fontSize: 13 }}>
-          Invoices raised outside the claim flow — they feed the same aging,
-          statement &amp; receipts.</span>
+          Invoices raised outside the claim flow. Drafted, submitted and
+          approved by a Director — once approved they feed the same aging,
+          statement &amp; receipts.
+          {waiting > 0 && <b style={{ color: "var(--amber-fg)" }}>
+            {" "}{waiting} waiting for your approval.</b>}</span>
         {canManual && <Btn variant="primary"
-          onClick={() => setCreating(true)}>+ Record invoice</Btn>}
+          onClick={() => setEditing("new")}>+ New invoice</Btn>}
       </div>
       <div style={{ ...card, padding: 0, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse",
@@ -663,7 +718,7 @@ function ManualInvoices({ canManual }) {
             <th style={{ ...th, textAlign: "left" }}>Date</th>
             <th style={{ ...th, textAlign: "left" }}>Invoice</th>
             <th style={{ ...th, textAlign: "left" }}>Project</th>
-            <th style={{ ...th, textAlign: "left" }}>Type</th>
+            <th style={{ ...th, textAlign: "left" }}>Status</th>
             <th style={{ ...th, textAlign: "right" }}>Amount</th>
             <th style={{ ...th, textAlign: "right" }}>Received</th>
             <th style={{ ...th, textAlign: "right" }}>Outstanding</th>
@@ -672,61 +727,108 @@ function ManualInvoices({ canManual }) {
           <tbody>
             {!list.length && <tr><td style={td} colSpan={8}>
               No manual invoices recorded.</td></tr>}
-            {list.map((mi) => (
+            {list.map((mi) => {
+              const [stLabel, stTone] = MI_STATUS[mi.status] || [mi.status];
+              const owed = mi.status === "APPROVED";
+              return (
               <tr key={mi.id}>
                 <td style={td}>{fmtDate(mi.invoice_date)}</td>
-                <td style={{ ...td, ...mono }}>{mi.invoice_no}
-                  {mi.description && <div style={{ color: "var(--muted)",
-                    fontSize: 11, fontFamily: "inherit" }}>{mi.description}</div>}
+                <td style={{ ...td, minWidth: 170 }}>
+                  {mi.invoice_no ? <span style={mono}>{mi.invoice_no}</span>
+                    : <span style={{ color: "var(--muted)" }}>
+                      No number yet</span>}
+                  {mi.revision > 0 && <span style={{ color: "var(--muted)",
+                    fontSize: 11 }}> Rev {mi.revision}</span>}
+                  <div style={{ color: "var(--muted)", fontSize: 11 }}>
+                    {ORIGIN_LABEL[mi.origin]}
+                    {mi.description ? ` · ${mi.description}` : ""}</div>
                 </td>
                 <td style={td}>{mi.project_code}</td>
-                <td style={td}><Chip tone={mi.origin === "ISSUED"
-                  ? "info" : "ok"}>{ORIGIN_LABEL[mi.origin]}</Chip></td>
+                <td style={td}>
+                  <Chip tone={stTone}>{stLabel}</Chip>
+                  {mi.status === "SUBMITTED" && mi.submitted_by && (
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      from {mi.submitted_by}</div>)}
+                  {mi.status === "APPROVED" && mi.approved_by && (
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      by {mi.approved_by}</div>)}
+                  {mi.status === "DRAFT" && mi.return_note && (
+                    <div style={{ fontSize: 11, color: "var(--amber-fg)",
+                      maxWidth: 220 }}>{mi.return_note}</div>)}
+                </td>
                 <td style={{ ...td, textAlign: "right", ...mono }}>
                   {money(mi.amount)}
                   <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                    {" "}{mi.currency}</span></td>
+                    {" "}{mi.currency}</span>
+                  {Number(mi.deducted_before_gst) + Number(mi.deducted_after_gst)
+                    > 0 && (
+                    <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                      after {money(Number(mi.deducted_before_gst)
+                        + Number(mi.deducted_after_gst))} deducted</div>)}
+                </td>
                 <td style={{ ...td, textAlign: "right", ...mono }}>
-                  {dash(mi.received)}</td>
+                  {owed ? dash(mi.received) : "—"}</td>
                 <td style={{ ...td, textAlign: "right", ...mono }}>
-                  {money(mi.outstanding)}
-                  <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                    {" "}{mi.currency}</span></td>
+                  {owed ? <>{money(mi.outstanding)}
+                    <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                      {" "}{mi.currency}</span></> : "—"}</td>
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  {mi.can_edit && (
+                    <button onClick={() => setEditing(mi)}
+                      style={{ ...linkish, color: "var(--sky)", marginLeft: 0 }}>
+                      Edit</button>)}
+                  {mi.can_submit && (
+                    <button onClick={() => step(mi, "submit")}
+                      style={{ ...linkish, color: "var(--sky)" }}>
+                      Submit</button>)}
+                  {mi.can_approve && (<>
+                    <button onClick={() => approve(mi)}
+                      style={{ ...linkish, color: "var(--green-fg)",
+                        fontWeight: 700, marginLeft: 0 }}>Approve</button>
+                    <button onClick={() => sendBack(mi)}
+                      style={{ ...linkish, color: "var(--amber-fg)" }}>
+                      Return</button></>)}
                   {mi.can_pdf && <a href={`/api/v1/receivables/`
                     + `manual-invoices/${mi.id}.pdf`} target="_blank"
                     rel="noreferrer" style={{ color: "var(--sky)",
-                      fontSize: 12 }}>PDF</a>}
+                      fontSize: 12, marginLeft: 8 }}>
+                    {owed ? "PDF" : "Draft PDF"}</a>}
                   {mi.has_attachment && <span style={{ color: "var(--muted)",
                     fontSize: 11, marginLeft: 8 }}>📎</span>}
-                  {canManual && Number(mi.received) === 0 && (
+                  {mi.can_reopen && (
+                    <button onClick={() => revise(mi)}
+                      title="Correct it and send it for approval again"
+                      style={{ ...linkish, color: "var(--sky)" }}>
+                      Revise</button>)}
+                  {mi.can_delete && (
+                    <button onClick={() => remove(mi)}
+                      style={{ ...linkish, color: "var(--red-fg)" }}>
+                      Delete</button>)}
+                  {canManual && owed && Number(mi.received) === 0 && (
                     <button onClick={() => voidInvoice(mi)}
-                      style={{ border: "none", background: "none",
-                        cursor: "pointer", color: "var(--red-fg)",
-                        fontSize: 12, marginLeft: 8 }}>Void</button>)}
+                      style={{ ...linkish, color: "var(--red-fg)" }}>
+                      Void</button>)}
                   {/* Billed ahead of the claim that covers it — an advance
                       against a signed LOA, say. Linking closes this invoice
                       when that claim is certified, so the same money is not
                       owed twice (owner 2026-09-01). */}
-                  {canManual && (mi.superseded_by ? (
+                  {canManual && owed && (mi.superseded_by ? (
                     <button onClick={() => linkClaim(mi)}
                       title={mi.superseded_at
                         ? `Closed by ${mi.superseded_by}`
                         : `Will close when ${mi.superseded_by} is certified`}
-                      style={{ border: "none", background: "none",
-                        cursor: "pointer", color: "var(--muted)",
-                        fontSize: 12, marginLeft: 8 }}>
+                      style={{ ...linkish, color: "var(--muted)" }}>
                       → {mi.superseded_by}</button>
                   ) : (
                     <button onClick={() => linkClaim(mi)}
                       title="Link this invoice to the claim that will cover it"
-                      style={{ border: "none", background: "none",
-                        cursor: "pointer", color: "var(--sky)",
-                        fontSize: 12, marginLeft: 8 }}>Link to claim</button>
+                      style={{ ...linkish, color: "var(--sky)" }}>
+                      Link to claim</button>
                   ))}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -734,19 +836,43 @@ function ManualInvoices({ canManual }) {
   );
 }
 
-function NewManualInvoice({ onDone, onCancel }) {
+const blankLine = (kind = "CHARGE") => ({ kind, description: "", quantity: "",
+  unit_price: "", amount: "", before_gst: true });
+// A saved line as the form edits it: a deduction is typed as a positive
+// figure under "Less", whatever sign it is stored with.
+const formLine = (ln) => ({
+  kind: ln.kind || "CHARGE", description: ln.description || "",
+  quantity: ln.quantity != null ? String(Number(ln.quantity)) : "",
+  unit_price: ln.unit_price != null ? String(Math.abs(Number(ln.unit_price)))
+    : "",
+  amount: ln.amount != null ? String(Math.abs(Number(ln.amount))) : "",
+  before_gst: ln.before_gst !== false });
+
+// New invoice, or a draft being changed (its own, a returned one, or a
+// revision). Charges, then deductions — advance recovery, retention, back
+// charges — taken off before GST (the taxable net) or after it.
+function ManualInvoiceForm({ invoice, presets, onDone, onCancel }) {
   const [sites, setSites] = useState(null);
   const [projects, setProjects] = useState([]);
-  const [siteId, setSiteId] = useState("");
-  const [form, setForm] = useState({
+  const [siteId, setSiteId] = useState(invoice ? String(invoice.site_id) : "");
+  const [form, setForm] = useState(invoice ? {
+    origin: invoice.origin, project_id: String(invoice.project_id),
+    invoice_no: invoice.origin === "HISTORICAL" ? invoice.invoice_no : "",
+    invoice_date: invoice.invoice_date,
+    due_date: invoice.due_date && invoice.due_date !== invoice.invoice_date
+      ? invoice.due_date : "",
+    gst_pct: String(Number(invoice.gst_pct)), currency: invoice.currency,
+    description: invoice.description || "", note: invoice.note || "",
+  } : {
     origin: "HISTORICAL", project_id: "", invoice_no: "",
     invoice_date: new Date().toISOString().slice(0, 10), due_date: "",
     gst_pct: "8", currency: "USD", description: "", note: "" });
-  const [lines, setLines] = useState([
-    { description: "", quantity: "", unit_price: "", amount: "" }]);
+  const [lines, setLines] = useState(invoice && invoice.lines.length
+    ? invoice.lines.map(formLine) : [blankLine()]);
   const [file, setFile] = useState(null);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [firstSite, setFirstSite] = useState(true);
 
   useEffect(() => {
     api("/sites").then((r) => setSites(Array.isArray(r) ? r : (r.results || [])))
@@ -757,15 +883,19 @@ function NewManualInvoice({ onDone, onCancel }) {
     api(`/sites/${siteId}/projects`)
       .then((r) => setProjects(Array.isArray(r) ? r : (r.results || [])))
       .catch(() => setProjects([]));
+    // an invoice being edited keeps its project and currency on first load
+    if (firstSite && invoice) { setFirstSite(false); return; }
+    setFirstSite(false);
     // The invoice follows the contract's currency — MVR for an MVR-based
     // project like MRA, USD otherwise (owner 2026-08-27). Still editable.
     const site = (sites || []).find((x) => String(x.id) === String(siteId));
     setForm((f) => ({ ...f, project_id: "",
                       currency: (site?.currency || "USD").toUpperCase() }));
-  }, [siteId]);
+  }, [siteId]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const issued = form.origin === "ISSUED";
+  const revision = invoice && invoice.approved_at;
 
   // Line edits: qty × unit price auto-fills the line amount.
   const setLine = (i, k, v) => setLines((ls) => ls.map((ln, j) => {
@@ -778,29 +908,39 @@ function NewManualInvoice({ onDone, onCancel }) {
     }
     return next;
   }));
-  const addLine = () => setLines((ls) => [...ls,
-    { description: "", quantity: "", unit_price: "", amount: "" }]);
-  const removeLine = (i) => setLines((ls) =>
-    ls.length > 1 ? ls.filter((_, j) => j !== i) : ls);
+  const addLine = (kind) => setLines((ls) => [...ls, blankLine(kind)]);
+  const removeLine = (i) => setLines((ls) => ls.filter((_, j) => j !== i));
 
-  // Live totals: net = Σ line amounts, GST = net × rate, total = net + GST.
-  const net = lines.reduce((s, ln) => s + (Number(ln.amount) || 0), 0);
+  // Live totals, the order the server keeps: charges, less deductions before
+  // GST = taxable net; GST on that; less deductions after GST = total.
+  const amt = (ln) => Math.abs(Number(ln.amount) || 0);
+  const charges = lines.filter((ln) => ln.kind === "CHARGE")
+    .reduce((s, ln) => s + (Number(ln.amount) || 0), 0);
+  const pre = lines.filter((ln) => ln.kind === "DEDUCTION" && ln.before_gst)
+    .reduce((s, ln) => s + amt(ln), 0);
+  const post = lines.filter((ln) => ln.kind === "DEDUCTION" && !ln.before_gst)
+    .reduce((s, ln) => s + amt(ln), 0);
+  const net = charges - pre;
   const gstPct = Number(form.gst_pct) || 0;
-  const gst = net * gstPct / 100;
-  const total = net + gst;
+  const gst = Math.round(net * gstPct) / 100;
+  const total = net + gst - post;
 
-  async function save() {
+  async function save(submit) {
     setError(null);
     if (!form.project_id) { setError("Choose the project."); return; }
     if (!issued && !form.invoice_no.trim()) {
       setError("Enter the client's invoice number."); return; }
     const clean = lines
-      .filter((ln) => ln.description.trim() && Number(ln.amount) > 0)
-      .map((ln) => ({ description: ln.description.trim(),
+      .filter((ln) => ln.description.trim() && Number(ln.amount))
+      .map((ln) => ({ kind: ln.kind, description: ln.description.trim(),
         quantity: ln.quantity || null, unit_price: ln.unit_price || null,
-        amount: ln.amount }));
-    if (!clean.length) {
-      setError("Add at least one line item with a description and amount.");
+        amount: ln.amount, before_gst: ln.before_gst }));
+    if (!clean.some((ln) => ln.kind === "CHARGE")) {
+      setError("Add at least one charge with a description and amount.");
+      return;
+    }
+    if (net <= 0 || total <= 0) {
+      setError("The deductions take the invoice to nothing — check them.");
       return;
     }
     setSaving(true);
@@ -812,10 +952,13 @@ function NewManualInvoice({ onDone, onCancel }) {
       });
       if (!issued) fd.append("invoice_no", form.invoice_no);
       fd.append("lines", JSON.stringify(clean));
+      if (submit) fd.append("submit", "true");
       if (file) fd.append("attachment", file);
-      const mi = await apiUpload("/receivables/manual-invoices", fd);
-      if (mi.can_pdf) window.open(
-        `/api/v1/receivables/manual-invoices/${mi.id}.pdf`, "_blank");
+      const mi = invoice
+        ? await apiUpload(`/receivables/manual-invoices/${invoice.id}`, fd,
+                          "PATCH")
+        : await apiUpload("/receivables/manual-invoices", fd);
+      if (mi && mi.detail) { setError(mi.detail); setSaving(false); return; }
       onDone();
     } catch (e) { setError(e.message); }
     setSaving(false);
@@ -823,21 +966,84 @@ function NewManualInvoice({ onDone, onCancel }) {
 
   if (!sites) return <div style={card}>Loading…</div>;
 
+  const lineRow = (ln, i) => {
+    const ded = ln.kind === "DEDUCTION";
+    return (
+      <tr key={i}>
+        <td style={{ padding: 2 }}>
+          <input value={ln.description} list={ded ? "mi-deductions" : undefined}
+            onChange={(e) => setLine(i, "description", e.target.value)}
+            placeholder={ded ? "e.g. Advance recovery"
+              : "e.g. Excavator rental / Food provision"}
+            style={{ ...sel, width: "100%" }} /></td>
+        <td style={{ padding: 2 }}>
+          <input type="number" step="0.01" value={ln.quantity}
+            onChange={(e) => setLine(i, "quantity", e.target.value)}
+            style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
+        </td>
+        <td style={{ padding: 2 }}>
+          <input type="number" step="0.01" value={ln.unit_price}
+            onChange={(e) => setLine(i, "unit_price", e.target.value)}
+            style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
+        </td>
+        <td style={{ padding: 2 }}>
+          <input type="number" step="0.01" min={ded ? "0" : undefined}
+            value={ln.amount}
+            onChange={(e) => setLine(i, "amount", e.target.value)}
+            style={{ ...sel, width: "100%", textAlign: "right", ...mono,
+                     color: ded ? "var(--red-fg)" : undefined }} />
+        </td>
+        <td style={{ padding: "2px 4px", fontSize: 11.5, whiteSpace: "nowrap",
+                     color: "var(--muted)" }}>
+          {ded && (
+            <label title="Taken off before GST is worked out (advance
+              recovery, retention), or after it">
+              <input type="checkbox" checked={ln.before_gst}
+                onChange={(e) => setLine(i, "before_gst", e.target.checked)} />
+              {" "}before GST</label>)}
+        </td>
+        <td style={{ padding: 2, textAlign: "center" }}>
+          <button type="button" onClick={() => removeLine(i)}
+            title="Remove line" style={{ border: "none",
+              background: "none", cursor: "pointer",
+              color: "var(--muted)", fontSize: 16 }}>×</button>
+        </td>
+      </tr>
+    );
+  };
+  const indexed = lines.map((ln, i) => [ln, i]);
+  const tot = (labelText, value, opts = {}) => (
+    <div style={{ display: "flex", justifyContent: "space-between",
+      padding: "3px 0", alignItems: "center", ...(opts.style || {}) }}>
+      <span style={{ color: opts.strong ? undefined : "var(--muted)" }}>
+        {labelText}</span>
+      <b style={{ ...mono, color: opts.red ? "var(--red-fg)"
+        : opts.strong ? "var(--navy)" : undefined }}>{value}</b></div>);
+
   return (
-    <div style={{ ...card, maxWidth: 820 }}>
+    <div style={{ ...card, maxWidth: 880 }}>
       <div style={{ display: "flex", justifyContent: "space-between",
         alignItems: "center", marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>Record a client invoice</h2>
+        <h2 style={{ margin: 0, fontSize: 18 }}>
+          {!invoice ? "New client invoice"
+            : revision ? `Revise ${invoice.label} — revision ${invoice.revision}`
+              : `Edit ${invoice.label}`}</h2>
         <button onClick={onCancel} style={{ border: "none", background: "none",
-          cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>Cancel</button>
+          cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>
+          {invoice ? "Close" : "Cancel"}</button>
       </div>
+      {invoice && invoice.return_note && (
+        <div style={{ background: "var(--amber-bg)", color: "var(--amber-fg)",
+          padding: "8px 12px", borderRadius: 6, fontSize: 13,
+          marginBottom: 10 }}>{invoice.return_note}</div>)}
       {error && <div style={{ color: "var(--red-fg)", marginBottom: 10,
         fontSize: 13 }}>{error}</div>}
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
         marginBottom: 6 }}>
         <Field label="Invoice type">
-          <select value={form.origin} onChange={set("origin")} style={sel}>
+          <select value={form.origin} onChange={set("origin")} style={sel}
+                  disabled={!!revision}>
             <option value="HISTORICAL">Historical — record only</option>
             <option value="ISSUED">Issue on Planet — generate PDF</option>
           </select></Field>
@@ -864,7 +1070,8 @@ function NewManualInvoice({ onDone, onCancel }) {
         marginBottom: 6 }}>
         {issued ? (
           <Field label="Invoice number">
-            <input value="Planet assigns INV-…" disabled
+            <input value={invoice && invoice.invoice_no
+              ? invoice.invoice_no : "Given on approval"} disabled
               style={{ ...sel, color: "var(--muted)", width: 170 }} /></Field>
         ) : (
           <Field label="Client's invoice number">
@@ -879,63 +1086,49 @@ function NewManualInvoice({ onDone, onCancel }) {
             style={sel} /></Field>
       </div>
 
-      {/* Line items — bill for several unrelated things on one invoice */}
-      <div style={{ margin: "8px 0 6px", fontSize: 12, color: "var(--muted)" }}>
-        Line items</div>
+      <datalist id="mi-deductions">
+        {presets.map((p) => <option key={p} value={p} />)}
+      </datalist>
       <table style={{ width: "100%", borderCollapse: "collapse",
-        fontSize: 13, marginBottom: 6 }}>
+        fontSize: 13, margin: "10px 0 6px" }}>
         <thead><tr>
-          <th style={{ ...th, textAlign: "left" }}>Description</th>
+          <th style={{ ...th, textAlign: "left" }}>Charges</th>
           <th style={{ ...th, textAlign: "right", width: 70 }}>Qty</th>
           <th style={{ ...th, textAlign: "right", width: 100 }}>Unit price</th>
           <th style={{ ...th, textAlign: "right", width: 120 }}>Amount</th>
+          <th style={{ ...th, width: 90 }}></th>
           <th style={{ ...th, width: 28 }}></th>
         </tr></thead>
         <tbody>
-          {lines.map((ln, i) => (
-            <tr key={i}>
-              <td style={{ padding: 2 }}>
-                <input value={ln.description}
-                  onChange={(e) => setLine(i, "description", e.target.value)}
-                  placeholder="e.g. Excavator rental / Food provision"
-                  style={{ ...sel, width: "100%" }} /></td>
-              <td style={{ padding: 2 }}>
-                <input type="number" step="0.01" value={ln.quantity}
-                  onChange={(e) => setLine(i, "quantity", e.target.value)}
-                  style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
-              </td>
-              <td style={{ padding: 2 }}>
-                <input type="number" step="0.01" value={ln.unit_price}
-                  onChange={(e) => setLine(i, "unit_price", e.target.value)}
-                  style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
-              </td>
-              <td style={{ padding: 2 }}>
-                <input type="number" step="0.01" value={ln.amount}
-                  onChange={(e) => setLine(i, "amount", e.target.value)}
-                  style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
-              </td>
-              <td style={{ padding: 2, textAlign: "center" }}>
-                <button type="button" onClick={() => removeLine(i)}
-                  title="Remove line" style={{ border: "none",
-                    background: "none", cursor: "pointer",
-                    color: "var(--muted)", fontSize: 16 }}>×</button>
-              </td>
-            </tr>
-          ))}
+          {indexed.filter(([ln]) => ln.kind === "CHARGE")
+            .map(([ln, i]) => lineRow(ln, i))}
+          <tr><td colSpan={6} style={{ padding: "4px 2px 10px" }}>
+            <button type="button" onClick={() => addLine("CHARGE")}
+              style={{ ...ghostButton, padding: "3px 12px", fontSize: 13 }}>
+              + Add charge</button></td></tr>
+          <tr><td colSpan={6} style={{ ...th, textAlign: "left" }}>
+            Less — deductions
+            <span style={{ fontWeight: 400, textTransform: "none",
+              letterSpacing: 0, marginLeft: 8 }}>
+              advance recovery, retention, back charges — type the amount
+              to take off</span></td></tr>
+          {indexed.filter(([ln]) => ln.kind === "DEDUCTION")
+            .map(([ln, i]) => lineRow(ln, i))}
+          <tr><td colSpan={6} style={{ padding: "4px 2px" }}>
+            <button type="button" onClick={() => addLine("DEDUCTION")}
+              style={{ ...ghostButton, padding: "3px 12px", fontSize: 13 }}>
+              + Add deduction</button></td></tr>
         </tbody>
       </table>
-      <button type="button" onClick={addLine}
-        style={{ ...ghostButton, padding: "3px 12px", fontSize: 13,
-          marginBottom: 10 }}>+ Add line</button>
 
-      {/* System-computed net / GST / total */}
+      {/* System-computed totals, in the server's order */}
       <div style={{ display: "flex", justifyContent: "flex-end",
-        marginBottom: 10 }}>
-        <div style={{ minWidth: 280, fontSize: 13 }}>
-          <div style={{ display: "flex", justifyContent: "space-between",
-            padding: "3px 0" }}>
-            <span style={{ color: "var(--muted)" }}>Net</span>
-            <b style={mono}>{money(net)}</b></div>
+        margin: "6px 0 10px" }}>
+        <div style={{ minWidth: 300, fontSize: 13 }}>
+          {(pre > 0 || post > 0) && tot("Charges", money(charges))}
+          {pre > 0 && tot("Less deductions before GST", `(${money(pre)})`,
+                          { red: true })}
+          {tot(pre > 0 ? "Net (taxable)" : "Net", money(net))}
           <div style={{ display: "flex", justifyContent: "space-between",
             padding: "3px 0", alignItems: "center" }}>
             <span style={{ color: "var(--muted)" }}>GST @{" "}
@@ -944,6 +1137,8 @@ function NewManualInvoice({ onDone, onCancel }) {
                 style={{ ...sel, width: 56, padding: "2px 6px",
                   textAlign: "right", ...mono }} /> %</span>
             <b style={mono}>{money(gst)}</b></div>
+          {post > 0 && tot("Less deductions after GST", `(${money(post)})`,
+                           { red: true })}
           <div style={{ display: "flex", justifyContent: "space-between",
             padding: "6px 0", borderTop: "1px solid var(--line)",
             fontSize: 15 }}>
@@ -977,10 +1172,13 @@ function NewManualInvoice({ onDone, onCancel }) {
             style={{ ...sel, width: 260 }} /></Field>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <Btn variant="primary" onClick={save} disabled={saving}>
-          {saving ? "Saving…" : (issued ? "Issue invoice" : "Record invoice")}
-        </Btn>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8,
+                    alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "var(--muted)", marginRight: 6 }}>
+          Not owed by the client until a Director approves it.</span>
+        <Btn onClick={() => save(false)} disabled={saving}>Save draft</Btn>
+        <Btn variant="primary" onClick={() => save(true)} disabled={saving}>
+          {saving ? "Saving…" : "Submit for approval"}</Btn>
       </div>
     </div>
   );

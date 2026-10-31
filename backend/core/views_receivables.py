@@ -288,16 +288,89 @@ def manual_invoices(request):
         if request.FILES.get("attachment"):
             data["attachment"] = request.FILES["attachment"]
         mi, msg = mi_svc.create_manual_invoice(data, request.user)
-        if msg:
+        if msg and mi is None:
             return Response({"detail": msg}, status=400)
-        return Response(mi_svc.manual_invoice_dict(mi), status=201)
+        if msg:     # saved as a draft, but the submit was refused
+            return Response({**mi_svc.manual_invoice_dict(mi, request.user),
+                             "detail": msg}, status=201)
+        return Response(mi_svc.manual_invoice_dict(mi, request.user),
+                        status=201)
     if (bad := _gate(request)):
         return bad
     site_id = request.query_params.get("site")
     site_id = int(site_id) if site_id and site_id.isdigit() else None
     include_void = request.query_params.get("void") == "1"
     return Response({"invoices": mi_svc.list_invoices(
-        site_id=site_id, include_void=include_void)})
+        site_id=site_id, include_void=include_void, user=request.user),
+        "deduction_presets": mi_svc.DEDUCTION_PRESETS})
+
+
+def _form_data(request):
+    data = request.data.dict() if hasattr(request.data, "dict") \
+        else dict(request.data)
+    if isinstance(data.get("lines"), str):
+        import json
+        try:
+            data["lines"] = json.loads(data["lines"])
+        except ValueError:
+            data["lines"] = []
+    if request.FILES.get("attachment"):
+        data["attachment"] = request.FILES["attachment"]
+    return data
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def manual_invoice_one(request, pk):
+    """One manual invoice: open it, change a draft, or discard a draft that
+    was never approved (owner 2026-10-31)."""
+    try:
+        mi = ManualInvoice.objects.select_related("project").get(pk=pk)
+    except ManualInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "GET":
+        if (bad := _gate(request)):
+            return bad
+        return Response(mi_svc.manual_invoice_dict(mi, request.user))
+    if (bad := _manual_gate(request)):
+        return bad
+    if request.method == "DELETE":
+        msg = mi_svc.delete_draft(mi, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(status=204)
+    msg = mi_svc.update_manual_invoice(mi, _form_data(request), request.user)
+    mi.refresh_from_db()
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(mi_svc.manual_invoice_dict(mi, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def manual_invoice_step(request, pk, step):
+    """Move an invoice along: submit, approve, return (with a note), reopen
+    (with a reason) as a revision."""
+    try:
+        mi = ManualInvoice.objects.select_related("project").get(pk=pk)
+    except ManualInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    note = request.data.get("note") or request.data.get("reason") or ""
+    if step == "submit":
+        msg = mi_svc.submit(mi, request.user)
+    elif step == "approve":
+        msg = mi_svc.approve(mi, request.user)
+    elif step == "return":
+        msg = mi_svc.return_invoice(mi, request.user, note)
+    elif step == "reopen":
+        msg = mi_svc.reopen(mi, request.user, note)
+    else:
+        return Response({"detail": "Unknown step."}, status=404)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    mi.refresh_from_db()
+    return Response(mi_svc.manual_invoice_dict(mi, request.user))
 
 
 @api_view(["POST"])
@@ -312,7 +385,7 @@ def manual_invoice_void(request, pk):
     msg = mi_svc.void_manual_invoice(mi, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(mi_svc.manual_invoice_dict(mi))
+    return Response(mi_svc.manual_invoice_dict(mi, request.user))
 
 
 @api_view(["POST", "DELETE"])
@@ -341,7 +414,7 @@ def manual_invoice_claim_link(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     mi.refresh_from_db()
-    return Response(mi_svc.manual_invoice_dict(mi))
+    return Response(mi_svc.manual_invoice_dict(mi, request.user))
 
 
 @api_view(["GET"])
@@ -379,4 +452,5 @@ def manual_invoice_pdf(request, pk):
                                    "generated PDF."}, status=400)
     from .views_commercial import _render_pdf
     return _render_pdf("pdf/manual_invoice.html",
-                       mi_svc.manual_invoice_pdf_context(mi), mi.invoice_no)
+                       mi_svc.manual_invoice_pdf_context(mi),
+                       mi.invoice_no or f"draft-invoice-{mi.id}")

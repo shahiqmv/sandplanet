@@ -111,7 +111,9 @@ def _manual_invoices(site_id=None):
     # A superseded invoice is not dropped from history, but it is no longer
     # owed: the claim that took it over is the receivable, and counting both
     # would have the client owing the same money twice.
-    qs = (ManualInvoice.objects.filter(is_void=False,
+    # Only an approved invoice is owed: a draft, one waiting for a Director,
+    # or one reopened for a revision is not (owner 2026-10-31).
+    qs = (ManualInvoice.objects.filter(is_void=False, status="APPROVED",
                                        superseded_at__isnull=True)
           .select_related("project", "project__site"))
     if site_id is not None:
@@ -433,11 +435,18 @@ def invoice_detail(source, ident):
                            else "Tax invoice"),
             "currency": m.currency or "USD",
             "net_due": m.net_amount, "gst_pct": m.gst_pct,
-            "gst": m.gst_amount, "total": amount, "deductions": [],
+            "gst": m.gst_amount, "total": amount,
+            # a deduction after GST reads under the GST, as on a claim; one
+            # before GST is a negative line in the net
+            "deductions": [{"label": ln.description, "amount": -ln.amount}
+                           for ln in m.lines.all()
+                           if ln.kind == "DEDUCTION" and not ln.before_gst],
             "summary": None,
             "lines": [{"description": ln.description, "quantity": ln.quantity,
-                       "unit_price": ln.unit_price, "amount": ln.amount}
-                      for ln in m.lines.all()],
+                       "unit_price": ln.unit_price, "amount": ln.amount,
+                       "kind": ln.kind}
+                      for ln in m.lines.all()
+                      if ln.kind != "DEDUCTION" or ln.before_gst],
             "description": m.description, "origin": m.origin,
             "prepared_by": m.created_by.full_name if m.created_by_id else "",
             "certified_by": "", "certified_at": None,

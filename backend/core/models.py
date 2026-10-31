@@ -5707,10 +5707,31 @@ class ManualInvoice(models.Model):
         HISTORICAL = "HISTORICAL", "Historical (recorded)"
         ISSUED = "ISSUED", "Issued on Planet"
 
+    # Drafted, submitted, approved by a Director; only an approved invoice is
+    # owed — receivables, receipts and the books read nothing else. Returned
+    # goes back to DRAFT with a note; an approved one with no receipt can be
+    # reopened as a revision (owner 2026-10-31).
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        APPROVED = "APPROVED", "Approved"
+
     project = models.ForeignKey(Project, on_delete=models.PROTECT,
                                 related_name="manual_invoices")
     origin = models.CharField(max_length=10, choices=Origin.choices)
-    invoice_no = models.CharField(max_length=40)   # client's own, or Planet INV-
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT, db_index=True)
+    revision = models.IntegerField(default=0)
+    return_note = models.TextField(blank=True)
+    submitted_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    # client's own, or Planet INV- (blank on an ISSUED draft: the number is
+    # given at approval, so a draft never burns one)
+    invoice_no = models.CharField(max_length=40, blank=True)
     invoice_date = models.DateField()              # real (back-datable) date
     # When it falls due; blank = due on the invoice date.
     due_date = models.DateField(null=True, blank=True)
@@ -5773,8 +5794,17 @@ class ManualInvoiceLine(models.Model):
     contractors, etc.). qty × unit_price builds the line amount; GST is applied
     once on the invoice net, not per line."""
 
+    class Kind(models.TextChoices):
+        CHARGE = "CHARGE", "Charge"
+        # advance recovery, retention, a back charge: stored NEGATIVE, taken
+        # off before GST (the taxable net) or after it (owner 2026-10-31)
+        DEDUCTION = "DEDUCTION", "Deduction"
+
     invoice = models.ForeignKey(ManualInvoice, on_delete=models.CASCADE,
                                 related_name="lines")
+    kind = models.CharField(max_length=10, choices=Kind.choices,
+                            default=Kind.CHARGE)
+    before_gst = models.BooleanField(default=True)
     sort_order = models.IntegerField(default=0)
     description = models.CharField(max_length=300)
     quantity = models.DecimalField(max_digits=14, decimal_places=3,
