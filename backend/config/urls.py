@@ -4,6 +4,7 @@ from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
 from core import (views_adms, views_cameras, views_procurement_public,
+                  views_timelapse_public,
                   views_pwa, views_tracking)
 
 urlpatterns = [
@@ -39,6 +40,12 @@ urlpatterns = [
          views_procurement_public.client_plan_page, name="psc-client-plan"),
     path("share/procurement/<str:token>/plan.xlsx",
          views_procurement_public.client_plan_xlsx, name="psc-client-xlsx"),
+    # Public, token-gated view of one camera's time-lapse (no login).
+    path("share/timelapse/<str:token>", views_timelapse_public.shared_reel,
+         name="timelapse-share"),
+    path("share/timelapse/<str:token>/video",
+         views_timelapse_public.shared_reel_video,
+         name="timelapse-share-video"),
 ]
 
 if settings.DEBUG:  # local-disk media fallback only (DECISIONS.md D3)

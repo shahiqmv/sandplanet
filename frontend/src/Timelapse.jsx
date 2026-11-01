@@ -405,6 +405,15 @@ export default function TimelapseSection() {
           load(); }
     catch (e) { setError(e.message); }
   }
+  // The public link, for a client whose portal is not live yet.
+  async function shareLink(reel, on) {
+    if (!on && !window.confirm("Stop this link? Anyone who has it can no longer "
+        + "open the video, and a new link would be a different address.")) return;
+    try { await api(`/timelapse-reels/${reel.id}/share`, { method: "POST",
+                                                           body: { on } });
+          load(); }
+    catch (e) { setError(e.message); }
+  }
   async function removeWeek(u) {
     if (!window.confirm(`Remove the upload for ${fmt(u.week_from)}${u.week_to !== u.week_from ? ` – ${fmt(u.week_to)}` : ""}? The camera's video is rebuilt without it.`)) return;
     try { await api(`/timelapses/${u.id}`, { method: "DELETE" }); load(); }
@@ -474,7 +483,24 @@ export default function TimelapseSection() {
               <div style={{ marginTop: 8 }}>
                 <Btn variant="secondary" onClick={() => publish(r, !r.client_visible)}>
                   {r.client_visible ? "Take off the client portal"
-                                    : "Show on the client portal"}</Btn>
+                                    : "Show on the client portal"}</Btn>{" "}
+                {!r.share_url && (
+                  <Btn variant="secondary" onClick={() => shareLink(r, true)}>
+                    Create a share link</Btn>)}
+                {r.share_url && (
+                  <div style={{ marginTop: 8, fontSize: 12.5 }}>
+                    <div style={{ color: "#667", marginBottom: 4 }}>
+                      Anyone with this link can watch this video, with no sign-in.
+                      It always shows the latest video.</div>
+                    <input readOnly value={r.share_url} aria-label="Share link"
+                      onFocus={(e) => e.target.select()}
+                      style={{ width: "100%", padding: "4px 8px", fontSize: 12.5,
+                               marginBottom: 6, boxSizing: "border-box" }} />
+                    <Btn variant="secondary" onClick={() =>
+                      navigator.clipboard?.writeText(r.share_url)}>Copy link</Btn>{" "}
+                    <Btn variant="ghost" onClick={() => shareLink(r, false)}>
+                      Stop sharing</Btn>
+                  </div>)}
               </div>)}
           </div>
         ))}

@@ -10262,6 +10262,10 @@ class TimelapseReel(models.Model):
     built_at = models.DateTimeField(null=True, blank=True)
     needs_build = models.BooleanField(default=True)
     client_visible = models.BooleanField(default=False)
+    # An unguessable public link to this one video, for a client whose portal
+    # is not live yet. Blank = not shared (owner 2026-11-01).
+    share_token = models.CharField(max_length=64, blank=True, default="",
+                                   db_index=True)
 
     class Meta:
         ordering = ["site__code", "camera__name"]

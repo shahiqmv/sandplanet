@@ -11,6 +11,7 @@ still lands in its place. "Per week videos will be messy" — so the reel is
 what people watch; the weekly pieces are only its inputs.
 """
 import os
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -498,6 +499,16 @@ def _url(f, request):
     return request.build_absolute_uri(u) if request and u.startswith("/") else u
 
 
+def set_share_link(reel, on, actor):
+    """Turn the public link on or off. A link is minted fresh each time, so one
+    that was stopped never works again."""
+    reel.share_token = secrets.token_urlsafe(24) if on else ""
+    reel.save(update_fields=["share_token"])
+    audit("site", reel.site_id, "TIMELAPSE_SHARE_LINK", actor=actor,
+          detail={"site": reel.site.code, "camera": reel.camera.name,
+                  "action": "created" if on else "stopped"})
+
+
 def reel_dict(reel, request=None, staff=True):
     cam = reel.camera
     waiting = SiteTimelapse.objects.filter(camera=cam,
@@ -515,6 +526,12 @@ def reel_dict(reel, request=None, staff=True):
                     "camera_active": cam.is_active,
                     "client_visible": reel.client_visible,
                     "waiting": waiting,
+                    # the link is the publisher's to hand out
+                    "share_url": (
+                        request.build_absolute_uri(
+                            f"/share/timelapse/{reel.share_token}")
+                        if reel.share_token and request
+                        and request.user.role in PUBLISH_ROLES else None),
                     "size_mb": (round(reel.size_bytes / 1048576, 1)
                                 if reel.size_bytes else None)})
     return out

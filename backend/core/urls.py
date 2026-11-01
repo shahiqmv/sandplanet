@@ -1162,6 +1162,8 @@ urlpatterns = [
          name="timelapse-detail"),
     path("timelapse-reels/<int:pk>", cameras_api.timelapse_reel,
          name="timelapse-reel"),
+    path("timelapse-reels/<int:pk>/share", cameras_api.timelapse_reel_share,
+         name="timelapse-reel-share"),
     path("cameras/<int:pk>/ticket", cameras_api.camera_ticket,
          name="camera-ticket"),
     # --- Trading arm (TRADING_BUILD_BRIEF.md): its own app at /t/, its own

@@ -384,6 +384,23 @@ def timelapse_detail(request, pk):
     return Response(status=204)
 
 
+@api_view(["POST"])
+def timelapse_reel_share(request, pk):
+    """Create or stop the public link to one camera's video."""
+    from . import timelapse as tl
+    from .models import TimelapseReel
+    ids = _tl_sites(request)
+    reel = TimelapseReel.objects.select_related("site", "camera").filter(
+        pk=pk).first()
+    if reel is None or (ids is not None and reel.site_id not in ids):
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in tl.PUBLISH_ROLES:
+        return Response({"detail": "The PM or the Director shares the video."},
+                        status=403)
+    tl.set_share_link(reel, bool(request.data.get("on")), request.user)
+    return Response(tl.reel_dict(reel, request))
+
+
 @api_view(["PATCH"])
 def timelapse_reel(request, pk):
     """Publish a camera's reel to the client's portal, or take it back."""

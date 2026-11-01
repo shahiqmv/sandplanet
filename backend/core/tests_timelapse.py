@@ -6,11 +6,13 @@ import tempfile
 import unittest
 from datetime import date
 
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from . import timelapse as tl
+from .pdf import company_info
 from .models import (Project, Site, SiteTimelapse, TimelapseCamera,
                      TimelapseReel, User)
 from .tests import make_user
@@ -239,6 +241,74 @@ class TimelapseTests(TestCase):
                 "OPTIONS": {"location": MEDIA}},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage."
                                "StaticFilesStorage"}})
+class ShareLinkTests(TestCase):
+    def setUp(self):
+        self.site = Site.objects.create(code="TLS", name="Link site")
+        self.cam = TimelapseCamera.objects.create(site=self.site, name="Cam 1",
+                                                  location="Jetty")
+        self.reel = TimelapseReel.objects.create(
+            site=self.site, camera=self.cam, needs_build=False)
+        self.reel.file.save("reel.mp4", ContentFile(b"video"))
+        self.pm = make_user("tls_pm", User.Role.PM, site=self.site)
+        self.eng = make_user("tls_eng", User.Role.SITE_ENGINEER, site=self.site)
+        self.client = APIClient()
+        self.client.force_authenticate(self.pm)
+
+    def share(self, on=True):
+        return self.client.post(f"/api/v1/timelapse-reels/{self.reel.id}/share",
+                                {"on": on}, format="json")
+
+    def public(self, url):
+        return APIClient().get(url)
+
+    def test_the_link_opens_with_no_sign_in_and_shows_only_the_video(self):
+        r = self.share()
+        self.assertEqual(r.status_code, 200, r.data)
+        page = self.public(r.data["share_url"])
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Jetty")
+        self.assertContains(page, company_info()["legal_name"])
+        self.assertContains(page, "<video")
+        self.assertEqual(page["X-Robots-Tag"], "noindex, nofollow")
+        token = r.data["share_url"].rsplit("/", 1)[1]
+        video = self.public(f"/share/timelapse/{token}/video")
+        self.assertEqual(video.status_code, 302)
+        self.assertIn("reel", video["Location"])
+
+    def test_stopping_it_ends_it_and_a_new_one_is_a_different_link(self):
+        first = self.share().data["share_url"]
+        self.assertIsNone(self.share(on=False).data["share_url"])
+        self.assertEqual(self.public(first).status_code, 404)
+        self.assertNotEqual(self.share().data["share_url"], first)
+        self.assertEqual(self.public(first).status_code, 404)
+
+    def test_a_blank_or_wrong_token_opens_nothing(self):
+        self.assertEqual(self.public("/share/timelapse/nope").status_code, 404)
+        self.assertEqual(self.public("/share/timelapse/nope/video").status_code,
+                         404)
+
+    def test_the_site_team_cannot_create_or_see_it(self):
+        self.share()
+        self.client.force_authenticate(self.eng)
+        self.assertEqual(self.share().status_code, 403)
+        reel = self.client.get("/api/v1/timelapses").data["reels"][0]
+        self.assertIsNone(reel["share_url"])
+
+    def test_it_does_not_reach_the_client_payload(self):
+        from . import timelapse as tl
+        self.share()
+        self.reel.refresh_from_db()
+        self.assertNotIn("share_url", tl.reel_dict(self.reel, staff=False))
+
+    def test_a_link_with_no_video_yet_says_so(self):
+        self.reel.file.delete()
+        token = self.share().data["share_url"].rsplit("/", 1)[1]
+        page = self.public(f"/share/timelapse/{token}")
+        self.assertContains(page, "being prepared")
+        self.assertEqual(self.public(f"/share/timelapse/{token}/video")
+                         .status_code, 404)
+
+
 class ChunkedUploadTests(TestCase):
     """A week's video sent in pieces (owner 2026-10-27): SJR's 2 GB file
     never arrived in one request — the server gave up and answered 500."""
