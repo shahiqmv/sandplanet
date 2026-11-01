@@ -511,7 +511,32 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                                     fontFamily: "var(--mono, monospace)" }}>
                                     {l.currency || "MVR"} {money(l.amount)}</span>
                                 </div>
-                                {payKey === `pay:${l.payable_id}`
+                                {/* A paid payable says so, as a PR or PYR line
+                                    does: twenty "MANAS HARDWARE" rows all
+                                    offering Record payment hid the three
+                                    still unpaid on PV-1315 (owner 2026-11-01). */}
+                                {l.paid ? (
+                                  <div style={{ marginTop: 6, fontSize: 13,
+                                    display: "flex", gap: 10,
+                                    alignItems: "center", flexWrap: "wrap" }}>
+                                    <span style={{ color: "var(--green-fg)" }}>
+                                      ✓ paid · {l.payment_ref || "—"}</span>
+                                    {l.slip_url ? (
+                                      <a href={l.slip_url} target="_blank"
+                                         rel="noreferrer">slip</a>
+                                    ) : (
+                                      <label style={{ color: "var(--sky)",
+                                        cursor: "pointer" }}>
+                                        Attach slip
+                                        <input type="file"
+                                          style={{ display: "none" }}
+                                          onChange={(e) => e.target.files[0]
+                                            && filePayableSlip(pv.ref,
+                                              l.payable_id, e.target.files[0])} />
+                                      </label>
+                                    )}
+                                  </div>
+                                ) : payKey === `pay:${l.payable_id}`
                                   ? payFormFields({ onSave: () =>
                                       settlePayable(pv.ref, l.payable_id) })
                                   : (
@@ -591,12 +616,23 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     cancelPay(); reload();
   });
 
+  // The slip goes with the payment — it used to be offered and never sent.
   const settlePayable = (pvRef, payableId) => run(async () => {
     if (!payRef.trim()) throw new Error("A payment reference is required.");
-    await api(`/payment-vouchers/${pvRef}/actions/settle-payable`,
-              { method: "POST", body: { payable_id: payableId,
-                                        payment_ref: payRef } });
+    const fd = new FormData();
+    fd.append("payable_id", payableId);
+    fd.append("payment_ref", payRef);
+    if (paySlip) fd.append("file", paySlip);
+    await apiUpload(`/payment-vouchers/${pvRef}/actions/settle-payable`, fd);
     cancelPay(); reload();
+  });
+  // A slip for a payable already paid, filed late.
+  const filePayableSlip = (pvRef, payableId, file) => run(async () => {
+    const fd = new FormData();
+    fd.append("payable_id", payableId);
+    fd.append("file", file);
+    await apiUpload(`/payment-vouchers/${pvRef}/actions/payable-slip`, fd);
+    reload();
   });
 
   const payFormFields = (opts = {}) => (

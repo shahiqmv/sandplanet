@@ -310,3 +310,66 @@ class MilestonePartPaymentTests(VoucherBase):
                                                 self.finance))
         m.refresh_from_db()
         self.assertEqual(m.status, "PAID")
+
+
+class PayableSlipTests(VoucherBase):
+    """A paid payable says so on the voucher, and its slip is kept (owner
+    2026-11-01: PV-1315 showed 17/20 paid with every row still offering
+    Record payment, and the slips attached were never sent)."""
+
+    def _paid_payable_voucher(self):
+        svc = Document.objects.create(
+            doc_type="SVC", ref="SVC-SL-001", status="AUTHORISED",
+            site=self.site, doc_date=date.today(), created_by=self.finance)
+        p = Payable.objects.create(document=svc, site=self.site,
+                                   vendor="Manas Hardware",
+                                   amount=Decimal("650"))
+        self.client.force_authenticate(self.finance)
+        r = self.client.post("/api/v1/payment-vouchers",
+                             {"payable_ids": [p.id]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        self.voucher_action(ref, "submit", self.finance)
+        self.voucher_action(ref, "approve", self.signatory)
+        return ref, p
+
+    def _line(self, ref):
+        self.client.force_authenticate(self.finance)
+        info = self.client.get(f"/api/v1/payment-vouchers/{ref}").data
+        return next(ln for ln in info["lines"] if ln["doc_type"] == "PAYABLE")
+
+    def test_the_slip_is_kept_and_the_line_shows_paid(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        ref, p = self._paid_payable_voucher()
+        self.assertFalse(self._line(ref)["paid"])
+        self.client.force_authenticate(self.finance)
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{ref}/actions/settle-payable",
+            {"payable_id": p.id, "payment_ref": "BLAZ-1",
+             "file": SimpleUploadedFile("slip.pdf", b"%PDF-1.4 slip",
+                                        content_type="application/pdf")},
+            format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        ln = self._line(ref)
+        self.assertTrue(ln["paid"])
+        self.assertEqual(ln["payment_ref"], "BLAZ-1")
+        self.assertTrue(ln["slip_url"])
+
+    def test_a_slip_filed_after_the_payment(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        ref, p = self._paid_payable_voucher()
+        self.client.force_authenticate(self.finance)
+        self.client.post(
+            f"/api/v1/payment-vouchers/{ref}/actions/settle-payable",
+            {"payable_id": p.id, "payment_ref": "BLAZ-2"}, format="json")
+        self.assertIsNone(self._line(ref)["slip_url"])
+        url = f"/api/v1/payment-vouchers/{ref}/actions/payable-slip"
+        self.assertEqual(self.client.post(url, {"payable_id": p.id},
+                                          format="multipart").status_code, 400)
+        r = self.client.post(url, {
+            "payable_id": p.id,
+            "file": SimpleUploadedFile("slip.jpg", b"jpg",
+                                       content_type="image/jpeg")},
+            format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(self._line(ref)["slip_url"])

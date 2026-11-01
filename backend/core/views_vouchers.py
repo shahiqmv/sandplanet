@@ -133,6 +133,7 @@ def _line_info(line):
                 "cost_head": "Salary" if pay is not None else "Materials",
                 "purpose": purpose,
                 "payment_ref": line.paid_ref or p.settled_ref,
+                "slip_url": _payable_slip_url(line),
                 "paid": _line_paid(line), **_part_info(line)}
     if line.source_document_id is None:
         return _released_line(line)
@@ -753,6 +754,36 @@ def payment_vouchers_batch_approve(request):
     return Response({"approved": approved, "failed": failed})
 
 
+def _slip_caption(line):
+    return f"Payable {line.source_payable_id} · line {line.id}"
+
+
+def _payable_slip_url(line):
+    """The slip filed for a payable line of this voucher, if any."""
+    from .models import Attachment
+    a = (Attachment.objects.filter(document_id=line.voucher_id,
+                                   kind="PAYMENT_SLIP",
+                                   caption__startswith=_slip_caption(line))
+         .order_by("-id").first())
+    return a.file.url if a and a.file else None
+
+
+def _file_payable_slip(pv, line, upload, user):
+    """Keep the transfer slip for a payable line, on the voucher. The form
+    offered a slip for a payable and the page never sent it — the slips for
+    PV-1315's twenty supplier payments were lost (owner 2026-11-01)."""
+    from .models import Attachment
+    p = line.source_payable
+    Attachment.objects.create(
+        document=pv, revision=pv.current_revision, kind="PAYMENT_SLIP",
+        file=upload, file_name=upload.name[:200],
+        content_type=upload.content_type or "", size_bytes=upload.size,
+        caption=f"{_slip_caption(line)} · {p.vendor}"[:200],
+        uploaded_by=user)
+    audit("document", pv.id, "PV_SLIP_FILED", actor=user,
+          detail={"ref": pv.ref, "payable": p.id, "vendor": p.vendor})
+
+
 @api_view(["POST"])
 def payment_voucher_action(request, ref, action):
     try:
@@ -799,6 +830,23 @@ def payment_voucher_action(request, ref, action):
         err = vouchers.settle_payable(line.source_payable, user,
                                       request.data.get("payment_ref") or "",
                                       voucher=pv)
+        if not err and request.FILES.get("file"):
+            _file_payable_slip(pv, line, request.FILES["file"], user)
+    elif action == "payable-slip":
+        # a slip for a payable already paid — filed late, or lost before
+        if user.role not in ("FINANCE", "ADMIN"):
+            return Response({"detail": "Finance files payment slips."},
+                            status=403)
+        line = pv.voucher_lines.filter(
+            source_payable_id=request.data.get("payable_id"),
+            status="APPROVED").select_related("source_payable").first()
+        if not line:
+            return Response({"detail": "That payable is not an approved line "
+                             "on this voucher."}, status=400)
+        if not request.FILES.get("file"):
+            return Response({"detail": "Attach the slip."}, status=400)
+        _file_payable_slip(pv, line, request.FILES["file"], user)
+        err = None
     elif action == "request-void":
         # Reversing an AUTHORISED voucher is a two-handed move: Finance raises
         # the request (with a reason), a signatory then authorises it
