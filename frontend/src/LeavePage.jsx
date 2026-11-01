@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { Btn, Chip, buttonStyle, card, inputStyle, td, th } from "./ui.jsx";
+import { LeaveToGrant } from "./StaffRequests.jsx";
 
 // Worker leave. Granting moves the man to Head Office for the duration, so his
 // site stops counting him and nobody has to mark him every morning; HR marks
@@ -43,10 +44,15 @@ export default function LeavePage({ me }) {
   async function markReturned(row) {
     // The date matters: he goes back on his site's register from the day
     // after, and men come back late as often as on time. Default to today,
-    // let HR correct it.
+    // or the day after a leave that has already run out, as one granted late
+    // may have; HR corrects it.
+    const next = new Date(`${row.to_date}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const today = new Date().toISOString().slice(0, 10);
+    const dayAfter = next.toISOString().slice(0, 10);
     const on = window.prompt(
-      `${row.full_name} is back — what date did he return?`,
-      new Date().toISOString().slice(0, 10));
+      `${row.full_name} is back — what date did they return?`,
+      row.overdue && dayAfter < today ? dayAfter : today);
     if (!on) return;
     await run(row, "return", { on });
   }
@@ -139,6 +145,8 @@ export default function LeavePage({ me }) {
 
       {err && !form && <p style={{ color: "#c0392b", fontSize: 12.5 }}>
         {err}</p>}
+
+      {canGrant && <LeaveToGrant onGranted={load} />}
 
       <label style={{ fontSize: 12, color: "#5a6b78" }}>
         <input type="checkbox" checked={openOnly}

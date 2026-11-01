@@ -271,6 +271,8 @@ def decide(req, actor, approve, note="", terms=None):
     _notify_raiser(req)
     if approve and req.kind == StaffRequest.Kind.LOAN:
         _notify_signatories(req)
+    if approve and req.is_leave:
+        _notify_hr(req)
     return None
 
 
@@ -393,12 +395,13 @@ def cancel(req, actor):
     return None
 
 
-def grant_leave(req, actor, kind, note=""):
+def grant_leave(req, actor, kind, note="", from_date=None, to_date=None):
     """HR turns an approved leave request into actual leave.
 
     Paid or unpaid is HR's call at this point, not the requester's — it is
     the one decision that changes what payroll does, and the requester is not
-    the person who should be making it."""
+    the person who should be making it. HR may also correct the dates to those
+    actually taken; the request keeps the dates that were approved."""
     from . import leave
 
     if actor.role not in LEAVE_DO_ROLES:
@@ -409,8 +412,8 @@ def grant_leave(req, actor, kind, note=""):
         return None, "The Director has not approved this yet."
 
     lv, err = leave.grant({"employee_id": req.employee_id,
-                           "from_date": req.from_date.isoformat(),
-                           "to_date": req.to_date.isoformat(),
+                           "from_date": from_date or req.from_date.isoformat(),
+                           "to_date": to_date or req.to_date.isoformat(),
                            "kind": kind,
                            "reason": req.reason or note}, actor)
     if err:
@@ -423,9 +426,41 @@ def grant_leave(req, actor, kind, note=""):
         req.save(update_fields=["worker_leave", "status", "done_by",
                                 "done_at"])
     audit("staff_request", req.id, "STAFF_REQUEST_LEAVE_GRANTED", actor=actor,
-          detail={"leave": lv.id, "kind": kind})
+          detail={"leave": lv.id, "kind": kind, "from": str(lv.from_date),
+                  "to": str(lv.to_date)})
     _notify_raiser(req)
     return lv, None
+
+
+def leave_not_taken(req, actor, note):
+    """The Director approved it but the person never went, so there is nothing
+    for HR to grant. The reason is kept: the request does not just vanish."""
+    if actor.role not in LEAVE_DO_ROLES:
+        return "Only HR closes a leave request."
+    if not req.is_leave or req.status != StaffRequest.Status.APPROVED:
+        return "Only approved leave still waiting to be granted can be closed."
+    note = (note or "").strip()
+    if not note:
+        return "Say why the leave was not taken."
+    req.status = StaffRequest.Status.CANCELLED
+    req.done_by = actor
+    req.done_at = timezone.now()
+    req.save(update_fields=["status", "done_by", "done_at"])
+    audit("staff_request", req.id, "STAFF_REQUEST_LEAVE_NOT_TAKEN", actor=actor,
+          detail={"note": note})
+    _notify_raiser(req)
+    return None
+
+
+def marked_at_work(req):
+    """What the sites have marked during this leave: the person was on the
+    site register all along, so HR must see this before granting replaces it."""
+    from .models import Attendance
+    rows = Attendance.objects.filter(
+        employee_id=req.employee_id, day__gte=req.from_date,
+        day__lte=req.to_date, remark__in=("PRESENT", "HALF_DAY"),
+    ).values_list("site__code", flat=True)
+    return {"days": len(rows), "sites": sorted(set(rows))}
 
 
 def link_payment(req, document, actor):
@@ -494,6 +529,16 @@ def _notify_signatories(req):
                     f"{req.employee.currency} {req.approved_amount:,.2f} over "
                     f"{req.approved_months} months — approved by "
                     f"{req.decided_by.full_name}. My Tasks.",
+                    category="approval")
+
+
+def _notify_hr(req):
+    from .models import User
+    from .notify import notify_user
+    for u in User.objects.filter(role="HO_HR", is_active=True):
+        notify_user(u, f"Leave to grant: {req.employee.full_name}",
+                    f"{req.from_date} to {req.to_date} — approved by "
+                    f"{req.decided_by.full_name}. People → Worker Leave.",
                     category="approval")
 
 

@@ -107,11 +107,11 @@ const IMPORT_CHAIN = ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS",
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
-  // HO_HR is in this group only for their own payment requests, which used to
-  // be a separate "My Requests" tab — everything else names its roles.
+  // HO_HR and PA get My Tasks for the leave requests they grant: the queue
+  // sits on that page, and the menu never offered it to them (owner 2026-11-01).
   { key: "approvals", label: "My Tasks",
     roles: [...APPROVERS, "QS", "PA", "HO_HR"],
-    subs: [["approvals", "My Tasks", APPROVERS],
+    subs: [["approvals", "My Tasks", [...APPROVERS, "HO_HR", "PA"]],
            ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN", "QS",
                                        "SIGNATORY", "PA"]],
            ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN", "QS",
@@ -1229,7 +1229,8 @@ export default function App() {
           {/* Advance and leave requests waiting on this role — beside the
               other things they have to act on. */}
           {!docView && !openSite && hoPage === "approvals" && (
-            <StaffRequestQueue me={me} />
+            <StaffRequestQueue me={me}
+                               showEmpty={!APPROVERS.includes(me.role)} />
           )}
           {!docView && !openSite && APPROVERS.includes(me.role) &&
             hoPage === "approvals" && (

@@ -140,12 +140,21 @@ def grant(data, actor):
 
 
 def _prefill_paid(lv, ho, actor):
-    """Mark the working days of paid leave, so payroll pays them by itself."""
+    """Mark the working days of paid leave, so payroll pays them by itself.
+
+    Leave granted late replaces what the site marked meanwhile: a day away
+    earns no overtime, and a rest day left marked PRESENT would pay the flat
+    Friday OT on top of the leave."""
     made = 0
-    for day in _working_days(ho, lv.from_date, lv.to_date):
+    days = _working_days(ho, lv.from_date, lv.to_date)
+    Attendance.objects.filter(
+        employee=lv.employee, day__gte=lv.from_date, day__lte=lv.to_date,
+    ).exclude(day__in=days).delete()
+    for day in days:
         _, created = Attendance.objects.update_or_create(
             employee=lv.employee, day=day,
             defaults={"site": ho, "remark": "PAID_LEAVE",
+                      "ot_requested": 0, "ot_approved": 0,
                       "entered_by": actor})
         made += int(created)
     log.info("paid leave %s: marked %s day(s)", lv.pk, made)
@@ -169,10 +178,11 @@ def mark_returned(lv, actor, on=None):
         emp = lv.employee
         # He is back AT the site on his return date, so that day belongs to the
         # site and Head Office ends the day before — the same way the transfer
-        # was made when the leave was granted.
-        emp.site_allocations.filter(to_date__isnull=True).update(
-            to_date=day - timedelta(days=1))
+        # was made when the leave was granted. Someone who was at Head Office
+        # already just stays there; closing it would leave them on no site.
         if lv.from_site_id:
+            emp.site_allocations.filter(to_date__isnull=True).update(
+                to_date=day - timedelta(days=1))
             EmployeeSiteAllocation.objects.create(
                 employee=emp, site_id=lv.from_site_id, from_date=day)
         # He came back early: the rest of the paid-leave days were marked in
@@ -214,10 +224,10 @@ def _undo_move(lv, emp):
                 employee=emp, site_id=lv.from_site_id,
                 from_date=lv.from_date)
         return
-    today = timezone.localdate()
-    emp.site_allocations.filter(to_date__isnull=True).update(
-        to_date=today - timedelta(days=1))
     if lv.from_site_id:
+        today = timezone.localdate()
+        emp.site_allocations.filter(to_date__isnull=True).update(
+            to_date=today - timedelta(days=1))
         EmployeeSiteAllocation.objects.create(
             employee=emp, site_id=lv.from_site_id, from_date=today)
 

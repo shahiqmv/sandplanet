@@ -87,8 +87,13 @@ def my_requests(request):
 @api_view(["GET"])
 def request_queue(request):
     """What the signed-in role has to act on."""
-    rows = sr.queue_for(request.user)
-    return Response([_row(r, request.user) for r in rows])
+    out = []
+    for r in sr.queue_for(request.user):
+        row = _row(r, request.user)
+        if r.is_leave and r.status == StaffRequest.Status.APPROVED:
+            row["marked_at_work"] = sr.marked_at_work(r)
+        out.append(row)
+    return Response(out)
 
 
 @api_view(["POST"])
@@ -142,7 +147,21 @@ def grant_request_leave(request, pk):
         return Response({"detail": "Not found."}, status=404)
     lv, err = sr.grant_leave(req, request.user,
                              kind=request.data.get("kind"),
-                             note=request.data.get("note", ""))
+                             note=request.data.get("note", ""),
+                             from_date=request.data.get("from_date"),
+                             to_date=request.data.get("to_date"))
+    if err:
+        return Response({"detail": err}, status=400)
+    return Response(_row(req, request.user))
+
+
+@api_view(["POST"])
+def request_leave_not_taken(request, pk):
+    """HR closes approved leave the person never took."""
+    req = _get(pk)
+    if req is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = sr.leave_not_taken(req, request.user, request.data.get("note"))
     if err:
         return Response({"detail": err}, status=400)
     return Response(_row(req, request.user))

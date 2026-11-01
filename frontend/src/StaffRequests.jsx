@@ -15,6 +15,112 @@ const money = (v, c) => v == null ? "—"
 const monthName = (ym) => ym ? new Date(`${ym}-01T00:00:00`)
   .toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "";
 
+const isLeave = (r) => r.kind.startsWith("LEAVE");
+
+// HR's half of an approved leave request: the dates actually taken, paid or
+// unpaid, or that it never happened. The site has had the person on its
+// register until now, so what it marked is shown before granting replaces it.
+function GrantLeave({ r, act }) {
+  const [from, setFrom] = useState(r.from_date);
+  const [to, setTo] = useState(r.to_date);
+  const marked = r.marked_at_work;
+  const name = r.employee.full_name;
+  const grant = (kind) => {
+    if (marked?.days && !window.confirm(
+      `${name} is marked present at ${marked.sites.join(", ")} on `
+      + `${marked.days} of the approved days. Granting replaces the marks `
+      + "for the dates entered. Go ahead?")) return;
+    act(r.id, "grant-leave", { kind, from_date: from, to_date: to });
+  };
+  return (
+    <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
+      <span style={{ display: "flex", gap: 6, alignItems: "center",
+                     fontSize: 12, flexWrap: "wrap",
+                     justifyContent: "flex-end" }}>
+        <input type="date" aria-label="Leave from" value={from}
+               style={{ ...inputStyle, fontSize: 12, width: 140 }}
+               onChange={(e) => setFrom(e.target.value)} />
+        to
+        <input type="date" aria-label="Leave to" value={to}
+               style={{ ...inputStyle, fontSize: 12, width: 140 }}
+               onChange={(e) => setTo(e.target.value)} />
+      </span>
+      {marked?.days > 0 && (
+        <span style={{ fontSize: 12, color: "var(--red-fg)",
+                       whiteSpace: "normal", textAlign: "right" }}>
+          Marked present at {marked.sites.join(", ")} on {marked.days} of these
+          days. Check they went, and correct the dates if needed.</span>)}
+      <span style={{ display: "flex", gap: 6, justifyContent: "flex-end",
+                     flexWrap: "wrap" }}>
+        {/* Paid or unpaid is HR's call — it is the one decision that changes
+            what payroll does. */}
+        <Btn variant="primary" style={{ fontSize: 12, padding: "3px 12px" }}
+             onClick={() => grant("PAID")}>Grant as paid</Btn>
+        <Btn variant="secondary" style={{ fontSize: 12, padding: "3px 12px" }}
+             onClick={() => grant("UNPAID")}>Without pay</Btn>
+        <Btn variant="ghost" style={{ fontSize: 12, padding: "3px 12px" }}
+             onClick={() => {
+               const note = window.prompt("Why was this leave not taken? "
+                 + "(the requester is told it was closed)");
+               if (note) act(r.id, "leave-not-taken", { note });
+             }}>Not taken</Btn>
+      </span>
+    </div>
+  );
+}
+
+// Approved leave doesn't exist until HR grants it, so the register shows what
+// is still waiting. Without this a person away on approved leave looked like
+// nobody on leave at all (owner 2026-11-01).
+export function LeaveToGrant({ onGranted }) {
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState(null);
+  const load = useCallback(() => {
+    api("/staff-requests/queue")
+      .then((d) => setRows(d.filter((r) => isLeave(r)
+                                    && r.status === "APPROVED")))
+      .catch(() => setRows([]));
+  }, []);
+  useEffect(load, [load]);
+  const act = (id, path, body) => api(`/staff-requests/${id}/${path}`,
+    { method: "POST", body })
+    .then(() => { setError(null); load(); onGranted?.(); })
+    .catch((e) => setError(e.message));
+
+  if (!rows.length) return null;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ margin: "0 0 2px", color: "var(--sp-navy)", fontSize: 14 }}>
+        Approved, waiting to be granted ({rows.length})</h3>
+      <p style={{ margin: "0 0 6px", fontSize: 12, color: "var(--muted)" }}>
+        The Director has approved these. They stay on their site's register and
+        off the list below until granted here.</p>
+      {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 13 }}>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td style={{ ...td, width: 190 }}>
+                  <b>{r.employee.full_name}</b>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                    {r.employee.emp_no}</div>
+                </td>
+                <td style={td}><What r={r} />
+                  <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                    {r.reason}</div></td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  <GrantLeave r={r} act={act} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function What({ r }) {
   if (r.kind === "LOAN") {
     const changed = r.approved_amount != null && (
@@ -241,7 +347,7 @@ export function MyRequests({ isStaff }) {
 
 // The other side: what the Director must decide, what HR must arrange, and
 // what Finance must pay. One queue, filtered by role on the server.
-export function StaffRequestQueue({ me }) {
+export function StaffRequestQueue({ me, showEmpty = false }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
 
@@ -262,7 +368,14 @@ export function StaffRequestQueue({ me }) {
   // the loan whose terms the Director is setting
   const [terms, setTerms] = useState(null);
 
-  if (!rows || rows.length === 0) return null;
+  if (!rows) return null;
+  if (rows.length === 0) {
+    return showEmpty ? (
+      <section style={card}>
+        <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
+          Nothing is waiting for you.</p>
+      </section>) : null;
+  }
 
   return (
     <section style={card}>
@@ -351,22 +464,8 @@ export function StaffRequestQueue({ me }) {
                       Decline</Btn>
                   </span>
                 )}
-                {isHr && r.status === "APPROVED" && r.kind !== "ADVANCE" && (
-                  <span style={{ display: "flex", gap: 6,
-                                 justifyContent: "flex-end" }}>
-                    {/* Paid or unpaid is HR's call — it is the one decision
-                        that changes what payroll does. */}
-                    <Btn variant="primary"
-                         style={{ fontSize: 12, padding: "3px 12px" }}
-                         onClick={() => act(r.id, "grant-leave",
-                                            { kind: "PAID" })}>
-                      Grant as paid</Btn>
-                    <Btn variant="secondary"
-                         style={{ fontSize: 12, padding: "3px 12px" }}
-                         onClick={() => act(r.id, "grant-leave",
-                                            { kind: "UNPAID" })}>
-                      Without pay</Btn>
-                  </span>
+                {isHr && r.status === "APPROVED" && isLeave(r) && (
+                  <GrantLeave r={r} act={act} />
                 )}
                 {isFin && r.status === "APPROVED"
                   && r.kind === "ADVANCE" && (

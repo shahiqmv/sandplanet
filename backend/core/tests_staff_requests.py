@@ -11,8 +11,9 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import (Document, Employee, EmployeeSiteAllocation,
-                     ManpowerCategory, Site, StaffRequest, User, WorkerLeave)
+from .models import (Attendance, Document, Employee, EmployeeSiteAllocation,
+                     ManpowerCategory, Notification, Site, StaffRequest, User,
+                     WorkerLeave)
 from .tests import make_user
 
 
@@ -210,6 +211,90 @@ class StaffRequestTests(TestCase):
         # ...and the existing machinery moved him to Head Office.
         self.assertTrue(EmployeeSiteAllocation.objects.filter(
             employee=self.staff, site=self.ho).exists())
+
+    def test_hr_is_told_when_leave_is_approved(self):
+        self._approved_leave()
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.hr, title__startswith="Leave to grant").exists())
+
+    def test_hr_sees_what_the_site_marked_before_granting(self):
+        req = self._approved_leave()
+        Attendance.objects.create(employee=self.staff, site=self.site,
+                                  day=req.from_date, remark="PRESENT")
+        self.client.force_authenticate(self.hr)
+        row = self.client.get("/api/v1/staff-requests/queue").data[0]
+        self.assertEqual(row["marked_at_work"],
+                         {"days": 1, "sites": [self.site.code]})
+
+    def test_granted_late_it_replaces_the_marks_and_the_overtime(self):
+        req = self._approved_leave()
+        rest = next(req.from_date + timedelta(days=n) for n in range(7)
+                    if (req.from_date + timedelta(days=n)).isoweekday() == 5)
+        StaffRequest.objects.filter(pk=req.pk).update(
+            to_date=rest + timedelta(days=1), from_date=rest - timedelta(days=1))
+        req.refresh_from_db()
+        worked = rest - timedelta(days=1)
+        Attendance.objects.create(employee=self.staff, site=self.site,
+                                  day=worked, remark="PRESENT", ot_approved=3)
+        Attendance.objects.create(employee=self.staff, site=self.site,
+                                  day=rest, remark="PRESENT")
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/staff-requests/{req.id}/grant-leave",
+                             {"kind": "PAID"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        a = Attendance.objects.get(employee=self.staff, day=worked)
+        self.assertEqual((a.remark, a.ot_approved, a.site),
+                         ("PAID_LEAVE", 0, self.ho))
+        # no Friday OT on top of the leave
+        self.assertFalse(Attendance.objects.filter(employee=self.staff,
+                                                   day=rest).exists())
+
+    def test_hr_can_correct_the_dates_to_those_actually_taken(self):
+        req = self._approved_leave()
+        start = req.from_date + timedelta(days=1)
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/staff-requests/{req.id}/grant-leave",
+                             {"kind": "UNPAID", "from_date": start.isoformat(),
+                              "to_date": req.to_date.isoformat()},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        req.refresh_from_db()
+        self.assertEqual(req.worker_leave.from_date, start)
+        self.assertNotEqual(req.from_date, start)
+
+    def test_hr_closes_leave_that_was_never_taken(self):
+        req = self._approved_leave()
+        url = f"/api/v1/staff-requests/{req.id}/leave-not-taken"
+        self.client.force_authenticate(self.fin)
+        self.assertEqual(self.client.post(url, {"note": "x"}, format="json")
+                         .status_code, 400)
+        self.client.force_authenticate(self.hr)
+        self.assertEqual(self.client.post(url, {}, format="json").status_code,
+                         400)
+        r = self.client.post(url, {"note": "Stayed for the pour"},
+                             format="json")
+        self.assertEqual(r.data["status"], "CANCELLED")
+        self.assertEqual(self.client.get("/api/v1/staff-requests/queue").data,
+                         [])
+        self.assertFalse(WorkerLeave.objects.exists())
+
+    def test_someone_at_head_office_stays_there_after_leave(self):
+        """They had no site to go back to; the return must not leave them on
+        no site at all."""
+        self.staff.site_allocations.all().delete()
+        EmployeeSiteAllocation.objects.create(employee=self.staff, site=self.ho,
+                                              from_date=date(2026, 1, 1))
+        req = self._approved_leave()
+        self.client.force_authenticate(self.hr)
+        self.client.post(f"/api/v1/staff-requests/{req.id}/grant-leave",
+                         {"kind": "PAID"}, format="json")
+        req.refresh_from_db()
+        back = req.worker_leave.to_date + timedelta(days=1)
+        r = self.client.post(f"/api/v1/leaves/{req.worker_leave_id}/return",
+                             {"on": back.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.staff.site_allocations.get(to_date__isnull=True)
+                         .site, self.ho)
 
     def test_leave_cannot_be_granted_before_the_director_approves(self):
         rid = self._post({"kind": "LEAVE_ANNUAL",
