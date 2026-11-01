@@ -152,7 +152,7 @@ export default function StaffCostReport({ employee, onClose }) {
                         <td style={td}>{p.run}<div style={{ fontSize: 11, color: "var(--muted)" }}>{p.site}</div></td>
                         <td style={td}>{p.period}{p.part_month && <span title="A payroll run covers the whole month; your range covers only part of it" style={{ color: "var(--amber-fg)" }}> *</span>}</td>
                         <td style={td}>{p.locked ? p.status : <Chip tone="warn">{p.status}</Chip>}{p.excluded && <div style={{ fontSize: 11 }}>excluded — settled in cash</div>}</td>
-                        <td style={num}>{n(p.days_worked).toLocaleString()}</td><td style={num}>{p.fridays_worked}</td><td style={num}>{n(p.ot_hours).toLocaleString()}</td>
+                        <td style={num}>{n(p.days_worked).toLocaleString()}</td><td style={num}>{n(p.fridays_worked)}</td><td style={num}>{n(p.ot_hours).toLocaleString()}</td>
                         <td style={num}>{money(p.earned_basic)}</td><td style={num}>{money(p.friday_pay)}</td><td style={num}>{money(p.ot_pay)}</td>
                         <td style={num}>{money(p.allowance)}</td><td style={num}>{money(p.gross)}</td><td style={num}>{money(p.deductions)}</td>
                         <td style={{ ...num, fontWeight: 700 }}>{p.currency} {money(p.net)}</td>
@@ -160,7 +160,7 @@ export default function StaffCostReport({ employee, onClose }) {
                     ))}
                     {rep.pay_totals.map((t) => (
                       <tr key={t.currency} style={{ background: "var(--sky-soft)", fontWeight: 700 }}>
-                        <td style={td} colSpan={4}>Total {t.currency}</td><td style={num}>{t.fridays}</td><td style={num}>{n(t.ot_hours).toLocaleString()}</td>
+                        <td style={td} colSpan={4}>Total {t.currency}</td><td style={num}>{n(t.fridays)}</td><td style={num}>{n(t.ot_hours).toLocaleString()}</td>
                         <td style={num}>{money(t.earned_basic)}</td><td style={num}>{money(t.friday_pay)}</td><td style={num}>{money(t.ot_pay)}</td>
                         <td style={num}>{money(t.allowance)}</td><td style={num}>{money(t.gross)}</td><td style={num}>{money(t.deductions)}</td>
                         <td style={num}>{t.currency} {money(t.net)}</td>
@@ -200,7 +200,7 @@ export default function StaffCostReport({ employee, onClose }) {
                         <td style={num}>{n(d.ot_requested) ? n(d.ot_requested) : ""}</td>
                         <td style={num}>{d.ot_approved != null ? n(d.ot_approved) : ""}</td>
                         <td style={td}>{d.pending ? <Chip tone="warn">awaiting approval</Chip>
-                          : d.rest && d.remark === "PRESENT" && n(d.ot_approved) ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>rest day — flat Friday pay</span> : null}</td>
+                          : d.rest && ["PRESENT", "HALF_DAY"].includes(d.remark) && n(d.ot_approved) ? <span style={{ fontSize: 11.5, color: "var(--muted)" }}>rest day — flat Friday pay</span> : null}</td>
                       </tr>
                     ))}</tbody>
                   </table>

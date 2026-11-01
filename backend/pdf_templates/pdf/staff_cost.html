@@ -82,13 +82,13 @@
   <tbody>
   {% for p in pay %}
   <tr><td>{{ p.run }}</td><td>{{ p.period }}{% if p.part_month %}*{% endif %}</td><td>{{ p.site }}</td><td>{{ p.status }}{% if p.excluded %} · excluded{% endif %}</td>
-      <td class="num">{{ p.days_worked|floatformat:"-1" }}</td><td class="num">{{ p.fridays_worked }}</td><td class="num">{{ p.ot_hours|floatformat:"-1" }}</td>
+      <td class="num">{{ p.days_worked|floatformat:"-1" }}</td><td class="num">{{ p.fridays_worked|floatformat:"-1" }}</td><td class="num">{{ p.ot_hours|floatformat:"-1" }}</td>
       <td class="num">{{ p.earned_basic|floatformat:"2g" }}</td><td class="num">{{ p.friday_pay|floatformat:"2g" }}</td><td class="num">{{ p.ot_pay|floatformat:"2g" }}</td>
       <td class="num">{{ p.allowance|floatformat:"2g" }}</td><td class="num">{{ p.gross|floatformat:"2g" }}</td><td class="num">{{ p.deductions|floatformat:"2g" }}</td>
       <td class="num">{{ p.currency }} {{ p.net|floatformat:"2g" }}</td></tr>
   {% endfor %}
   {% for t in pay_totals %}
-  <tr class="tot"><td colspan="4">Total {{ t.currency }}</td><td></td><td class="num">{{ t.fridays }}</td><td class="num">{{ t.ot_hours|floatformat:"-1" }}</td>
+  <tr class="tot"><td colspan="4">Total {{ t.currency }}</td><td></td><td class="num">{{ t.fridays|floatformat:"-1" }}</td><td class="num">{{ t.ot_hours|floatformat:"-1" }}</td>
       <td class="num">{{ t.earned_basic|floatformat:"2g" }}</td><td class="num">{{ t.friday_pay|floatformat:"2g" }}</td><td class="num">{{ t.ot_pay|floatformat:"2g" }}</td>
       <td class="num">{{ t.allowance|floatformat:"2g" }}</td><td class="num">{{ t.gross|floatformat:"2g" }}</td><td class="num">{{ t.deductions|floatformat:"2g" }}</td>
       <td class="num">{{ t.currency }} {{ t.net|floatformat:"2g" }}</td></tr>

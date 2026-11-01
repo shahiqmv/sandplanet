@@ -46,7 +46,7 @@
     <td>{{ r.nationality }}</td><td>{{ r.job_title }}</td>
     <td class="num">{{ r.f_basic_pay }}</td>
     <td class="num">{{ r.days_worked }}</td>
-    <td class="num">{% if r.fridays_worked %}{{ r.fridays_worked }}{% endif %}</td>
+    <td class="num">{% if r.fridays_worked %}{{ r.fridays_worked|floatformat:"-1" }}{% endif %}</td>
     <td class="num">{% if r.ot_hours %}{{ r.ot_hours }}{% endif %}</td>
     <td class="num">{{ r.f_earned_basic }}</td>
     <td class="num">{{ r.f_allowance }}</td>

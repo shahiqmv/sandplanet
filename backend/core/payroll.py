@@ -23,6 +23,9 @@ TWO = Decimal("0.01")
 ABSENT_MARKS = ("ABSENT", "LEAVE")
 PAID_MARKS = ("PRESENT", "PAID_LEAVE", "SICK")
 FRIDAY_OT_HOURS_DEFAULT = Decimal("12")
+# What a mark on a Friday is worth of the flat Friday pay. They sometimes work
+# very little of a Friday, and half a day earns half (owner 2026-11-01).
+FRIDAY_WORTH = {"PRESENT": Decimal("1"), "HALF_DAY": Decimal("0.5")}
 # A rest day is part of the monthly entitlement and is normally paid even
 # though nobody marks it — that is why the register shows a blank there. But a
 # worker who was absent most of the week has not earned it: EMP-0078 was paid
@@ -89,7 +92,8 @@ def compute_line(line, fri_hours=None):
     """Derive the money for one PayrollLine from its stored inputs.
 
     A worked Friday pays `friday_ot_hours` × the worker's OT rate (company
-    policy, owner 2026-08-12) — it no longer adds a day of basic. A worker
+    policy, owner 2026-08-12) — it no longer adds a day of basic. A Friday
+    marked HALF_DAY counts 0.5, so half that (owner 2026-11-01). A worker
     with no OT rate therefore earns nothing extra for a Friday, which is the
     owner's explicit choice. OT hours recorded ON a Friday are excluded from
     `ot_hours` at prefill so the day can't be paid twice."""
@@ -355,8 +359,9 @@ def month_prefill(employee, site, year, month, working_days, cap=None):
     ot_by, fri_by = {}, {}
     for a in Attendance.objects.filter(employee=employee, day__gte=start,
                                        day__lte=last):
-        if a.remark == "PRESENT" and a.day.isoweekday() not in week:
-            fri_by[a.site_id] = fri_by.get(a.site_id, 0) + 1
+        if a.remark in FRIDAY_WORTH and a.day.isoweekday() not in week:
+            fri_by[a.site_id] = (fri_by.get(a.site_id, Decimal("0"))
+                                 + FRIDAY_WORTH[a.remark])
             continue
         ot_by[a.site_id] = ot_by.get(a.site_id, Decimal("0")) + (
             a.ot_approved or 0)
@@ -379,7 +384,7 @@ def month_prefill(employee, site, year, month, working_days, cap=None):
         placed += share
         part = {"site": s.id, "days": f"{share.normalize():f}",
                 "ot_hours": f"{ot_by.get(s.id, Decimal('0')).normalize():f}",
-                "fridays": fri_by.get(s.id, 0)}
+                "fridays": float(fri_by.get(s.id, 0))}
         if share or ot_by.get(s.id) or fri_by.get(s.id):
             split.append(part)
     return days, ot, fridays, rest, split
@@ -518,7 +523,7 @@ def _attendance_prefill(employee, site, year, month, working_days,
     if cap is not None and cap < last:
         last = cap
 
-    fridays = 0
+    fridays = Decimal("0")
     ot = Decimal("0")
     marked = {}                      # day -> remark; the day loop below reads
                                      # this, so a blank day stays blank
@@ -535,8 +540,8 @@ def _attendance_prefill(employee, site, year, month, working_days,
             wk = a.day.isocalendar()[:2]
             absent_by_week[wk] = absent_by_week.get(wk, 0) + 1
         is_friday = a.day.isoweekday() not in work_week
-        if a.remark == "PRESENT" and is_friday:
-            fridays += 1
+        if is_friday and a.remark in FRIDAY_WORTH:
+            fridays += FRIDAY_WORTH[a.remark]
             continue        # the flat Friday OT covers the whole day (owner
                             # 2026-08-12) — never add its hours again
         ot += a.ot_approved or 0
@@ -1324,7 +1329,7 @@ def cost_split(line, money, gross):
         return {line.site_id: gross}
     tot_days = sum(Decimal(str(p.get("days") or 0)) for p in split)
     tot_ot = sum(Decimal(str(p.get("ot_hours") or 0)) for p in split)
-    tot_fri = sum(int(p.get("fridays") or 0) for p in split)
+    tot_fri = sum(Decimal(str(p.get("fridays") or 0)) for p in split)
     ot_pay, fri_pay = money["ot_pay"], money["friday_pay"]
     rest = gross - ot_pay - fri_pay             # basic + allowance + rounding
     out = {}
@@ -1335,7 +1340,7 @@ def cost_split(line, money, gross):
         if tot_ot:
             amt += ot_pay * Decimal(str(p.get("ot_hours") or 0)) / tot_ot
         if tot_fri:
-            amt += fri_pay * Decimal(int(p.get("fridays") or 0)) / tot_fri
+            amt += fri_pay * Decimal(str(p.get("fridays") or 0)) / tot_fri
         out[p["site"]] = out.get(p["site"], Decimal("0")) + q(amt)
     # what the shares could not place (no days anywhere, or rounding)
     remainder = gross - sum(out.values(), Decimal("0"))

@@ -3630,7 +3630,9 @@ class PayrollLine(models.Model):
     ot_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     days_worked = models.DecimalField(max_digits=5, decimal_places=1,
                                       default=0)
-    fridays_worked = models.IntegerField(default=0)
+    # Half a Friday counts 0.5: a day marked HALF_DAY earns half the flat pay.
+    fridays_worked = models.DecimalField(max_digits=4, decimal_places=1,
+                                         default=0)
     # The site PM can strike a worker's unworked rest days off their pay when
     # they were absent through the week and plainly did not earn them (owner
     # 2026-08-13, EMP-0078). Kept as a flag rather than a hand-edited day

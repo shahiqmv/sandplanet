@@ -984,7 +984,11 @@ def attendance_register(request):
                 else:
                     t["present"] += 1
             elif a.remark == "HALF_DAY":
-                t["half"] += 1
+                # half a Friday is half of the Friday pay, as payroll counts it
+                if d in rest_days:
+                    t["fridays"] += 0.5
+                else:
+                    t["half"] += 1
             elif a.remark == "ABSENT":
                 t["absent"] += 1
             elif a.remark == "SICK":
@@ -1709,6 +1713,75 @@ def overtime_rates(request):
             } if r else None
         out.append(row)
     return Response(out)
+
+
+@api_view(["GET"])
+def ot_register(request):
+    """The month's overtime, man by man and day by day: what was requested,
+    what the PM approved and by whom, and what is still waiting. Hours only —
+    the money is on the day's approval table (owner 2026-11-01)."""
+    import calendar
+    from .payroll import FRIDAY_WORTH
+    if request.user.role not in ("PM", "HO_HR", "ADMIN", "DIRECTOR", "PA",
+                                 "FINANCE", "SITE_ENGINEER", "SITE_ADMIN"):
+        return Response({"detail": "Not allowed."}, status=403)
+
+    def plain(v):
+        return f"{Decimal(v).normalize():f}"
+
+    try:
+        site = Site.objects.get(pk=request.GET.get("site"))
+        year, month = int(request.GET.get("year")), int(request.GET.get("month"))
+        ndays = calendar.monthrange(year, month)[1]
+    except (Site.DoesNotExist, TypeError, ValueError, calendar.IllegalMonthError):
+        return Response({"detail": "site, year and month required."},
+                        status=400)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not found."}, status=404)
+    week = set(site.working_days)
+    rest = {d for d in range(1, ndays + 1)
+            if date(year, month, d).isoweekday() not in week}
+    rows = {}
+    for a in (Attendance.objects
+              .filter(site=site, day__year=year, day__month=month)
+              .select_related("employee__job_category", "ot_approved_by",
+                              "sub_extra_approved_by")
+              .order_by("employee__emp_no", "day")):
+        e = a.employee
+        sub = e.engagement_type == Employee.Engagement.SUBCONTRACT
+        req = (a.sub_extra_hours if sub else a.ot_requested) or Decimal("0")
+        appr = a.sub_extra_approved if sub else a.ot_approved
+        if not req and appr is None:
+            continue
+        by = a.sub_extra_approved_by if sub else a.ot_approved_by
+        at = a.sub_extra_approved_at if sub else a.ot_approved_at
+        # A worked Friday earns the flat pay, and payroll never adds its hours
+        # on top. A gang's extra hours are valued whatever the day.
+        flat = (not sub and a.day.day in rest and a.remark in FRIDAY_WORTH)
+        row = rows.setdefault(e.id, {
+            "emp_no": e.emp_no, "full_name": e.full_name,
+            "category": e.job_category.name if e.job_category_id else "",
+            "is_subcontract": sub,
+            "subcontractor_id": e.subcontractor_id if sub else None,
+            "days": {}, "requested": Decimal("0"), "approved": Decimal("0"),
+            "waiting": Decimal("0")})
+        row["days"][str(a.day.day)] = {
+            "r": plain(req), "a": plain(appr) if appr is not None else None,
+            "by": by.full_name if by else "", "at": at, "flat": flat}
+        if flat:
+            continue
+        row["requested"] += req
+        if appr is None:
+            row["waiting"] += req
+        else:
+            row["approved"] += appr
+    return Response({
+        "site": site.code, "year": year, "month": month,
+        "days": [{"day": d, "dow": date(year, month, d).strftime("%a"),
+                  "rest": d in rest} for d in range(1, ndays + 1)],
+        "locked": TimesheetMonth.objects.filter(
+            site=site, year=year, month=month, status="LOCKED").exists(),
+        "rows": list(rows.values())})
 
 
 def _ot_rate_info(r):

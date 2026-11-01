@@ -400,7 +400,10 @@ def _site_attendance_totals(site, year, month):
         elif a.remark in ("ABSENT", "SICK", "LEAVE"):
             t["absences"] += 1
         elif a.remark == "HALF_DAY":
-            t["half_days"] += 1
+            if a.day.day in rest:
+                t["rest_day_work"] += 0.5
+            else:
+                t["half_days"] += 1
     return t
 
 
@@ -1037,8 +1040,6 @@ def payroll_line(request, pk):
                 val = None
             elif f == "remarks":
                 val = val or ""
-            elif f == "fridays_worked":
-                val = int(val or 0)
             else:
                 try:
                     val = Decimal(str(val or 0))

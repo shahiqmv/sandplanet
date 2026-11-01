@@ -5,6 +5,7 @@ import ShiftAllocation from "./ShiftAllocation.jsx";
 import { DayPicker, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 import OtApprovalPanel from "./OtApprovalPanel.jsx";
+import OtRegister from "./OtRegister.jsx";
 import Discussion from "./Discussion.jsx";
 
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
@@ -25,7 +26,7 @@ export default function AttendancePage({ site, me, onClose,
                                          initialMode = "day",
                                          initialDay = null,
                                          initialSub = null }) {
-  const [mode, setMode] = useState(initialMode);   // day | register | shifts | ot
+  const [mode, setMode] = useState(initialMode);   // day | register | shifts | ot | ot-month
   const [day, setDay] = useState(() =>
     initialDay || new Date().toISOString().slice(0, 10));
   const [grid, setGrid] = useState(null);
@@ -55,6 +56,8 @@ export default function AttendancePage({ site, me, onClose,
   const canEnter = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "DIRECTOR",
                     "ADMIN", "PA"].includes(me.role);
   const isPm = ["PM", "HO_HR", "ADMIN", "PA"].includes(me.role);
+  const seesOt = ["PM", "HO_HR", "ADMIN", "DIRECTOR", "PA", "FINANCE",
+                  "SITE_ENGINEER", "SITE_ADMIN"].includes(me.role);
 
   const load = useCallback(() => {
     setNotice(null);
@@ -229,6 +232,11 @@ export default function AttendancePage({ site, me, onClose,
                   style={mode === "ot" ? buttonStyle : ghostButton}>
             OT approval</button>
         )}
+        {seesOt && (
+          <button onClick={() => setMode("ot-month")}
+                  style={mode === "ot-month" ? buttonStyle : ghostButton}>
+            OT register</button>
+        )}
         {(hasShifts || mode === "shifts") && (
           <button onClick={() => setMode("shifts")}
                   style={mode === "shifts" ? buttonStyle : ghostButton}>
@@ -270,6 +278,18 @@ export default function AttendancePage({ site, me, onClose,
       <section style={card}>
         {header}
         <ShiftAllocation site={site} canEnter={canEnter} />
+      </section>
+    );
+  }
+
+  if (mode === "ot-month") {
+    return (
+      <section style={card}>
+        {header}
+        <OtRegister site={site} day={day}
+          narrow={{ q, setQ, subFilter, setSubFilter, showRow }}
+          onOpenDay={isPm
+            ? (d) => { setDay(d); setMode("ot"); } : undefined} />
       </section>
     );
   }
@@ -353,6 +373,11 @@ export default function AttendancePage({ site, me, onClose,
             <button onClick={() => setMode("ot")}
                     style={{ ...ghostButton, padding: "4px 12px",
                              fontSize: 13 }}>OT approval</button>
+          )}
+          {seesOt && (
+            <button onClick={() => setMode("ot-month")}
+                    style={{ ...ghostButton, padding: "4px 12px",
+                             fontSize: 13 }}>OT register</button>
           )}
           {hasShifts && (
             <button onClick={() => setMode("shifts")}
@@ -786,7 +811,7 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
         {data?.locked && <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
           🔒 Locked</span>}
         <span style={{ fontSize: 11.5, color: "var(--muted)", marginLeft: 8 }}>
-          P present · F Friday/rest worked · A absent · L leave (no pay) ·
+          P present · F Friday/rest worked · ½ half day (half the Friday pay on a Friday) · A absent · L leave (no pay) ·
           PL leave (paid) · S sick · ½ half
         </span>
         <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
