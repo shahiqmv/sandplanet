@@ -386,7 +386,7 @@ def withdraw_award(pr, row, quote_line_ids, reason, actor):
         # rebuild would also reset rows an order amendment has since moved.
         all_lines = list(quotation.lines.all())
         left = [ln for ln in all_lines if ln.awarded]
-        total = sum((ln.amount or Decimal("0")) for ln in left)
+        _gross, _off, total = quotation_money(quotation)
         gst = ((total * company_gst_rate() / Decimal("100"))
                .quantize(Decimal("0.01"))
                if quotation.gst_applicable else Decimal("0"))
@@ -726,6 +726,10 @@ def generate_pos_for_pr(pr, actor):
                     # what the order adds: none for a vendor not registered
                     "tax_rate": str(company_gst_rate()
                                     if quotation.gst_applicable else 0),
+                    # the supplier's discount on what this order buys,
+                    # before GST (owner 2026-11-01)
+                    "discount": str(_order_discount(quote_lines)),
+                    "discount_label": discount_text(quotation),
                     "expected_delivery": (pr.current_revision.payload or {})
                     .get("requested_delivery", ""),
                 },
@@ -870,6 +874,15 @@ def company_gst_rate():
         return Decimal("8")
 
 
+def _order_discount(quote_lines):
+    """The discount on the quote lines an order is cut from, per quotation."""
+    by_quote = {}
+    for ql in quote_lines:
+        by_quote.setdefault(ql.quotation_id, (ql.quotation, []))[1].append(ql)
+    return sum((quotation_money(q, qls)[1] for q, qls in by_quote.values()),
+               Decimal("0"))
+
+
 def quotation_is_credit(quotation):
     return "credit" in (quotation.payment_terms or "").lower()
 
@@ -939,6 +952,59 @@ def pr_currency(pr):
     return sorted(found)[0] if found else "MVR"
 
 
+# ===== A supplier's discount (owner 2026-11-01) =====
+#
+# Entered on the quotation as a % or a lump sum. It comes off the awarded
+# goods BEFORE GST — GST is charged on what is actually paid — so the PR
+# vendor row, the order, the payable, the voucher and the cost ledger all
+# carry the discounted value. A lump sum on a quote that is only partly
+# awarded is shared out in proportion: 500 off a 10,000 quote is 5% off
+# whatever is bought from it.
+
+def quotation_discount(quotation, awarded, quoted=None):
+    """The discount on `awarded` (the gross of the awarded lines), given the
+    whole quote's gross `quoted` (needed only for a lump sum)."""
+    awarded = Decimal(str(awarded or 0))
+    if awarded <= 0:
+        return Decimal("0")
+    pct = quotation.discount_percent or Decimal("0")
+    amount = quotation.discount_amount or Decimal("0")
+    if pct > 0:
+        off = awarded * pct / Decimal("100")
+    elif amount > 0:
+        if quoted is None:
+            quoted = sum((ln.amount or Decimal("0"))
+                         for ln in quotation.lines.all())
+        quoted = Decimal(str(quoted or 0))
+        off = amount if awarded >= quoted or quoted <= 0 \
+            else amount * awarded / quoted
+    else:
+        return Decimal("0")
+    return min(off.quantize(Decimal("0.01")), awarded)
+
+
+def quotation_money(quotation, lines=None):
+    """(gross, discount, net) of the awarded lines of a quotation — or of
+    `lines`, when given. Net is what the supplier is paid before GST."""
+    all_lines = list(quotation.lines.all())
+    chosen = [ln for ln in all_lines if ln.awarded] if lines is None \
+        else list(lines)
+    gross = sum((ln.amount or Decimal("0")) for ln in chosen)
+    quoted = sum((ln.amount or Decimal("0")) for ln in all_lines)
+    off = quotation_discount(quotation, gross, quoted)
+    return gross, off, gross - off
+
+
+def discount_text(quotation):
+    """'5% discount' / 'discount MVR 500.00' — for remarks and the PO."""
+    if quotation.discount_percent:
+        return f"{quotation.discount_percent.normalize():f}% discount"
+    if quotation.discount_amount:
+        return (f"discount {(quotation.currency or 'MVR').upper()} "
+                f"{quotation.discount_amount:,.2f}")
+    return ""
+
+
 def vendor_row_money(quotation, total):
     """How an awarded value is paid: the fields of the PR vendor row.
 
@@ -1004,7 +1070,8 @@ def sync_pr_vendor_rows(pr):
             .prefetch_related("lines"):
         all_lines = list(quotation.lines.all())
         awarded = [line for line in all_lines if line.awarded]
-        total = sum((line.amount or Decimal("0")) for line in awarded)
+        # the supplier's discount comes off before GST
+        _gross, off, total = quotation_money(quotation)
         gst = ((total * rate / Decimal("100")).quantize(Decimal("0.01"))
                if quotation.gst_applicable else Decimal("0"))
         is_credit = quotation_is_credit(quotation)
@@ -1020,7 +1087,9 @@ def sync_pr_vendor_rows(pr):
                          if is_credit else None),
             gst_amount=gst,
             currency=(quotation.currency or "MVR").upper(),
-            remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
+            remarks=(f"{len(awarded)}/{len(all_lines)} lines awarded"
+                     + (f" · less {discount_text(quotation)} "
+                        f"({off:,.2f})" if off else "")),
             **vendor_row_money(quotation, total),
         )
         ln = take(name, quotation.quote_ref)

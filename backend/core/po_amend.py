@@ -61,7 +61,11 @@ def _line_total(line):
 
 
 def revision_total(revision):
-    return sum((_line_total(ln) for ln in revision.lines.all()), 0)
+    """What the order is worth before GST: its lines, less the supplier's
+    discount it carries (owner 2026-11-01)."""
+    from decimal import Decimal
+    disc = Decimal(str((revision.payload or {}).get("discount") or 0))
+    return sum((_line_total(ln) for ln in revision.lines.all()), 0) - disc
 
 
 @transaction.atomic

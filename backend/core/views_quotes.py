@@ -112,6 +112,8 @@ class QuotationSerializer(serializers.ModelSerializer):
     lines = QuotationLineSerializer(many=True, read_only=True)
     supplier_name = serializers.CharField(source="supplier.name", read_only=True)
     total = serializers.SerializerMethodField()
+    discount = serializers.SerializerMethodField()
+    awarded = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
     terms_text = serializers.SerializerMethodField()
     rfq_ref = serializers.CharField(source="rfq.ref", read_only=True,
@@ -126,10 +128,23 @@ class QuotationSerializer(serializers.ModelSerializer):
         fields = ["id", "supplier", "supplier_name", "quote_ref", "quote_date",
                   "valid_until", "payment_terms", "advance_percent",
                   "terms_text", "gst_applicable", "currency", "notes",
-                  "file_url", "total", "lines", "rfq_ref"]
+                  "discount_percent", "discount_amount", "discount",
+                  "awarded", "file_url", "total", "lines", "rfq_ref"]
 
     def get_total(self, obj):
         return sum((line.amount or 0) for line in obj.lines.all())
+
+    def get_discount(self, obj):
+        """The supplier's discount on the whole quote, and the quote after
+        it — what to compare suppliers on (owner 2026-11-01)."""
+        from .procurement import discount_text, quotation_money
+        gross, off, net = quotation_money(obj, list(obj.lines.all()))
+        return {"text": discount_text(obj), "amount": off, "net": net}
+
+    def get_awarded(self, obj):
+        from .procurement import quotation_money
+        gross, off, net = quotation_money(obj)
+        return {"gross": gross, "discount": off, "net": net}
 
     def get_file_url(self, obj):
         if not obj.file:
@@ -158,6 +173,40 @@ def _can_edit_quotes(request, pr):
         return Response({"detail": "Quotations are editable until the PR is "
                                    "approved."}, status=400)
     return None
+
+
+def _discount(data, quotation):
+    """(percent, amount, error) for the discount entered on a quotation —
+    a % or a lump sum, never both; blank clears it."""
+    from decimal import Decimal, InvalidOperation
+
+    def num(v):
+        if v in (None, ""):
+            return None
+        try:
+            return Decimal(str(v))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError
+    try:
+        pct = num(data.get("discount_percent"))
+        amt = num(data.get("discount_amount"))
+    except ValueError:
+        return None, None, "The discount must be a number."
+    if pct is not None and amt is not None and pct and amt:
+        return None, None, "Give the discount as a % or an amount, not both."
+    if pct is not None and pct != 0:
+        if not 0 < pct < 100:
+            return None, None, "A discount % is more than 0 and under 100."
+        return pct.quantize(Decimal("0.01")), None, None
+    if amt is not None and amt != 0:
+        if amt < 0:
+            return None, None, "Enter the discount as a positive amount."
+        quoted = sum((ln.amount or 0) for ln in quotation.lines.all())
+        if quoted and amt >= quoted:
+            return None, None, ("The discount is the whole quote or more — "
+                                "check the amount.")
+        return None, amt.quantize(Decimal("0.01")), None
+    return None, None, None
 
 
 def _advance_percent(raw):
@@ -327,6 +376,18 @@ def quotation_detail(request, pk):
         if msg:
             return Response({"detail": msg}, status=400)
         quotation.currency = ccy
+    if "discount_percent" in request.data or "discount_amount" in request.data:
+        pct, amt, msg = _discount(request.data, quotation)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        was = (quotation.discount_percent, quotation.discount_amount)
+        quotation.discount_percent, quotation.discount_amount = pct, amt
+        if was != (pct, amt):
+            audit("quotation", quotation.id, "QUOTATION_DISCOUNT",
+                  actor=request.user,
+                  detail={"pr": quotation.document.ref,
+                          "supplier": quotation.supplier.name,
+                          "percent": str(pct or ""), "amount": str(amt or "")})
     try:
         with transaction.atomic():
             quotation.save()

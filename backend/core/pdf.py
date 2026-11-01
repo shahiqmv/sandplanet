@@ -867,10 +867,13 @@ def _po_context(document, revision):
     # payload's `currency` and `tax_rate` (owner 2026-07-16).
     currency = payload.get("currency") or "MVR"
     gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
-    gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
     # Order-level charges from an import PO (owner 2026-08-06): discount off the
-    # goods, supplier freight/handling, and a miscellaneous fee.
+    # goods, supplier freight/handling, and a miscellaneous fee. A local
+    # supplier's discount (owner 2026-11-01) rides the same key; it comes off
+    # before GST, so GST is on what is actually paid (an import PO carries no
+    # domestic GST, so its total is unchanged).
     disc = Decimal(str(payload.get("discount") or 0))
+    gst = ((untaxed - disc) * gst_rate / 100).quantize(Decimal("0.01"))
     freight = Decimal(str(payload.get("freight") or 0))
     misc = Decimal(str(payload.get("misc_fee") or 0))
     grand = untaxed + gst - disc + freight + misc
@@ -938,6 +941,7 @@ def _po_context(document, revision):
             "gst_rate": _fmt(float(gst_rate)),
             "gst": _money(gst),
             "has_discount": disc > 0, "discount": _money(disc),
+            "discount_label": payload.get("discount_label") or "Discount",
             "has_freight": freight > 0, "freight": _money(freight),
             "has_misc": misc > 0, "misc_fee": _money(misc),
             "total": _money(grand),

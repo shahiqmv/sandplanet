@@ -2429,6 +2429,14 @@ class Quotation(models.Model):
     # period (owner 2026-10-04).
     advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                           null=True, blank=True)
+    # A supplier's discount, as a % or a lump sum — one or the other (owner
+    # 2026-11-01). It comes off the awarded goods before GST, so GST is on
+    # what is actually paid; a lump sum on a quote only partly awarded is
+    # shared out in proportion (procurement.quotation_discount).
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                           null=True, blank=True)
+    discount_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                          null=True, blank=True)
     # This supplier charges GST — off for unregistered vendors (owner
     # 2026-07-13). Applied at the company rate on the awarded net.
     gst_applicable = models.BooleanField(default=True)

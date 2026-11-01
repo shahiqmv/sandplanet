@@ -111,11 +111,11 @@
 
 <table class="totals">
   <tr><td>Subtotal</td><td class="num">{{ currency }} {{ totals.untaxed }}</td></tr>
+  {% if totals.has_discount %}
+  <tr><td>Less {{ totals.discount_label }}</td><td class="num">&minus; {{ currency }} {{ totals.discount }}</td></tr>
+  {% endif %}
   {% if show_gst %}
   <tr><td>GST ({{ totals.gst_rate }}%)</td><td class="num">{{ currency }} {{ totals.gst }}</td></tr>
-  {% endif %}
-  {% if totals.has_discount %}
-  <tr><td>Discount</td><td class="num">&minus; {{ currency }} {{ totals.discount }}</td></tr>
   {% endif %}
   {% if totals.has_freight %}
   <tr><td>Freight / handling</td><td class="num">{{ currency }} {{ totals.freight }}</td></tr>

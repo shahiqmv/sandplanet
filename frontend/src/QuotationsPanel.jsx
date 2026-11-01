@@ -263,7 +263,7 @@ export function QuotationsSummary({ doc, me, onOpenWorkspace }) {
             <strong style={{ color: "var(--sp-navy)" }}>{q.supplier_name}</strong>
             <span style={{ fontSize: 12, color: "#5a6b78" }}>
               {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
-              {q.currency || "MVR"} {Number(q.total).toLocaleString()} ·
+              {" "}<QuoteMoney q={q} /> ·
               {" "}{matched}/{q.lines.length} lines matched ·
               {" "}{q.lines.filter((l) => l.awarded).length} awarded
             </span>
@@ -455,7 +455,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                   from {q.rfq_ref}</span>}
               <span style={{ fontSize: 12, color: "#5a6b78" }}>
                 {q.quote_ref}{q.terms_text && ` · ${q.terms_text}`} ·
-                net {q.currency || "MVR"} {Number(q.total).toLocaleString()}
+                {" "}<QuoteMoney q={q} />
               </span>
               {canEdit && (
                 <span style={{ fontSize: 12, display: "flex", gap: 4,
@@ -487,6 +487,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                          }}
                          style={{ ...inputStyle, width: 56, padding: "2px 4px",
                                   fontSize: 12 }} />%
+                  <DiscountInput q={q} save={(patch) => saveTerms(q, patch)} />
                 </span>
               )}
               <label style={{ fontSize: 12, display: "flex", gap: 4,
@@ -647,5 +648,58 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
         </div>
       )}
     </section>
+  );
+}
+
+// The quote's value, and after the supplier's discount when there is one —
+// what suppliers are compared on (owner 2026-11-01).
+function QuoteMoney({ q }) {
+  const ccy = q.currency || "MVR";
+  const fmt = (v) => Number(v || 0).toLocaleString(undefined,
+    { maximumFractionDigits: 2 });
+  const d = q.discount || {};
+  if (!Number(d.amount)) return <>{ccy} {fmt(q.total)}</>;
+  return (
+    <>
+      <span style={{ textDecoration: "line-through", color: "#8a97a1" }}>
+        {ccy} {fmt(q.total)}</span>
+      {" "}less {d.text} ={" "}
+      <b style={{ color: "var(--sp-navy)" }}>{ccy} {fmt(d.net)}</b>
+    </>
+  );
+}
+
+// A supplier's discount: a % or a lump sum, off the goods before GST.
+function DiscountInput({ q, save }) {
+  const [kind, setKind] = useState(q.discount_amount ? "amount" : "percent");
+  const current = kind === "amount" ? q.discount_amount : q.discount_percent;
+  return (
+    <span style={{ display: "inline-flex", gap: 4, alignItems: "center",
+                   marginLeft: 6 }}
+          title="The supplier's discount — comes off the goods before GST. A lump sum on a partly awarded quote is shared in proportion.">
+      discount
+      <input type="number" min="0" step="any"
+             defaultValue={current ? Number(current) : ""}
+             key={`disc-${q.id}-${kind}-${current}`}
+             placeholder="0"
+             onBlur={(e) => {
+               const now = e.target.value === "" ? null : Number(e.target.value);
+               const was = current ? Number(current) : null;
+               if (now === was) return;
+               save(kind === "amount"
+                 ? { discount_amount: e.target.value, discount_percent: "" }
+                 : { discount_percent: e.target.value, discount_amount: "" });
+             }}
+             style={{ ...inputStyle, width: 72, padding: "2px 4px",
+                      fontSize: 12 }} />
+      {/* switching only changes what is typed; the figure entered then
+          replaces the other kind — a quote never carries both */}
+      <select value={kind} onChange={(e) => setKind(e.target.value)}
+              style={{ ...inputStyle, width: 64, padding: "2px 4px",
+                       fontSize: 12 }}>
+        <option value="percent">%</option>
+        <option value="amount">{q.currency || "MVR"}</option>
+      </select>
+    </span>
   );
 }
