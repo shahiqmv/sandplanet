@@ -44,8 +44,11 @@ AUTHORISE_ROLES = ("SIGNATORY", "ADMIN")    # who authorises a loan
 LOAN_MAX_MONTHS = 24
 
 
-def _loan_check(emp, amount, months, exclude=None):
-    """Why a loan of `amount` over `months` can't be given, or None."""
+def _loan_check(emp, amount, months, show_pay=True):
+    """Why a loan of `amount` over `months` can't be given, or None. The
+    person asking sees their own pay in the message; the Director is not to
+    see pay at all (owner 2026-08-16, permissions.PAY_ROLES), so is told only
+    that it doesn't fit."""
     if amount is None or amount <= 0:
         return "Give the amount of the loan."
     if not months or months < 1 or months > LOAN_MAX_MONTHS:
@@ -54,9 +57,9 @@ def _loan_check(emp, amount, months, exclude=None):
     basic = emp.basic_pay or Decimal("0")
     instalment = (amount / months).quantize(Decimal("0.01"))
     if basic and instalment > basic:
+        pay = f" ({emp.currency} {basic:,.2f})" if show_pay else ""
         return (f"That is {emp.currency} {instalment:,.2f} a month — more than "
-                f"the monthly pay ({emp.currency} {basic:,.2f}). Spread it "
-                "over more months.")
+                f"the monthly pay{pay}. Spread it over more months.")
     return None
 
 
@@ -232,7 +235,9 @@ def decide(req, actor, approve, note="", terms=None):
         months = _months_int(terms.get("approved_months") or req.months)
         if amount is None:
             return "The approved amount is not a number."
-        err = _loan_check(req.employee, amount, months)
+        from .permissions import sees_pay
+        err = _loan_check(req.employee, amount, months,
+                          show_pay=sees_pay(actor))
         if err:
             return err
         fy, fm = next_month()

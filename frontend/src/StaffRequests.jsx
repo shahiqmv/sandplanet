@@ -250,8 +250,10 @@ export function StaffRequestQueue({ me }) {
   }, []);
   useEffect(load, [load]);
 
+  // resolves true when it went through, so a refused form can stay open
   const act = (id, path, body) => api(`/staff-requests/${id}/${path}`,
-    { method: "POST", body }).then(load).catch((e) => setError(e.message));
+    { method: "POST", body }).then(() => { setError(null); load(); return true; })
+    .catch((e) => { setError(e.message); return false; });
 
   const isPd = ["DIRECTOR", "ADMIN"].includes(me.role);
   const isHr = ["HO_HR", "ADMIN", "PA"].includes(me.role);
@@ -293,7 +295,8 @@ export function StaffRequestQueue({ me }) {
                   && terms?.id === r.id && (
                   <LoanTerms r={r} t={terms} setT={setTerms}
                     onApprove={(body) => act(r.id, "decide",
-                      { approve: true, ...body }).then(() => setTerms(null))}
+                      { approve: true, ...body })
+                      .then((ok) => ok && setTerms(null))}
                     onCancel={() => setTerms(null)} />
                 )}
                 {isSig && r.status === "APPROVED" && r.kind === "LOAN" && (

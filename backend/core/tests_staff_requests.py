@@ -421,6 +421,25 @@ class StaffLoanTests(StaffRequestTests):
         self.assertEqual(r.data["status"], "DECLINED")
         self.assertFalse(Document.objects.filter(doc_type="PYR").exists())
 
+    def test_the_director_is_never_shown_the_pay(self):
+        """The Director is deliberately outside the pay roles (owner
+        2026-08-16): the queue carries no salary, and a refusal doesn't
+        quote one. The Signatory does see it."""
+        rid = self._ask(amount="12000", months=6).data["id"]
+        self.client.force_authenticate(self.pd)
+        row = self.client.get("/api/v1/staff-requests/queue").data[0]
+        self.assertIsNone(row["basic_pay"])
+        r = self._as(self.pd, f"{rid}/decide", {
+            "approve": True, "approved_amount": "60000",
+            "approved_months": 2})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("more than the monthly pay", r.data["detail"])
+        self.assertNotIn("10,000", r.data["detail"])
+        self._as(self.pd, f"{rid}/decide", {"approve": True})
+        self.client.force_authenticate(self.sig)
+        row = self.client.get("/api/v1/staff-requests/queue").data[0]
+        self.assertEqual(row["basic_pay"], Decimal("10000.00"))
+
     def test_it_counts_on_the_my_tasks_badge(self):
         rid = self._ask().data["id"]
         self._as(self.pd, f"{rid}/decide", {"approve": True})

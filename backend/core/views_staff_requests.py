@@ -5,6 +5,7 @@ from rest_framework.response import Response
 
 from . import staff_requests as sr
 from .models import Document, StaffRequest
+from .permissions import sees_pay
 
 
 def _status_label(req):
@@ -32,8 +33,8 @@ def _row(req, me=None):
                         if req.first_year else None),
         # what the Director's form offers as the first deduction month
         "suggested_first_month": f"{ny}-{nm:02d}" if loan else None,
-        "basic_pay": (req.employee.basic_pay if loan and me
-                      and me.role in ("DIRECTOR", "SIGNATORY", "ADMIN")
+        # for judging a loan — never to the Director, who does not see pay
+        "basic_pay": (req.employee.basic_pay if loan and me and sees_pay(me)
                       else None),
         "authorised_by": (req.authorised_by.full_name if req.authorised_by_id
                           else ""),
