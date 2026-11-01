@@ -766,6 +766,18 @@ def submit_voucher(pv, actor):
     return None
 
 
+def _loan_not_before_this_month(doc):
+    """Payroll deducts a loan only from the month its payment is authorised
+    — an instalment month already gone by then is never taken, and the loan
+    is never fully recovered. A loan authorised late starts this month
+    instead (owner 2026-11-01, staff loans)."""
+    today = timezone.localdate()
+    for a in doc.salary_advances.filter(kind="LOAN"):
+        if (a.period_year, a.period_month) < (today.year, today.month):
+            a.period_year, a.period_month = today.year, today.month
+            a.save(update_fields=["period_year", "period_month"])
+
+
 def authorise_source(doc, actor):
     """Commit a requisition when its voucher line is approved — the logic
     that used to live in the per-document authorise action (§6C.2)."""
@@ -802,6 +814,7 @@ def authorise_source(doc, actor):
                          **cost_centre(pr))
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
+        _loan_not_before_this_month(doc)
         # An onboarding fee is settled at authorisation — that is when the
         # money leaves — so the stage it was holding clears here rather than
         # waiting on Finance's paid stamp (owner 2026-08-16).

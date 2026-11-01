@@ -9105,6 +9105,10 @@ class StaffRequest(models.Model):
 
     class Kind(models.TextChoices):
         ADVANCE = "ADVANCE", "Salary advance"
+        # Repaid over months from salary (owner 2026-11-01): the Director
+        # approves an amount and a term, a Signatory authorises it, and the
+        # payment request is raised for Finance with the loan on it.
+        LOAN = "LOAN", "Staff loan"
         LEAVE_ANNUAL = "LEAVE_ANNUAL", "Annual leave"
         LEAVE_EMERGENCY = "LEAVE_EMERGENCY", "Emergency leave"
 
@@ -9130,6 +9134,19 @@ class StaffRequest(models.Model):
     # no instalment count to carry.
     amount = models.DecimalField(max_digits=12, decimal_places=2, null=True,
                                  blank=True)
+    # Loan: what was asked (amount above + months), what the Director
+    # approved, from which payroll month it is deducted, and the Signatory's
+    # authorisation (owner 2026-11-01).
+    months = models.IntegerField(null=True, blank=True)
+    approved_amount = models.DecimalField(max_digits=12, decimal_places=2,
+                                          null=True, blank=True)
+    approved_months = models.IntegerField(null=True, blank=True)
+    first_year = models.IntegerField(null=True, blank=True)
+    first_month = models.IntegerField(null=True, blank=True)
+    authorised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    authorised_at = models.DateTimeField(null=True, blank=True)
+    authorisation_note = models.TextField(blank=True)
     # Leave.
     from_date = models.DateField(null=True, blank=True)
     to_date = models.DateField(null=True, blank=True)

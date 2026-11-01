@@ -328,3 +328,125 @@ class HeadOfficeStaffTests(TestCase):
         guessing in favour would open leave to the whole workforce."""
         u = self._person("EMP-H04", self.site)
         self.assertEqual(self._ask(u).status_code, 400)
+
+
+class StaffLoanTests(StaffRequestTests):
+    """A staff loan (owner 2026-11-01): asked with an amount, a purpose and
+    the months to repay over; the Director approves an amount and a term; a
+    Signatory authorises it, which raises the payment request with the loan
+    on it; payroll deducts it month by month."""
+
+    def setUp(self):
+        super().setUp()
+        self.sig = make_user("req_sig", User.Role.SIGNATORY)
+
+    def _ask(self, amount="12000", months=6, reason="House rent deposit"):
+        self.client.force_authenticate(self.me)
+        return self._post({"kind": "LOAN", "amount": amount,
+                           "months": months, "reason": reason})
+
+    def _as(self, user, path, body):
+        self.client.force_authenticate(user)
+        return self.client.post(f"/api/v1/staff-requests/{path}", body,
+                                format="json")
+
+    def test_asked_approved_with_new_terms_authorised_and_raised(self):
+        from . import payroll
+        r = self._ask()
+        self.assertEqual(r.status_code, 201, r.data)
+        rid = r.data["id"]
+        self.assertEqual((r.data["months"], r.data["status"]),
+                         (6, "SUBMITTED"))
+        # the Director gives less, over longer
+        y, m = timezone.localdate().year, timezone.localdate().month
+        ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+        d = self._as(self.pd, f"{rid}/decide", {
+            "approve": True, "approved_amount": "10000",
+            "approved_months": 10, "first_month": f"{ny}-{nm:02d}"})
+        self.assertEqual(d.status_code, 200, d.data)
+        self.assertEqual((d.data["status_label"], d.data["approved_amount"],
+                          d.data["approved_months"]),
+                         ("Waiting for the Signatory", Decimal("10000.00"),
+                          10))
+        # Finance has nothing to do yet; the Signatory does
+        self.client.force_authenticate(self.fin)
+        self.assertEqual(self.client.get("/api/v1/staff-requests/queue")
+                         .data, [])
+        self.client.force_authenticate(self.sig)
+        self.assertEqual([x["id"] for x in self.client.get(
+            "/api/v1/staff-requests/queue").data], [rid])
+        a = self._as(self.sig, f"{rid}/authorise", {"approve": True})
+        self.assertEqual(a.status_code, 200, a.data)
+        self.assertEqual(a.data["status_label"], "Authorised")
+        pyr = Document.objects.get(ref=a.data["pyr_ref"])
+        self.assertEqual(pyr.status, "DIRECTOR_APPROVED")
+        self.assertEqual(pyr.site, self.ho)
+        self.assertEqual(pyr.payment_request.amount_requested,
+                         Decimal("10000.00"))
+        self.assertEqual(pyr.payment_request.origin, "HR")
+        loan = pyr.salary_advances.get()
+        self.assertEqual((loan.kind, loan.amount, loan.months,
+                          loan.period_year, loan.period_month),
+                         ("LOAN", Decimal("10000.00"), 10, ny, nm))
+        # it waits for a voucher like any approved request
+        from . import vouchers
+        self.assertIn(pyr, vouchers.awaiting_voucher())
+        # once authorised on a voucher, payroll takes 1,000 a month
+        pyr.status = "AUTHORISED"
+        pyr.save(update_fields=["status"])
+        self.assertEqual(payroll.deductions_for(self.staff, ny, nm)["loan"],
+                         Decimal("1000.00"))
+
+    def test_the_monthly_instalment_must_fit_in_a_salary(self):
+        r = self._ask(amount="30000", months=2)       # 15,000 a month
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Spread it over more months", r.data["detail"])
+        self.assertEqual(self._ask(months=0).status_code, 400)
+        self.assertEqual(self._ask(months=30).status_code, 400)
+        self.assertEqual(self._ask(reason="").status_code, 400)
+
+    def test_one_loan_at_a_time(self):
+        self.assertEqual(self._ask().status_code, 201)
+        r = self._ask()
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already have a loan request", r.data["detail"])
+
+    def test_the_signatory_declines_with_a_reason(self):
+        rid = self._ask().data["id"]
+        self._as(self.pd, f"{rid}/decide", {"approve": True})
+        self.assertEqual(self._as(self.sig, f"{rid}/authorise",
+                                  {"approve": False}).status_code, 400)
+        r = self._as(self.sig, f"{rid}/authorise",
+                     {"approve": False, "note": "Not this quarter"})
+        self.assertEqual(r.data["status"], "DECLINED")
+        self.assertFalse(Document.objects.filter(doc_type="PYR").exists())
+
+    def test_it_counts_on_the_my_tasks_badge(self):
+        rid = self._ask().data["id"]
+        self._as(self.pd, f"{rid}/decide", {"approve": True})
+        self.client.force_authenticate(self.sig)
+        self.assertEqual(
+            self.client.get("/api/v1/approvals/pending").data["total"], 1)
+
+    def test_only_the_signatory_authorises(self):
+        rid = self._ask().data["id"]
+        self._as(self.pd, f"{rid}/decide", {"approve": True})
+        for who in (self.pd, self.fin, self.me):
+            self.assertEqual(self._as(who, f"{rid}/authorise",
+                                      {"approve": True}).status_code, 400)
+
+    def test_a_late_payment_moves_the_first_instalment_to_this_month(self):
+        from . import vouchers
+        rid = self._ask().data["id"]
+        self._as(self.pd, f"{rid}/decide", {"approve": True})
+        ref = self._as(self.sig, f"{rid}/authorise",
+                       {"approve": True}).data["pyr_ref"]
+        pyr = Document.objects.get(ref=ref)
+        loan = pyr.salary_advances.get()
+        loan.period_year, loan.period_month = 2020, 1     # long gone
+        loan.save()
+        vouchers._loan_not_before_this_month(pyr)
+        loan.refresh_from_db()
+        today = timezone.localdate()
+        self.assertEqual((loan.period_year, loan.period_month),
+                         (today.year, today.month))

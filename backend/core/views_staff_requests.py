@@ -7,11 +7,37 @@ from . import staff_requests as sr
 from .models import Document, StaffRequest
 
 
+def _status_label(req):
+    # a loan the Director approved still waits on the Signatory
+    if req.kind == StaffRequest.Kind.LOAN:
+        if req.status == StaffRequest.Status.APPROVED:
+            return "Waiting for the Signatory"
+        if req.status == StaffRequest.Status.DONE:
+            return "Authorised"
+    return req.get_status_display()
+
+
 def _row(req, me=None):
+    from .staff_requests import next_month
+    loan = req.kind == StaffRequest.Kind.LOAN
+    ny, nm = next_month()
     return {
         "id": req.id, "kind": req.kind,
         "kind_label": req.get_kind_display(),
-        "status": req.status, "status_label": req.get_status_display(),
+        "status": req.status, "status_label": _status_label(req),
+        "months": req.months,
+        "approved_amount": req.approved_amount,
+        "approved_months": req.approved_months,
+        "first_month": (f"{req.first_year}-{req.first_month:02d}"
+                        if req.first_year else None),
+        # what the Director's form offers as the first deduction month
+        "suggested_first_month": f"{ny}-{nm:02d}" if loan else None,
+        "basic_pay": (req.employee.basic_pay if loan and me
+                      and me.role in ("DIRECTOR", "SIGNATORY", "ADMIN")
+                      else None),
+        "authorised_by": (req.authorised_by.full_name if req.authorised_by_id
+                          else ""),
+        "authorised_at": req.authorised_at,
         "employee": {"emp_no": req.employee.emp_no,
                      "full_name": req.employee.full_name,
                      "id": req.employee_id},
@@ -71,9 +97,28 @@ def decide_request(request, pk):
         return Response({"detail": "Not found."}, status=404)
     err = sr.decide(req, request.user,
                     approve=bool(request.data.get("approve")),
-                    note=request.data.get("note", ""))
+                    note=request.data.get("note", ""),
+                    terms={k: request.data.get(k) for k in
+                           ("approved_amount", "approved_months",
+                            "first_month")})
     if err:
         return Response({"detail": err}, status=400)
+    return Response(_row(req, request.user))
+
+
+@api_view(["POST"])
+def authorise_request(request, pk):
+    """The Signatory authorises (or declines) a loan the Director approved;
+    authorising raises its payment request for Finance."""
+    req = _get(pk)
+    if req is None:
+        return Response({"detail": "Not found."}, status=404)
+    _doc, err = sr.authorise_loan(req, request.user,
+                                  approve=bool(request.data.get("approve")),
+                                  note=request.data.get("note", ""))
+    if err:
+        return Response({"detail": err}, status=400)
+    req.refresh_from_db()
     return Response(_row(req, request.user))
 
 

@@ -1327,8 +1327,13 @@ def pending_groups(user):
 @api_view(["GET"])
 def approvals_pending(request):
     groups = pending_groups(request.user)
+    # staff requests sit on My Tasks too, so they count on its badge — a
+    # Signatory lands on Payment Vouchers and would not see a loan waiting
+    # (owner 2026-11-01)
+    from .staff_requests import queue_for
     return Response({"groups": groups,
-                     "total": sum(len(g["items"]) for g in groups)})
+                     "total": sum(len(g["items"]) for g in groups)
+                     + queue_for(request.user).count()})
 
 
 @api_view(["GET"])

@@ -84,6 +84,8 @@ urlpatterns = [
          name="staff-request-decide"),
     path("staff-requests/<int:pk>/cancel", sreq_api.cancel_request,
          name="staff-request-cancel"),
+    path("staff-requests/<int:pk>/authorise", sreq_api.authorise_request,
+         name="staff-request-authorise"),
     path("staff-requests/<int:pk>/grant-leave", sreq_api.grant_request_leave,
          name="staff-request-grant-leave"),
     path("staff-requests/<int:pk>/link-payment",

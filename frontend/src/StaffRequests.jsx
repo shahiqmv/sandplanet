@@ -12,7 +12,27 @@ const money = (v, c) => v == null ? "—"
   : `${c || ""} ${Number(v).toLocaleString("en-US",
       { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
 
+const monthName = (ym) => ym ? new Date(`${ym}-01T00:00:00`)
+  .toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "";
+
 function What({ r }) {
+  if (r.kind === "LOAN") {
+    const changed = r.approved_amount != null && (
+      Number(r.approved_amount) !== Number(r.amount)
+      || r.approved_months !== r.months);
+    return (
+      <>Loan of <b>{money(r.amount, r.currency)}</b> over {r.months} months
+        {r.approved_amount != null && (
+          <div style={{ fontSize: 12, color: changed ? "var(--amber-fg)"
+            : "var(--muted)" }}>
+            {changed ? "Approved: " : ""}
+            {changed && <>{money(r.approved_amount, r.currency)} over{" "}
+              {r.approved_months} months · </>}
+            {money(Number(r.approved_amount) / r.approved_months,
+                   r.currency)} a month from {monthName(r.first_month)}
+          </div>)}
+      </>);
+  }
   return r.kind === "ADVANCE"
     ? <>Advance of <b>{money(r.amount, r.currency)}</b></>
     : <>{r.kind_label}, {nice(r.from_date)} – {nice(r.to_date)}{" "}
@@ -25,8 +45,8 @@ function What({ r }) {
 export function MyRequests({ isStaff }) {
   const [data, setData] = useState(null);
   const [kind, setKind] = useState("");
-  const [f, setF] = useState({ amount: "", from_date: "", to_date: "",
-                               reason: "" });
+  const [f, setF] = useState({ amount: "", months: "", from_date: "",
+                               to_date: "", reason: "" });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,8 +60,8 @@ export function MyRequests({ isStaff }) {
     setBusy(true); setError(null);
     try {
       await api("/me/requests", { method: "POST", body: { kind, ...f } });
-      setKind(""); setF({ amount: "", from_date: "", to_date: "",
-                          reason: "" });
+      setKind(""); setF({ amount: "", months: "", from_date: "",
+                          to_date: "", reason: "" });
       load();
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
@@ -66,6 +86,8 @@ export function MyRequests({ isStaff }) {
                       marginBottom: 16 }}>
           <Btn variant="navy" onClick={() => setKind("ADVANCE")}>
             Ask for an advance</Btn>
+          <Btn variant="navy" onClick={() => setKind("LOAN")}>
+            Ask for a loan</Btn>
           {isStaff && (
             <>
               <Btn variant="navy" onClick={() => setKind("LEAVE_ANNUAL")}>
@@ -81,6 +103,7 @@ export function MyRequests({ isStaff }) {
               style={{ ...card, marginBottom: 16, maxWidth: 460 }}>
           <b style={{ fontSize: 13.5, color: "var(--sp-navy)" }}>
             {kind === "ADVANCE" ? "Ask for a salary advance"
+              : kind === "LOAN" ? "Ask for a staff loan"
               : kind === "LEAVE_ANNUAL" ? "Request annual leave"
               : "Request emergency leave"}
           </b>
@@ -89,6 +112,11 @@ export function MyRequests({ isStaff }) {
             {kind === "ADVANCE"
               ? "Recovered in full from your next salary, so it can't be more "
                 + "than a month's pay. The Director decides, then Finance pays."
+              : kind === "LOAN"
+                ? "Repaid from your salary in equal monthly amounts over the "
+                  + "months you choose (up to 24). The Director approves the "
+                  + "amount and the months, a Signatory authorises it, then "
+                  + "Finance pays."
               : kind === "LEAVE_ANNUAL"
                 ? "Planned ahead — pick dates in the future. The Director "
                   + "decides, then HR arranges it."
@@ -102,6 +130,28 @@ export function MyRequests({ isStaff }) {
                        onChange={(e) => setF({ ...f, amount: e.target.value })}
                        style={inputStyle} />
               </label>
+            ) : kind === "LOAN" ? (
+              <>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <label style={{ ...fld, flex: 2 }}>Amount
+                    <input type="number" step="0.01" value={f.amount}
+                           onChange={(e) => setF({ ...f,
+                             amount: e.target.value })}
+                           style={inputStyle} />
+                  </label>
+                  <label style={{ ...fld, flex: 1 }}>Repay over (months)
+                    <input type="number" min="1" max="24" step="1"
+                           value={f.months}
+                           onChange={(e) => setF({ ...f,
+                             months: e.target.value })}
+                           style={inputStyle} />
+                  </label>
+                </div>
+                {Number(f.amount) > 0 && Number(f.months) > 0 && (
+                  <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                    About <b>{money(Number(f.amount) / Number(f.months))}</b>
+                    {" "}deducted from each salary.</span>)}
+              </>
             ) : (
               <div style={{ display: "flex", gap: 8 }}>
                 <label style={{ ...fld, flex: 1 }}>First day away
@@ -119,7 +169,8 @@ export function MyRequests({ isStaff }) {
               </div>
             )}
             <label style={fld}>
-              Reason{kind === "ADVANCE" ? "" : " (optional)"}
+              {kind === "LOAN" ? "Purpose" : "Reason"}
+              {kind === "ADVANCE" || kind === "LOAN" ? "" : " (optional)"}
               <input value={f.reason}
                      onChange={(e) => setF({ ...f, reason: e.target.value })}
                      style={inputStyle} />
@@ -132,6 +183,7 @@ export function MyRequests({ isStaff }) {
             <Btn variant="primary" type="submit"
                  disabled={busy || (kind === "ADVANCE"
                    ? !f.amount || !f.reason
+                   : kind === "LOAN" ? !f.amount || !f.months || !f.reason
                    : !f.from_date || !f.to_date)}>
               Send to the Director</Btn>
             <Btn variant="ghost" onClick={() => { setKind("");
@@ -162,7 +214,9 @@ export function MyRequests({ isStaff }) {
                 </td>
                 <td style={{ ...td, fontSize: 12.5,
                              color: "var(--muted)" }}>
-                  {r.pyr_ref ? `Paid on ${r.pyr_ref}`
+                  {r.kind === "LOAN" && r.pyr_ref
+                    ? `Authorised · payment ${r.pyr_ref}`
+                    : r.pyr_ref ? `Paid on ${r.pyr_ref}`
                     : r.leave_id ? "Leave arranged"
                     : r.decision_note || "—"}
                 </td>
@@ -202,6 +256,9 @@ export function StaffRequestQueue({ me }) {
   const isPd = ["DIRECTOR", "ADMIN"].includes(me.role);
   const isHr = ["HO_HR", "ADMIN", "PA"].includes(me.role);
   const isFin = ["FINANCE", "ADMIN"].includes(me.role);
+  const isSig = ["SIGNATORY", "ADMIN"].includes(me.role);
+  // the loan whose terms the Director is setting
+  const [terms, setTerms] = useState(null);
 
   if (!rows || rows.length === 0) return null;
 
@@ -212,6 +269,7 @@ export function StaffRequestQueue({ me }) {
         <span style={{ fontSize: 12.5, color: "var(--muted)",
                        fontWeight: 400, marginLeft: 8 }}>
           {isPd ? "waiting for your decision"
+            : isSig ? "staff loans to authorise"
             : isHr ? "approved — arrange the leave"
             : "approved — raise the payment"}
         </span>
@@ -231,14 +289,53 @@ export function StaffRequestQueue({ me }) {
               <td style={{ ...td, color: "var(--muted)" }}>
                 {r.reason || "—"}</td>
               <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                {isPd && r.status === "SUBMITTED" && (
+                {isPd && r.status === "SUBMITTED" && r.kind === "LOAN"
+                  && terms?.id === r.id && (
+                  <LoanTerms r={r} t={terms} setT={setTerms}
+                    onApprove={(body) => act(r.id, "decide",
+                      { approve: true, ...body }).then(() => setTerms(null))}
+                    onCancel={() => setTerms(null)} />
+                )}
+                {isSig && r.status === "APPROVED" && r.kind === "LOAN" && (
                   <span style={{ display: "flex", gap: 6,
                                  justifyContent: "flex-end" }}>
                     <Btn variant="primary"
                          style={{ fontSize: 12, padding: "3px 12px" }}
-                         onClick={() => act(r.id, "decide",
-                                            { approve: true })}>
-                      Approve</Btn>
+                         onClick={() => {
+                           if (window.confirm(`Authorise a loan of `
+                             + `${money(r.approved_amount, r.currency)} to `
+                             + `${r.employee.full_name}, repaid over `
+                             + `${r.approved_months} months? The payment `
+                             + "request goes to Finance.")) {
+                             act(r.id, "authorise", { approve: true });
+                           }
+                         }}>
+                      Authorise</Btn>
+                    <Btn variant="ghost"
+                         style={{ fontSize: 12, padding: "3px 12px",
+                                  color: "var(--red-fg)" }}
+                         onClick={() => {
+                           const note = window.prompt("Why are you "
+                             + "declining? (the requester sees this)");
+                           if (note) act(r.id, "authorise",
+                                         { approve: false, note });
+                         }}>
+                      Decline</Btn>
+                  </span>
+                )}
+                {isPd && r.status === "SUBMITTED" && terms?.id !== r.id && (
+                  <span style={{ display: "flex", gap: 6,
+                                 justifyContent: "flex-end" }}>
+                    <Btn variant="primary"
+                         style={{ fontSize: 12, padding: "3px 12px" }}
+                         onClick={() => (r.kind === "LOAN"
+                           ? setTerms({ id: r.id,
+                               approved_amount: String(Number(r.amount)),
+                               approved_months: String(r.months),
+                               first_month: r.suggested_first_month,
+                               note: "" })
+                           : act(r.id, "decide", { approve: true }))}>
+                      {r.kind === "LOAN" ? "Approve…" : "Approve"}</Btn>
                     <Btn variant="ghost"
                          style={{ fontSize: 12, padding: "3px 12px",
                                   color: "var(--red-fg)" }}
@@ -292,3 +389,54 @@ export function StaffRequestQueue({ me }) {
 
 const fld = { display: "flex", flexDirection: "column", gap: 3, fontSize: 12,
   color: "var(--muted)" };
+
+// The Director approves a loan with its terms: the amount and months (the
+// ask, unless changed) and the payroll month the first instalment comes off.
+function LoanTerms({ r, t, setT, onApprove, onCancel }) {
+  const amt = Number(t.approved_amount) || 0;
+  const n = Number(t.approved_months) || 0;
+  const each = amt > 0 && n > 0 ? amt / n : 0;
+  const tooBig = r.basic_pay && each > Number(r.basic_pay);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6,
+                  alignItems: "flex-end", textAlign: "left" }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                    justifyContent: "flex-end" }}>
+        <label style={fld}>Approved amount
+          <input type="number" step="0.01" value={t.approved_amount}
+                 onChange={(e) => setT({ ...t,
+                   approved_amount: e.target.value })}
+                 style={{ ...inputStyle, width: 120 }} /></label>
+        <label style={fld}>Months
+          <input type="number" min="1" max="24" value={t.approved_months}
+                 onChange={(e) => setT({ ...t,
+                   approved_months: e.target.value })}
+                 style={{ ...inputStyle, width: 70 }} /></label>
+        <label style={fld}>First deduction
+          <input type="month" value={t.first_month || ""}
+                 onChange={(e) => setT({ ...t, first_month: e.target.value })}
+                 style={{ ...inputStyle, width: 150 }} /></label>
+      </div>
+      <span style={{ fontSize: 12, color: tooBig ? "var(--red-fg)"
+        : "var(--muted)" }}>
+        {each ? `${money(each, r.currency)} a month` : ""}
+        {r.basic_pay ? ` · monthly pay ${money(r.basic_pay, r.currency)}` : ""}
+        {tooBig ? " — more than the pay; spread it over more months" : ""}
+      </span>
+      <input placeholder="Note (optional — the requester sees it)"
+             value={t.note} onChange={(e) => setT({ ...t, note: e.target.value })}
+             style={{ ...inputStyle, width: 330 }} />
+      <span style={{ display: "flex", gap: 6 }}>
+        <Btn variant="primary" style={{ fontSize: 12, padding: "3px 12px" }}
+             disabled={!each || tooBig}
+             onClick={() => onApprove({
+               approved_amount: t.approved_amount,
+               approved_months: t.approved_months,
+               first_month: t.first_month, note: t.note })}>
+          Approve and send to the Signatory</Btn>
+        <Btn variant="ghost" style={{ fontSize: 12, padding: "3px 12px" }}
+             onClick={onCancel}>Cancel</Btn>
+      </span>
+    </div>
+  );
+}
