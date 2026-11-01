@@ -3,7 +3,8 @@ import { api, apiUpload } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 
 // Site time-lapse (owner 2026-10-13). The Brinno cameras record to an SD
-// card; each week someone uploads that week's video here. A background job
+// card; each week someone uploads that week's video — or its daily clips —
+// here. A background job
 // converts it and joins it onto the camera's one continuous video — the
 // thing people watch. "Per week videos will be messy", so the weekly
 // uploads sit behind a toggle as the record of what went in.
@@ -47,12 +48,26 @@ const gb = (b) => (b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)} GB`
 const camText = (c) => [c.project_code || "whole site", c.location]
   .filter(Boolean).join(" · ");
 
+// The day a clip covers, from when the camera finished writing it — a
+// daily clip's file is dated the day it was recorded (copying off the card
+// keeps that date). Shown for checking, never trusted blind.
+const fileDay = (f) => {
+  const t = new Date(f.lastModified || Date.now());
+  const p = (n) => String(n).padStart(2, "0");
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
+};
+
+// Upload what is on the card: one video for the week, or one clip a day —
+// some cameras save a clip every 24 hours, seven a week (owner 2026-11-01).
+// Several files each become their own upload for their own day, sent one
+// after another, and the camera's video joins them in date order.
 function Upload({ d, onDone, onCancel }) {
   const [siteId, setSiteId] = useState(d.default_site_id || "");
   const [camId, setCamId] = useState("");
   const [from, setFrom] = useState(iso(d.last_week?.from));
   const [to, setTo] = useState(iso(d.last_week?.to));
-  const [file, setFile] = useState(null);
+  // [{file, day, state: "" | "sending" | "done" | "failed", error}]
+  const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const cams = (d.cameras || []).filter(
@@ -63,53 +78,108 @@ function Upload({ d, onDone, onCancel }) {
     setCamId(cams.length === 1 ? String(cams[0].id) : "");
   }, [siteId, cams.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [progress, setProgress] = useState(null);   // 0..1 while sending
-  const tooBig = file && file.size > MAX_BYTES;
+  const [progress, setProgress] = useState(null);   // {i, of, part} while sending
+  const daily = items.length > 1;
+  const tooBig = items.filter((it) => it.file.size > MAX_BYTES);
+  const today = new Date().toISOString().slice(0, 10);
 
-  // A week's video runs to gigabytes: it goes up in 8 MB pieces, each its
-  // own short request and retried on its own, so a dropped island link costs
-  // one piece rather than the whole upload (owner 2026-10-27, SJR's 2 GB).
+  function pick(list) {
+    const files = Array.from(list || []);
+    setError(null);
+    setItems(files.map((f) => ({ file: f, day: fileDay(f), state: "",
+                                  error: "" }))
+      .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1
+        : a.file.name.localeCompare(b.file.name))));
+  }
+  const setDay = (i, day) => setItems((xs) => xs.map((x, j) =>
+    (j === i ? { ...x, day } : x)));
+  const mark = (i, patch) => setItems((xs) => xs.map((x, j) =>
+    (j === i ? { ...x, ...patch } : x)));
+
+  // A video runs to gigabytes: it goes up in 8 MB pieces, each its own short
+  // request and retried on its own, so a dropped island link costs one piece
+  // rather than the whole upload (owner 2026-10-27, SJR's 2 GB).
+  async function sendOne(file, wf, wt, onPart) {
+    const start = await api("/timelapses/uploads", { method: "POST", body: {
+      camera_id: cam.id, week_from: wf, week_to: wt,
+      file_name: file.name, size: file.size } });
+    const size = start.chunk_size;
+    const n = Math.max(1, Math.ceil(file.size / size));
+    for (let i = 0; i < n; i += 1) {
+      const fd = new FormData();
+      fd.append("index", String(i));
+      fd.append("chunk", file.slice(i * size, Math.min(file.size, (i + 1) * size)), "chunk");
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          await apiUpload(`/timelapses/uploads/${start.token}/chunk`, fd, "POST", { quiet: true });
+          break;
+        } catch (e) {
+          if (attempt >= 5 || (e.status && e.status < 500)) throw e;
+          await new Promise((r) => setTimeout(r, 2000 * attempt));   // the link came back?
+        }
+      }
+      onPart((i + 1) / n);
+    }
+    await api(`/timelapses/uploads/${start.token}/finish`, { method: "POST", body: {} });
+  }
+
   async function send() {
-    if (!cam || !file) {
+    if (!cam || !items.length) {
       setError("Pick the camera and attach the video.");
       return;
     }
-    if (tooBig) return;
-    setBusy(true); setError(null); setProgress(0);
-    try {
-      const start = await api("/timelapses/uploads", { method: "POST", body: {
-        camera_id: cam.id, week_from: from, week_to: to,
-        file_name: file.name, size: file.size } });
-      const size = start.chunk_size;
-      const n = Math.max(1, Math.ceil(file.size / size));
-      for (let i = 0; i < n; i += 1) {
-        const fd = new FormData();
-        fd.append("index", String(i));
-        fd.append("chunk", file.slice(i * size, Math.min(file.size, (i + 1) * size)), "chunk");
-        for (let attempt = 1; ; attempt += 1) {
-          try {
-            await apiUpload(`/timelapses/uploads/${start.token}/chunk`, fd, "POST", { quiet: true });
-            break;
-          } catch (e) {
-            if (attempt >= 5 || (e.status && e.status < 500)) throw e;
-            await new Promise((r) => setTimeout(r, 2000 * attempt));   // the link came back?
-          }
-        }
-        setProgress((i + 1) / n);
+    if (tooBig.length) return;
+    if (daily && items.some((it) => !it.day || it.day > today)) {
+      setError("Give every clip the day it covers — none can be in the future.");
+      return;
+    }
+    setBusy(true); setError(null);
+    let failed = 0;
+    // in date order, so clips of the same day join in the order picked
+    for (let i = 0; i < items.length; i += 1) {
+      const it = items[i];
+      if (it.state === "done") continue;
+      mark(i, { state: "sending", error: "" });
+      setProgress({ i: i + 1, of: items.length, part: 0 });
+      try {
+        await sendOne(it.file, daily ? it.day : from, daily ? it.day : to,
+          (part) => setProgress({ i: i + 1, of: items.length, part }));
+        mark(i, { state: "done" });
+      } catch (e) {
+        failed += 1;
+        mark(i, { state: "failed", error: e.message });
+        if (!daily) setError(e.message);
       }
-      await api(`/timelapses/uploads/${start.token}/finish`, { method: "POST", body: {} });
-      onDone();
-    } catch (e) { setError(e.message); }
-    finally { setBusy(false); setProgress(null); }
+    }
+    setBusy(false); setProgress(null);
+    if (!failed) onDone();
+    else if (daily) {
+      setError(`${failed} of ${items.length} clips did not go up — press `
+        + "Upload again to send just those; the rest are saved.");
+    }
   }
+
+  const label = () => {
+    if (!busy) {
+      const left = items.filter((it) => it.state !== "done").length;
+      return daily && left < items.length ? `Upload the ${left} left`
+        : daily ? `Upload ${items.length} clips` : "Upload";
+    }
+    if (!progress || progress.part >= 1) return "Saving…";
+    const pct = `${Math.floor(progress.part * 100)}%`;
+    return daily ? `Clip ${progress.i} of ${progress.of} · ${pct}`
+      : `Uploading ${pct} of ${gb(items[0].file.size)}`;
+  };
 
   return (
     <div style={{ ...card, marginBottom: 14 }}>
-      <h3 style={{ marginTop: 0, fontSize: 15 }}>Upload this week's time-lapse</h3>
+      <h3 style={{ marginTop: 0, fontSize: 15 }}>Upload time-lapse from the camera's card</h3>
       <p style={{ fontSize: 12.5, color: "#667", marginTop: 0 }}>
-        Copy the video off the camera's card and upload it as it is — the AVI
-        or MP4 file, up to 4 GB. Keep this page open while it sends; it is
-        joined onto the camera's video within about ten minutes.</p>
+        Copy the video off the card and upload it as it is — the AVI or MP4,
+        up to 4 GB a file. A camera that saves one clip a day: pick all of
+        the week's clips together, and each goes in for its own day. Keep
+        this page open while it sends; it is joined onto the camera's video
+        within about ten minutes.</p>
       <div style={{ display: "grid", gap: 10,
                     gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))" }}>
         <SiteField d={d} siteId={siteId} setSiteId={setSiteId} />
@@ -120,20 +190,53 @@ function Upload({ d, onDone, onCancel }) {
             {cams.map((c) => <option key={c.id} value={c.id}>
               {c.name} — {camText(c)}</option>)}
           </select></label>
-        <label style={{ fontSize: 12.5 }}>Week from
-          <input type="date" style={inputStyle} value={from}
-            onChange={(e) => setFrom(e.target.value)} /></label>
-        <label style={{ fontSize: 12.5 }}>to
-          <input type="date" style={inputStyle} value={to}
-            onChange={(e) => setTo(e.target.value)} /></label>
-        <label style={{ fontSize: 12.5, gridColumn: "1 / -1" }}>Video
-          <input type="file" accept="video/*,.avi" style={{ display: "block", marginTop: 4 }}
-            onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null); }} />
-          {file && (
-            <span style={{ fontSize: 12, color: tooBig ? "#b00" : "#667" }}>
-              {gb(file.size)}{tooBig ? " — over the 4 GB limit: split the week on the card and upload it in two" : ""}</span>)}
+        <label style={{ fontSize: 12.5, gridColumn: "1 / -1" }}>Video — one file,
+          or every clip of the week
+          <input type="file" accept="video/*,.avi" multiple disabled={busy}
+            style={{ display: "block", marginTop: 4 }}
+            onChange={(e) => pick(e.target.files)} />
+          {items.length === 1 && (
+            <span style={{ fontSize: 12, color: tooBig.length ? "#b00" : "#667" }}>
+              {gb(items[0].file.size)}{tooBig.length ? " — over the 4 GB limit: split the week on the card and upload it in two" : ""}</span>)}
         </label>
+        {!daily && (<>
+          <label style={{ fontSize: 12.5 }}>Covers from
+            <input type="date" style={inputStyle} value={from}
+              onChange={(e) => setFrom(e.target.value)} /></label>
+          <label style={{ fontSize: 12.5 }}>to
+            <input type="date" style={inputStyle} value={to}
+              onChange={(e) => setTo(e.target.value)} /></label>
+        </>)}
       </div>
+      {daily && (
+        <div style={{ marginTop: 10, overflowX: "auto" }}>
+          <p style={{ fontSize: 12.5, color: "#556", margin: "0 0 6px" }}>
+            {items.length} clips — each dated by when the camera saved it.
+            Check the days; change any that are wrong.</p>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr><th style={th}>Clip</th><th style={th}>Size</th>
+              <th style={th}>Day it covers</th><th style={th}></th></tr></thead>
+            <tbody>
+              {items.map((it, i) => (
+                <tr key={`${it.file.name}-${i}`}>
+                  <td style={td}>{it.file.name}</td>
+                  <td style={{ ...td, color: it.file.size > MAX_BYTES ? "#b00" : undefined }}>
+                    {gb(it.file.size)}{it.file.size > MAX_BYTES ? " — over 4 GB" : ""}</td>
+                  <td style={td}>
+                    <input type="date" style={{ ...inputStyle, width: 150 }}
+                      value={it.day} max={today}
+                      disabled={busy || it.state === "done"}
+                      onChange={(e) => setDay(i, e.target.value)} /></td>
+                  <td style={{ ...td, fontSize: 12, whiteSpace: "nowrap" }}>
+                    {it.state === "done" && <span style={{ color: "#1d7a3a" }}>✓ saved</span>}
+                    {it.state === "sending" && <span style={{ color: "#556" }}>sending…</span>}
+                    {it.state === "failed" && (
+                      <span style={{ color: "#b00" }} title={it.error}>did not go up</span>)}
+                  </td>
+                </tr>))}
+            </tbody>
+          </table>
+        </div>)}
       {siteId && cams.length === 0 && (
         <p style={{ fontSize: 13, color: "#8a5200" }}>
           No time-lapse camera is registered for this site yet. The PM
@@ -145,10 +248,11 @@ function Upload({ d, onDone, onCancel }) {
                             : "Whole site"} · {cam.location}</p>)}
       {error && <p style={{ color: "#b00", fontSize: 13 }}>{error}</p>}
       <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-        <Btn variant="primary" disabled={busy || !cam || tooBig} onClick={send}>
-          {busy ? (progress == null || progress >= 1 ? "Saving…"
-            : `Uploading ${Math.floor(progress * 100)}% of ${gb(file.size)}`) : "Upload"}</Btn>
-        <Btn variant="ghost" onClick={onCancel}>Cancel</Btn>
+        <Btn variant="primary" disabled={busy || !cam || !items.length
+          || tooBig.length > 0} onClick={send}>{label()}</Btn>
+        <Btn variant="ghost" disabled={busy} onClick={() => {
+          if (items.some((it) => it.state === "done")) onDone(); else onCancel();
+        }}>{items.some((it) => it.state === "done") ? "Close" : "Cancel"}</Btn>
       </div>
     </div>
   );
@@ -302,7 +406,7 @@ export default function TimelapseSection() {
     catch (e) { setError(e.message); }
   }
   async function removeWeek(u) {
-    if (!window.confirm(`Remove the ${fmt(u.week_from)} week? The camera's video is rebuilt without it.`)) return;
+    if (!window.confirm(`Remove the upload for ${fmt(u.week_from)}${u.week_to !== u.week_from ? ` – ${fmt(u.week_to)}` : ""}? The camera's video is rebuilt without it.`)) return;
     try { await api(`/timelapses/${u.id}`, { method: "DELETE" }); load(); }
     catch (e) { setError(e.message); }
   }
@@ -315,11 +419,11 @@ export default function TimelapseSection() {
                     marginBottom: 10 }}>
         <h2 style={{ margin: 0 }}>Time-lapse</h2>
         <span style={{ color: "#667", fontSize: 13 }}>
-          one continuous video per camera, a week added at a time</span>
+          one continuous video per camera, each upload joined on in date order</span>
         <div style={{ flex: 1 }} />
         {d.can_upload && !uploading && (
           <Btn variant="primary" onClick={() => setUploading(true)}>
-            ⬆ Upload this week</Btn>)}
+            ⬆ Upload time-lapse</Btn>)}
       </div>
       {error && <p style={{ color: "#b00", fontSize: 13 }}>{error}</p>}
       {d.behind?.length > 0 && (
@@ -333,7 +437,7 @@ export default function TimelapseSection() {
       {reels.length === 0 && !uploading && (
         <div style={card}><p style={{ margin: 0, color: "#667" }}>
           No time-lapse yet. Register the camera under Cameras, then upload
-          the first week's video from its card.</p></div>)}
+          the first video from its card.</p></div>)}
 
       <div style={{ display: "grid", gap: 14,
                     gridTemplateColumns: "repeat(auto-fill,minmax(360px,1fr))" }}>
@@ -347,7 +451,7 @@ export default function TimelapseSection() {
                 ? <Chip tone="ok">on client portal</Chip>
                 : <Chip tone="info">internal</Chip>}
               {r.waiting > 0 && <Chip tone="warn">
-                {r.waiting} week{r.waiting > 1 ? "s" : ""} being joined</Chip>}
+                {r.waiting} upload{r.waiting > 1 ? "s" : ""} being joined</Chip>}
             </div>
             <div style={{ fontSize: 12.5, color: "#556", marginTop: 3 }}>
               {r.project_code ? `${r.project_code} — ${r.project_title}` : "Whole site"}
@@ -358,12 +462,12 @@ export default function TimelapseSection() {
                          background: "#000" }} />
             ) : (
               <p style={{ fontSize: 13, color: "#667" }}>
-                The first week is being prepared — it appears here within
+                The first upload is being prepared — it appears here within
                 about ten minutes.</p>
             )}
             {r.weeks > 0 && (
               <div style={{ fontSize: 12.5, color: "#667", marginTop: 6 }}>
-                {fmt(r.covers_from)} – {fmt(r.covers_to)} · {r.weeks} week
+                {fmt(r.covers_from)} – {fmt(r.covers_to)} · {r.weeks} upload
                 {r.weeks > 1 ? "s" : ""} · {mins(r.duration_s)}
               </div>)}
             {d.can_publish && r.play_url && (
@@ -383,25 +487,26 @@ export default function TimelapseSection() {
           <button onClick={() => setShowWeeks((v) => !v)}
             style={{ border: "none", background: "none", cursor: "pointer",
                      color: "var(--navy, #1f3a52)", fontSize: 13, padding: 0 }}>
-            {showWeeks ? "▾" : "▸"} Weekly uploads ({d.uploads.length})</button>
+            {showWeeks ? "▾" : "▸"} Uploads ({d.uploads.length})</button>
           {showWeeks && (
             <table style={{ width: "100%", borderCollapse: "collapse",
                             fontSize: 13, marginTop: 6 }}>
               <thead><tr>
-                <th style={th}>Week</th><th style={th}>Camera</th>
+                <th style={th}>Covers</th><th style={th}>Camera</th>
                 <th style={th}>Status</th><th style={th}>Uploaded by</th>
                 <th style={th}></th></tr></thead>
               <tbody>
                 {d.uploads.map((u) => (
                   <tr key={u.id}>
-                    <td style={td}>{fmt(u.week_from)} – {fmt(u.week_to)}</td>
+                    <td style={td}>{fmt(u.week_from)}
+                      {u.week_to !== u.week_from && ` – ${fmt(u.week_to)}`}</td>
                     <td style={td}>{u.site_code} · {u.camera_label}</td>
                     <td style={td}>{u.status_label}
                       {u.error && <div style={{ color: "#b00", fontSize: 11.5 }}>{u.error}</div>}</td>
                     <td style={td}>{u.uploaded_by}
                       <div style={{ color: "#889", fontSize: 11.5 }}>{fmt(u.created_at)}</div></td>
                     <td style={td}>
-                      <button onClick={() => removeWeek(u)} title="Remove this week"
+                      <button onClick={() => removeWeek(u)} title="Remove this upload"
                         style={{ border: "none", background: "none",
                                  cursor: "pointer", color: "#b00" }}>✕</button></td>
                   </tr>))}
