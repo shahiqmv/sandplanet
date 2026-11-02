@@ -2955,3 +2955,141 @@ class StoreIssueReceiptReversalTests(MrFromStoreTests):
         # once on a manifest it is no longer waiting
         d = self.client.get(f"/api/v1/store/loadable?site={self.site.id}").data
         self.assertEqual(d["count"], 0)
+
+
+class ChargesAfterPaymentTests(IprBase):
+    """IPR-015 (owner 2026-11-02): the supplier's statement added charges
+    after the order was paid in full. The total and the ledger moved, but
+    nothing could be paid: the paid schedule is locked and only a milestone
+    reaches Finance."""
+
+    def _paid_order(self, rows):
+        ref = self.create_and_authorise()         # 1000 USD @ 15
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": rows},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        for m in r.data["milestones"]:
+            self._pay(ref, m["id"], m["due_amount"])
+        return ref
+
+    def _pay(self, ref, mid, amount):
+        self.client.force_authenticate(self.ho)
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{mid}/due", {},
+                         format="json")
+        from .vouchers import (approve_voucher, create_voucher,
+                               submit_voucher)
+        pv, err = create_voucher([], self.finance, milestone_ids=[mid])
+        self.assertIsNone(err, err)
+        submit_voucher(pv, self.finance)
+        approve_voucher(pv, self.signatory)
+        self.client.force_authenticate(self.finance)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/{mid}/pay",
+                             {"mvr_paid": str(float(amount) * 15),
+                              "tt_ref": f"TT-{mid}"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def _add_charge(self, ref, misc="70"):
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"misc_fee": misc, "reason": "per the SOA"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        effect = r.data["charge_correction"]["effect"]
+        for who in (self.director, self.signatory):
+            self.client.force_authenticate(who)
+            r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                                 {"action": "approve"}, format="json")
+            self.assertEqual(r.status_code, 200, r.data)
+        self.client.force_authenticate(self.ho)
+        return effect
+
+    def test_charge_after_full_payment_becomes_a_payment_finance_can_make(self):
+        from decimal import Decimal
+        from .models import CostPosting
+        from django.db.models import Sum
+        ref = self._paid_order([
+            {"label": "Advance", "trigger": "ADVANCE", "fixed_amount": "300"},
+            {"label": "Balance", "trigger": "BALANCE", "fixed_amount": "700"}])
+        effect = self._add_charge(ref)
+        self.assertEqual(Decimal(str(effect["new_payment"])), Decimal("70.00"))
+        d = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertEqual(Decimal(str(d["unscheduled"])), Decimal("0"))
+        extra = d["milestones"][-1]
+        self.assertEqual((extra["label"], extra["status"]),
+                         ("Additional charges", "PENDING"))
+        self.assertEqual(Decimal(str(extra["due_amount"])), Decimal("70.00"))
+        # the two paid ones stand as they were
+        self.assertEqual([Decimal(str(m["due_amount"]))
+                          for m in d["milestones"][:2]],
+                         [Decimal("300.00"), Decimal("700.00")])
+        self.client.force_authenticate(self.finance)
+        reg = self.client.get("/api/v1/ipr/payments-due").data
+        self.assertEqual([(r["label"], r["band"]) for r in reg],
+                         [("Additional charges", "COMING")])
+        # and it pays through, leaving the ledger whole
+        self._pay(ref, extra["id"], "70")
+        posted = CostPosting.objects.filter(document__ref=ref, source="IPR")
+        total = {s: posted.filter(state=s).aggregate(t=Sum("amount"))["t"]
+                 for s in ("COMMITTED", "PAID")}
+        self.assertEqual(total["COMMITTED"], Decimal("16050.00"))
+        self.assertAlmostEqual(total["PAID"], total["COMMITTED"], delta=1)
+
+    def test_paid_percent_milestones_do_not_grow_with_the_total(self):
+        from decimal import Decimal
+        ref = self._paid_order([
+            {"label": "Advance", "trigger": "ADVANCE", "percent": "30"},
+            {"label": "Balance", "trigger": "BALANCE", "percent": "70"}])
+        self._add_charge(ref)
+        ms = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"]
+        self.assertEqual([Decimal(str(m["due_amount"])) for m in ms],
+                         [Decimal("300.00"), Decimal("700.00"), Decimal("70.00")])
+
+    def test_an_unpaid_fixed_balance_still_takes_it_with_no_new_payment(self):
+        from decimal import Decimal
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        ms = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "fixed_amount": "300"},
+            {"label": "Balance", "trigger": "BALANCE", "fixed_amount": "700"},
+        ]}, format="json").data["milestones"]
+        self._pay(ref, ms[0]["id"], "300")
+        effect = self._add_charge(ref)
+        self.assertEqual(Decimal(str(effect["new_payment"])), Decimal("0"))
+        after = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"]
+        self.assertEqual([Decimal(str(m["due_amount"])) for m in after],
+                         [Decimal("300.00"), Decimal("770.00")])
+
+    def _stranded(self):
+        """An order already in IPR-015's state: corrected before this fix."""
+        from decimal import Decimal
+        ref = self._paid_order([
+            {"label": "All", "trigger": "ADVANCE", "fixed_amount": "1000"}])
+        order = self._order(ref)
+        order.misc_fee = Decimal("70")
+        order.save(update_fields=["misc_fee"])
+        return ref
+
+    def test_an_order_left_short_is_flagged_and_can_be_scheduled(self):
+        from decimal import Decimal
+        ref = self._stranded()
+        self.client.force_authenticate(self.ho)
+        d = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertEqual(Decimal(str(d["unscheduled"])), Decimal("70.00"))
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/remainder",
+                             {"label": "SOA freight"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Decimal(str(r.data["unscheduled"])), Decimal("0"))
+        self.assertEqual(r.data["milestones"][-1]["label"], "SOA freight")
+        # nothing left to add, and adding twice does nothing
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/remainder", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._order(ref).milestones.count(), 2)
+
+    def test_only_head_office_schedules_it(self):
+        ref = self._stranded()
+        self.client.force_authenticate(self.finance)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/remainder", {},
+                             format="json")
+        self.assertEqual(r.status_code, 403)

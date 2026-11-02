@@ -362,6 +362,8 @@ urlpatterns = [
          name="ipr-correct-charges-decide"),
     path("ipr/<str:ref>/milestones", imports_api.ipr_set_milestones,
          name="ipr-set-milestones"),
+    path("ipr/<str:ref>/milestones/remainder",
+         imports_api.ipr_schedule_remainder, name="ipr-schedule-remainder"),
     path("ipr/<str:ref>/milestones/<int:pk>/due",
          imports_api.ipr_milestone_due, name="ipr-milestone-due"),
     path("ipr/<str:ref>/milestones/<int:pk>/pay",

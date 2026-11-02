@@ -945,9 +945,16 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
                     <strong>{money(m.to)}</strong></span>
                 ))}
               </div>
-            ) : (
+            ) : Number(corr.effect.new_payment) === 0 && (
               <div style={{ marginTop: 2, color: "#5a6b78" }}>
                 No milestone moves — nothing unpaid is left to absorb it.</div>
+            )}
+            {Number(corr.effect.new_payment) > 0 && (
+              <div style={{ marginTop: 2 }}>
+                Nothing unpaid can take the increase, so{" "}
+                <strong>{corr.effect.currency}{" "}
+                {money(corr.effect.new_payment)}</strong> goes on the schedule
+                as a new payment.</div>
             )}
             <div style={{ marginTop: 2, color: "#5a6b78" }}>
               Already paid or vouchered: {corr.effect.currency}{" "}
@@ -3101,6 +3108,10 @@ export function ImportTracker({ me, onOpenIpr, onOpenShipment }) {
                         background: o.milestones_paid === o.milestones_total
                           ? "#1a7f37" : "#e0a458" }} />
                     </div>
+                    {Number(o.unscheduled) > 0 && (
+                      <div style={{ fontSize: 11.5, fontWeight: 600,
+                                    color: "#b35900", marginTop: 4 }}>
+                        {o.currency} {money(o.unscheduled)} to schedule</div>)}
                   </>)}
             </div>
             <div style={{ flex: 1, minWidth: 150 }}>
@@ -3358,6 +3369,7 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
   const canManage = doc.can_manage;
   const canPay = doc.can_pay;
   const anyPaid = ms.some((m) => m.status === "PAID");
+  const [extraLabel, setExtraLabel] = useState("Additional charges");
 
   async function call(path, body) {
     onError(null);
@@ -3498,6 +3510,29 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                       setEditing(true); }}>
               Edit schedule</button>
           )}
+        </div>
+      )}
+
+      {/* The order is worth more than its schedule — charges that came after
+          it was paid (owner 2026-11-02, IPR-015). Only a milestone can be
+          paid, so until this is added nothing brings the money to Finance. */}
+      {Number(doc.unscheduled) > 0 && !editing && (
+        <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6,
+                      background: "#fff8e6", border: "1px solid #e8dcae",
+                      fontSize: 12.5 }}>
+          <strong>{ccy} {money(doc.unscheduled)}</strong> of this order is not
+          on the payment schedule, so it cannot be paid yet.
+          {canManage && doc.status === "AUTHORISED" && (
+            <div style={{ display: "flex", gap: 6, marginTop: 6,
+                          flexWrap: "wrap" }}>
+              <input value={extraLabel} maxLength={60} aria-label="Payment name"
+                style={{ ...inputStyle, flex: "1 1 200px" }}
+                onChange={(e) => setExtraLabel(e.target.value)} />
+              <button style={{ ...buttonStyle, padding: "4px 12px", fontSize: 13 }}
+                      onClick={() => call("/milestones/remainder",
+                        { label: extraLabel })}>
+                Add to schedule</button>
+            </div>)}
         </div>
       )}
 

@@ -281,6 +281,7 @@ def _serialize(doc, request):
     data["milestones"] = MilestoneSerializer(
         order.milestones.all(), many=True,
         context={"order_total": total}).data
+    data["unscheduled"] = ipr_svc.unscheduled(order, total)
     data["shipments"] = ShipmentSerializer(
         ipr_svc.order_shipments(order).prefetch_related("documents",
                                                         "receipts"),
@@ -1059,6 +1060,24 @@ def ipr_set_milestones(request, ref):
 
 
 @api_view(["POST"])
+def ipr_schedule_remainder(request, ref):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office sets the payment schedule."},
+                        status=403)
+    if doc.status != "AUTHORISED":
+        return Response({"detail": "Only an authorised order has payments to "
+                                   "add to."}, status=400)
+    _, msg = ipr_svc.schedule_remainder(doc.import_order, request.user,
+                                        request.data.get("label"))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
 def ipr_correct_charges(request, ref):
     """Purchasing proposes corrected commercial charges (discount / supplier
     freight / misc fee) on an AUTHORISED order — routed to the Director, then
@@ -1290,6 +1309,7 @@ def imports_tracker(request):
             "milestones_paid": sum(1 for m in milestones
                                    if m.status == "PAID"),
             "milestones_total": len(milestones),
+            "unscheduled": ipr_svc.unscheduled(o),
             "receipts": [{"ref": r.document.ref, "status": r.document.status}
                          for r in receipts],
             "created_by": d.created_by.full_name if d.created_by else None,
@@ -1337,7 +1357,12 @@ def ipr_list_create(request):
                     "paid": None, "total": total}
         paid = sum((m.due_amount(total) for m in ms if m.status == "PAID"),
                    Decimal("0"))
+        gap = ipr_svc.unscheduled(order, total)
+        to_schedule = {"label": f"{order.order_currency} {gap:,.2f} to schedule",
+                       "tone": "due", "paid": paid, "total": total}
         if all(m.status == "PAID" for m in ms):
+            if gap:
+                return to_schedule
             return {"label": "Paid in full", "tone": "ok",
                     "paid": paid, "total": total}
         nxt = next((m for m in ms if m.status == "DUE"), None)
@@ -1348,6 +1373,8 @@ def ipr_list_create(request):
         if nxt:
             return {"label": "TT ready", "tone": "due",
                     "paid": paid, "total": total}
+        if gap:
+            return to_schedule
         return {"label": ("Advance paid" if paid > 0 else "Nothing due yet"),
                 "tone": "part" if paid > 0 else "none",
                 "paid": paid, "total": total}
@@ -1681,10 +1708,13 @@ def ipr_brief(request, ref):
     } for m in order.milestones.all()]
     paid = sum(1 for m in milestones if m["status"] == "PAID")
     due = sum(1 for m in milestones if m["status"] == "DUE")
+    gap = ipr_svc.unscheduled(order)
     payment_word = ("No schedule yet" if not milestones
-                    else "Paid in full" if paid == len(milestones)
+                    else "Paid in full" if paid == len(milestones) and not gap
                     else f"{paid} of {len(milestones)} paid"
-                         + (f" · {due} due" if due else ""))
+                         + (f" · {due} due" if due else "")
+                         + (f" · {order.order_currency} {gap:,.2f} to schedule"
+                            if gap else ""))
 
     ships = []
     for s in ipr_svc.order_shipments(order):

@@ -764,7 +764,10 @@ def _apply_charge_correction(doc, corr, actor):
     _apply_new_lines(doc, order, corr, actor)
     _reconcile_committed(order, doc, actor)
     _revise_po_charges(doc, order, actor)
+    _freeze_settled_percents(order, old_total, actor)
     _rescale_fixed_milestones(order, old_total, actor)
+    if unscheduled(order):
+        schedule_remainder(order, actor)
     corr.status = "APPLIED"
     corr.decided_by, corr.decided_at = actor, timezone.now()
     corr.save(update_fields=["status", "decided_by", "decided_at"])
@@ -1008,6 +1011,74 @@ def rescaled_milestones(order, old_total, new_total):
     return out
 
 
+def unscheduled(order, total=None):
+    """What the order is worth beyond its payment schedule, in the order
+    currency. Nothing can pay this: the register, vouchers and TTs all run on
+    milestones. Zero where the two agree to the cent."""
+    total = ipr_order_total(order) if total is None else total
+    ms = list(order.milestones.all())
+    if not ms:
+        return ZERO
+    gap = (total - sum((m.due_amount(total) for m in ms), ZERO)).quantize(
+        Decimal("0.01"))
+    return gap if gap > Decimal("0.01") else ZERO
+
+
+def _left_unscheduled(order, old_total, new_total):
+    """What a correction would leave off the schedule: what the settled
+    milestones and the movable ones do not take up."""
+    ms = list(order.milestones.all())
+    if not ms:
+        return ZERO
+    moved = dict((m.id, amt) for m, amt
+                 in rescaled_milestones(order, old_total, new_total))
+    taken = ZERO
+    for m in ms:
+        if milestone_is_committed(m):
+            taken += m.due_amount(old_total)
+        else:
+            taken += moved.get(m.id, m.due_amount(new_total))
+    gap = (new_total - taken).quantize(Decimal("0.01"))
+    return gap if gap > Decimal("0.01") else ZERO
+
+
+def schedule_remainder(order, actor, label=""):
+    """Put what is off the schedule on it as one more payment (owner
+    2026-11-02, IPR-015): the supplier's statement came in after the order
+    was paid in full, and the paid schedule is locked, so the extra had no
+    way to be paid. It waits as Pending, then runs the same road as any
+    milestone: marked due, vouchered, TT. Returns (milestone, error)."""
+    from .models import ImportPaymentMilestone
+    gap = unscheduled(order)
+    if not gap:
+        return None, "Everything on this order is already on the schedule."
+    last = order.milestones.order_by("-seq").first()
+    m = ImportPaymentMilestone.objects.create(
+        order=order, seq=(last.seq if last else 0) + 1,
+        label=(label or "").strip()[:60] or "Additional charges",
+        trigger="BALANCE", fixed_amount=gap,
+        credit_days=order.supplier.credit_days if order.supplier_id else None)
+    audit("document", order.document_id, "IPR_MILESTONE_ADDED", actor=actor,
+          detail={"milestone": m.label, "amount": str(gap)})
+    return m, None
+
+
+def _freeze_settled_percents(order, old_total, actor):
+    """A percent milestone follows the order total, but money already paid or
+    vouchered does not. Left alone, a paid 30% would read as 30% of the new
+    total and the shortfall would hide inside a schedule that still sums."""
+    for m in order.milestones.filter(fixed_amount__isnull=True,
+                                     percent__isnull=False):
+        if milestone_is_committed(m):
+            m.fixed_amount = m.due_amount(old_total)
+            m.percent = None
+            m.save(update_fields=["fixed_amount", "percent"])
+            audit("document", order.document_id, "IPR_MILESTONE_RESCALED",
+                  actor=actor, detail={"milestone": m.id, "label": m.label,
+                                       "from": "percent",
+                                       "to": str(m.fixed_amount)})
+
+
 def correction_effect(order, corr):
     """What this correction does to the money, for the approver to read
     before they authorise it: the order total before and after, and every
@@ -1057,6 +1128,8 @@ def correction_effect(order, corr):
                         for m in order.milestones.all()
                         if milestone_is_committed(m)), ZERO),
         "milestones": moves,
+        # nothing unpaid can take it, so it becomes a payment of its own
+        "new_payment": _left_unscheduled(order, old_total, new_total),
         "amended": amended,
         "added": added,
         # A line the supplier added is not on any manifest until somebody
