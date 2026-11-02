@@ -291,7 +291,8 @@ def timelapse_upload_start(request):
         return Response({"detail": "Not your site."}, status=403)
     token, chunk, msg = tl.start_upload(cam, request.data, request.user)
     if msg:
-        return Response({"detail": msg}, status=400)
+        return Response({"detail": msg},
+                        status=409 if isinstance(msg, tl.Duplicate) else 400)
     return Response({"token": token, "chunk_size": chunk}, status=201)
 
 
@@ -321,7 +322,8 @@ def timelapse_upload_finish(request, token):
     from . import timelapse as tl
     clip, msg = tl.finish_upload(token, request.user)
     if msg:
-        return Response({"detail": msg}, status=400)
+        return Response({"detail": msg},
+                        status=409 if isinstance(msg, tl.Duplicate) else 400)
     return Response(tl.clip_dict(clip, request), status=201)
 
 

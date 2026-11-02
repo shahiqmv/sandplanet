@@ -10240,6 +10240,11 @@ class SiteTimelapse(models.Model):
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL,
                                     null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    # What the file off the card looked like before conversion, so the same
+    # clip is refused however it was renamed (owner 2026-11-02). Blank on
+    # uploads from before this existed.
+    source_fingerprint = models.CharField(max_length=64, blank=True,
+                                          default="", db_index=True)
 
     class Meta:
         ordering = ["-week_from", "-id"]

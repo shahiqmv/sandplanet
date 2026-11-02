@@ -57,6 +57,22 @@ const fileDay = (f) => {
   return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
 };
 
+// Who this file is, however it was renamed: its size and three samples, so a
+// 2 GB clip is known in a moment without reading all of it. The server refuses
+// a fingerprint it has already saved (owner 2026-11-02). Blank where the browser
+// cannot hash (plain http); name and dates are then all the server has to go on.
+async function fingerprint(file) {
+  if (!window.crypto?.subtle) return "";
+  const n = 4 * 1024 * 1024;
+  const mid = Math.max(0, Math.floor(file.size / 2) - n / 2);
+  const parts = [file.slice(0, n), file.slice(mid, mid + n),
+                 file.slice(Math.max(0, file.size - n))];
+  const bytes = await new Blob([String(file.size), ...parts]).arrayBuffer();
+  const hash = await window.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // Upload what is on the card: one video for the week, or one clip a day —
 // some cameras save a clip every 24 hours, seven a week (owner 2026-11-01).
 // Several files each become their own upload for their own day, sent one
@@ -66,7 +82,7 @@ function Upload({ d, onDone, onCancel }) {
   const [camId, setCamId] = useState("");
   const [from, setFrom] = useState(iso(d.last_week?.from));
   const [to, setTo] = useState(iso(d.last_week?.to));
-  // [{file, day, state: "" | "sending" | "done" | "failed", error}]
+  // [{file, day, state: "" | "sending" | "done" | "failed" | "repeat", error}]
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -79,6 +95,8 @@ function Upload({ d, onDone, onCancel }) {
   }, [siteId, cams.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [progress, setProgress] = useState(null);   // {i, of, part} while sending
+  // tells this page's own retry from a second page sending the same clip
+  const [pageId] = useState(() => Math.random().toString(36).slice(2));
   const daily = items.length > 1;
   const tooBig = items.filter((it) => it.file.size > MAX_BYTES);
   const today = new Date().toISOString().slice(0, 10);
@@ -102,7 +120,8 @@ function Upload({ d, onDone, onCancel }) {
   async function sendOne(file, wf, wt, onPart) {
     const start = await api("/timelapses/uploads", { method: "POST", body: {
       camera_id: cam.id, week_from: wf, week_to: wt,
-      file_name: file.name, size: file.size } });
+      file_name: file.name, size: file.size,
+      fingerprint: await fingerprint(file), client: pageId } });
     const size = start.chunk_size;
     const n = Math.max(1, Math.ceil(file.size / size));
     for (let i = 0; i < n; i += 1) {
@@ -135,10 +154,11 @@ function Upload({ d, onDone, onCancel }) {
     }
     setBusy(true); setError(null);
     let failed = 0;
+    const repeats = [];
     // in date order, so clips of the same day join in the order picked
     for (let i = 0; i < items.length; i += 1) {
       const it = items[i];
-      if (it.state === "done") continue;
+      if (it.state === "done" || it.state === "repeat") continue;
       mark(i, { state: "sending", error: "" });
       setProgress({ i: i + 1, of: items.length, part: 0 });
       try {
@@ -146,13 +166,20 @@ function Upload({ d, onDone, onCancel }) {
           (part) => setProgress({ i: i + 1, of: items.length, part }));
         mark(i, { state: "done" });
       } catch (e) {
+        // already here: nothing to retry, and the reason must stay on screen
+        if (e.status === 409) {
+          repeats.push(e.message);
+          mark(i, { state: "repeat", error: e.message });
+          continue;
+        }
         failed += 1;
         mark(i, { state: "failed", error: e.message });
         if (!daily) setError(e.message);
       }
     }
     setBusy(false); setProgress(null);
-    if (!failed) onDone();
+    if (repeats.length) setError(repeats.join(" "));
+    else if (!failed) onDone();
     else if (daily) {
       setError(`${failed} of ${items.length} clips did not go up — press `
         + "Upload again to send just those; the rest are saved.");
@@ -161,7 +188,8 @@ function Upload({ d, onDone, onCancel }) {
 
   const label = () => {
     if (!busy) {
-      const left = items.filter((it) => it.state !== "done").length;
+      const left = items.filter((it) => it.state !== "done"
+        && it.state !== "repeat").length;
       return daily && left < items.length ? `Upload the ${left} left`
         : daily ? `Upload ${items.length} clips` : "Upload";
     }
@@ -230,6 +258,8 @@ function Upload({ d, onDone, onCancel }) {
                   <td style={{ ...td, fontSize: 12, whiteSpace: "nowrap" }}>
                     {it.state === "done" && <span style={{ color: "#1d7a3a" }}>✓ saved</span>}
                     {it.state === "sending" && <span style={{ color: "#556" }}>sending…</span>}
+                    {it.state === "repeat" && (
+                      <span style={{ color: "#8a6d00" }} title={it.error}>not sent — a repeat</span>)}
                     {it.state === "failed" && (
                       <span style={{ color: "#b00" }} title={it.error}>did not go up</span>)}
                   </td>

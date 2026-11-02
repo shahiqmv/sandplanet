@@ -1,10 +1,13 @@
 """Site time-lapse: weekly uploads joined into one video per camera
 (owner 2026-10-13: "per week video will be messy")."""
+import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from datetime import date
+from unittest import mock
 
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -309,12 +312,8 @@ class ShareLinkTests(TestCase):
                          .status_code, 404)
 
 
-class ChunkedUploadTests(TestCase):
-    """A week's video sent in pieces (owner 2026-10-27): SJR's 2 GB file
-    never arrived in one request — the server gave up and answered 500."""
-
+class UploadCase(TestCase):
     def setUp(self):
-        from unittest import mock
         self.site = Site.objects.create(code="SJR", name="Soneva Jani",
                                         status=Site.Status.ACTIVE)
         self.se = make_user("ch_se", User.Role.SITE_ENGINEER, site=self.site)
@@ -342,6 +341,11 @@ class ChunkedUploadTests(TestCase):
         return self.c.post(f"/api/v1/timelapses/uploads/{token}/chunk",
                            {"index": i, "chunk": SimpleUploadedFile("c", data)},
                            format="multipart")
+
+
+class ChunkedUploadTests(UploadCase):
+    """A week's video sent in pieces (owner 2026-10-27): SJR's 2 GB file
+    never arrived in one request — the server gave up and answered 500."""
 
     def test_pieces_in_any_order_make_the_week(self):
         data = b"0123456789"                      # 3 pieces of 4, 4, 2
@@ -383,3 +387,83 @@ class ChunkedUploadTests(TestCase):
                          .status_code, 400)
         # a token that is not one of ours never becomes a path
         self.assertEqual(self.chunk("..evil", 0, b"x").status_code, 400)
+
+
+class RepeatClipTests(UploadCase):
+    """The same clip is refused before a byte is sent (owner 2026-11-02):
+    SJR's first five uploads were two videos, sent over a poor link."""
+    FP = "a" * 64
+
+    def send(self, data=b"0123", **extra):
+        r = self.start(len(data), **extra)
+        self.assertEqual(r.status_code, 201, r.data)
+        token = r.data["token"]
+        self.chunk(token, 0, data)
+        return self.c.post(f"/api/v1/timelapses/uploads/{token}/finish", {},
+                           format="json")
+
+    def test_renamed_and_redated_is_still_the_same_clip(self):
+        self.assertEqual(self.send(fingerprint=self.FP).status_code, 201)
+        r = self.start(4, name="18_10.MP4", fingerprint=self.FP,
+                       week_from="2026-10-18", week_to="2026-10-18")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("18_10.MP4 is already on Brinno north", r.data["detail"])
+        self.assertEqual(os.listdir(tl.UPLOAD_DIR), [])
+
+    def test_a_different_clip_with_the_same_name_goes_in(self):
+        self.assertEqual(self.send(fingerprint=self.FP).status_code, 201)
+        self.assertEqual(self.send(fingerprint="b" * 64).status_code, 201)
+        self.assertEqual(SiteTimelapse.objects.count(), 2)
+
+    def test_deleting_the_upload_lets_it_go_in_again(self):
+        self.send(fingerprint=self.FP)
+        tl.remove(SiteTimelapse.objects.get(), self.se)
+        self.assertEqual(self.send(fingerprint=self.FP).status_code, 201)
+
+    def test_a_failed_conversion_says_to_delete_it_first(self):
+        self.send(fingerprint=self.FP)
+        SiteTimelapse.objects.update(status="FAILED")
+        r = self.start(4, fingerprint=self.FP)
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("failed to convert", r.data["detail"])
+
+    def test_uploads_before_the_fingerprint_go_by_name_and_dates(self):
+        self.send()                                    # no fingerprint on file
+        self.assertEqual(self.start(4, fingerprint=self.FP).status_code, 409)
+        self.assertEqual(self.start(4, name="other.mp4", fingerprint=self.FP)
+                         .status_code, 201)
+
+    def test_a_second_page_is_refused_while_the_first_is_sending(self):
+        self.assertEqual(self.start(4, fingerprint=self.FP, client="one")
+                         .status_code, 201)
+        r = self.start(4, fingerprint=self.FP, client="two")
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("being sent right now", r.data["detail"])
+        self.assertEqual(len(os.listdir(tl.UPLOAD_DIR)), 1)
+
+    def test_the_same_page_may_try_again_and_replaces_its_last_try(self):
+        first = self.start(4, fingerprint=self.FP, client="one").data["token"]
+        second = self.start(4, fingerprint=self.FP, client="one").data["token"]
+        self.assertEqual(os.listdir(tl.UPLOAD_DIR), [second])
+        self.assertNotEqual(first, second)
+
+    def test_a_try_gone_quiet_gives_way_to_a_new_page(self):
+        token = self.start(4, fingerprint=self.FP, client="one").data["token"]
+        old = time.time() - tl.ACTIVE_SECONDS - 5
+        os.utime(os.path.join(tl.UPLOAD_DIR, token), (old, old))
+        self.assertEqual(self.start(4, fingerprint=self.FP, client="two")
+                         .status_code, 201)
+        self.assertNotIn(token, os.listdir(tl.UPLOAD_DIR))
+
+    def test_two_copies_racing_to_finish_save_only_one(self):
+        with mock.patch.object(tl, "_being_sent", return_value=None):
+            a = self.start(4, fingerprint=self.FP, client="one").data["token"]
+            b = self.start(4, fingerprint=self.FP, client="two").data["token"]
+        statuses = []
+        for token in (a, b):
+            self.chunk(token, 0, b"0123")
+            statuses.append(self.c.post(
+                f"/api/v1/timelapses/uploads/{token}/finish", {},
+                format="json").status_code)
+        self.assertEqual(statuses, [201, 409])
+        self.assertEqual(SiteTimelapse.objects.count(), 1)

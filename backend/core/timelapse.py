@@ -11,6 +11,7 @@ still lands in its place. "Per week videos will be messy" — so the reel is
 what people watch; the weekly pieces are only its inputs.
 """
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -35,6 +36,7 @@ CAMERA_ROLES = PUBLISH_ROLES
 # 4 GB keeps the final save to storage inside the server's time limit.
 MAX_BYTES = 4 * 1024 * 1024 * 1024
 CHUNK_BYTES = 8 * 1024 * 1024           # under the proxy's 16 MB buffer
+ACTIVE_SECONDS = 10 * 60                # one piece on a poor link, generously
 UPLOAD_DIR = os.environ.get("TIMELAPSE_UPLOAD_DIR") or os.path.join(
     tempfile.gettempdir(), "planet-timelapse-uploads")
 ALLOWED = (".mp4", ".m4v", ".mov", ".webm", ".avi", ".mkv")
@@ -161,9 +163,15 @@ def create(camera, data, upload, actor):
         return None, "The week ends before it starts."
     if wf > date.today():
         return None, "That week has not started yet."
+    fingerprint = _clean_fingerprint(data.get("fingerprint"))
+    # the same clip may have gone in while this copy was on its way
+    dup = _already_uploaded(camera, upload.name, wf, wt, fingerprint)
+    if dup:
+        return None, dup
     clip = SiteTimelapse.objects.create(
         site=site, camera=camera, week_from=wf, week_to=wt,
         file=upload, file_name=upload.name[:200], size_bytes=upload.size,
+        source_fingerprint=fingerprint,
         note=(data.get("note") or "")[:300].strip(), uploaded_by=actor)
     reel, _ = TimelapseReel.objects.get_or_create(camera=camera,
                                                   defaults={"site": site})
@@ -172,6 +180,80 @@ def create(camera, data, upload, actor):
           detail={"site": site.code, "camera": camera.name,
                   "week": f"{wf}..{wt}"})
     return clip, None
+
+
+# ---- refusing the same clip twice (owner 2026-11-02) --------------------------
+# SJR's first five uploads were two videos: one clip three times, one twice,
+# and two more copies on their way at once from two open pages. Each cost the
+# site hours of its link, and every copy played in the client's video. The
+# browser fingerprints the file before sending a byte, so a repeat costs
+# nothing, whatever it has been renamed to.
+
+
+class Duplicate(str):
+    """A refusal because the clip is already here, not because it is wrong."""
+
+
+def _clean_fingerprint(raw):
+    raw = str(raw or "").strip().lower()
+    return raw if re.fullmatch(r"[0-9a-f]{64}", raw) else ""
+
+
+def _already_uploaded(camera, name, wf, wt, fingerprint):
+    """Why this clip is a repeat of a saved upload, or None. Uploads from
+    before the fingerprint have only their name and dates to go on."""
+    clip = None
+    if fingerprint:
+        clip = SiteTimelapse.objects.filter(
+            source_fingerprint=fingerprint).select_related(
+            "camera", "uploaded_by").first()
+    if clip is None:
+        older = SiteTimelapse.objects.filter(
+            camera=camera, file_name__iexact=(name or "").strip()[:200],
+            week_from=wf, week_to=wt).select_related("camera", "uploaded_by")
+        if fingerprint:
+            older = older.filter(source_fingerprint="")
+        clip = older.first()
+    if clip is None:
+        return None
+    who = clip.uploaded_by.full_name if clip.uploaded_by else "someone"
+    days = (f"{clip.week_from:%d %b}" if clip.week_from == clip.week_to
+            else f"{clip.week_from:%d %b} to {clip.week_to:%d %b}")
+    if clip.status == "FAILED":
+        return Duplicate(
+            f"{name}: this clip's earlier upload on {clip.camera.name} "
+            f"({days}) failed to convert. Delete that upload, then send "
+            "this one again.")
+    return Duplicate(
+        f"{name} is already on {clip.camera.name} ({days}), uploaded by "
+        f"{who} on {timezone.localtime(clip.created_at):%d %b}. It was not "
+        "sent again.")
+
+
+def _being_sent(fingerprint, client):
+    """Why this clip is already on its way, or None. This page's own earlier
+    try, and any try gone quiet, give way to the new one and are cleared."""
+    import json
+    import time
+    if not fingerprint or not os.path.isdir(UPLOAD_DIR):
+        return None
+    for name in os.listdir(UPLOAD_DIR):
+        path = os.path.join(UPLOAD_DIR, name)
+        try:
+            with open(os.path.join(path, "meta.json")) as f:
+                meta = json.load(f)
+            quiet = time.time() - os.path.getmtime(path)
+        except (OSError, ValueError):
+            continue
+        if meta.get("fingerprint") != fingerprint:
+            continue
+        if meta.get("client") != client and quiet < ACTIVE_SECONDS:
+            return Duplicate(
+                f"{meta.get('file_name')} is being sent right now, from "
+                "another page or device. Let that one finish; if it has "
+                "been closed, try again in ten minutes.")
+        shutil.rmtree(path, ignore_errors=True)
+    return None
 
 
 # ---- uploading a big video in chunks (owner 2026-10-27) ----------------------
@@ -234,6 +316,15 @@ def start_upload(camera, data, actor):
     err = _validate(camera, data, name, size, actor)
     if err:
         return None, None, err
+    fingerprint = _clean_fingerprint(data.get("fingerprint"))
+    client = str(data.get("client") or "")[:64]
+    err = (_already_uploaded(camera, name,
+                             date.fromisoformat(str(data["week_from"])[:10]),
+                             date.fromisoformat(str(data["week_to"])[:10]),
+                             fingerprint)
+           or _being_sent(fingerprint, client))
+    if err:
+        return None, None, err
     _sweep()
     token = uuid.uuid4().hex
     d = os.path.join(UPLOAD_DIR, token)
@@ -243,6 +334,7 @@ def start_upload(camera, data, actor):
                    "chunk": CHUNK_BYTES, "user_id": actor.id,
                    "week_from": str(data.get("week_from"))[:10],
                    "week_to": str(data.get("week_to"))[:10],
+                   "fingerprint": fingerprint, "client": client,
                    "note": (data.get("note") or "")[:300]}, f)
     return token, CHUNK_BYTES, None
 
