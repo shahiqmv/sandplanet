@@ -8,6 +8,7 @@ from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse
 
+from . import timelapse as tl
 from .pdf import company_info
 from .models import TimelapseReel
 
@@ -35,7 +36,9 @@ def shared_reel(request, token):
         "location": cam.location, "reel": reel,
         "contractor": company_info()["legal_name"],
         "video_url": (reverse("timelapse-share-video", args=[token])
-                      if reel.file else None)}))
+                      if reel.file else None),
+        "download_url": (reverse("timelapse-share-download", args=[token])
+                         if reel.file else None)}))
 
 
 def shared_reel_video(request, token):
@@ -45,5 +48,15 @@ def shared_reel_video(request, token):
     if not reel.file:
         raise Http404
     resp = _private(HttpResponseRedirect(reel.file.url))
+    resp["Cache-Control"] = "no-store"
+    return resp
+
+
+def shared_reel_download(request, token):
+    """The same video to save, addressed the same way."""
+    reel = _resolve(token)
+    if not reel.file:
+        raise Http404
+    resp = _private(HttpResponseRedirect(tl.download_url(reel, request)))
     resp["Cache-Control"] = "no-store"
     return resp

@@ -289,6 +289,8 @@ class ShareLinkTests(TestCase):
         self.assertEqual(self.public("/share/timelapse/nope").status_code, 404)
         self.assertEqual(self.public("/share/timelapse/nope/video").status_code,
                          404)
+        self.assertEqual(
+            self.public("/share/timelapse/nope/download").status_code, 404)
 
     def test_the_site_team_cannot_create_or_see_it(self):
         self.share()
@@ -302,6 +304,46 @@ class ShareLinkTests(TestCase):
         self.share()
         self.reel.refresh_from_db()
         self.assertNotIn("share_url", tl.reel_dict(self.reel, staff=False))
+
+    def test_the_link_page_offers_the_video_to_download(self):
+        token = self.share().data["share_url"].rsplit("/", 1)[1]
+        page = self.public(f"/share/timelapse/{token}")
+        self.assertContains(page, f"/share/timelapse/{token}/download")
+        self.assertContains(page, "Download video")
+        got = self.public(f"/share/timelapse/{token}/download")
+        self.assertEqual(got.status_code, 302)
+        self.assertIn("reel", got["Location"])
+        self.assertEqual(got["X-Robots-Tag"], "noindex, nofollow")
+
+    def test_stopping_the_link_ends_the_download_too(self):
+        token = self.share().data["share_url"].rsplit("/", 1)[1]
+        self.share(on=False)
+        self.assertEqual(
+            self.public(f"/share/timelapse/{token}/download").status_code, 404)
+
+    def test_the_store_is_told_to_send_a_named_attachment(self):
+        from storages.backends.s3 import S3Storage
+        from urllib.parse import parse_qs, urlparse
+        from . import timelapse as tl
+        self.cam.location = "Facing North Jetty"
+        self.reel.covers_to = date(2026, 10, 23)
+        self.reel.file.storage = S3Storage(
+            access_key="test", secret_key="test", bucket_name="b",
+            region_name="sgp1",
+            endpoint_url="https://sgp1.digitaloceanspaces.com")
+        query = parse_qs(urlparse(tl.download_url(self.reel)).query)
+        self.assertEqual(
+            query["response-content-disposition"],
+            ['attachment; filename="link-site-facing-north-jetty-time-lapse'
+             '-to-2026-10-23.mp4"'])
+        self.assertEqual(query["X-Amz-Expires"], ["21600"])
+
+    def test_the_client_portal_payload_can_download_and_staff_is_unchanged(self):
+        from . import timelapse as tl
+        for_client = tl.reel_dict(self.reel, staff=False)
+        self.assertIn("reel", for_client["download_url"])
+        self.assertIn("size_bytes", for_client)
+        self.assertNotIn("download_url", tl.reel_dict(self.reel))
 
     def test_a_link_with_no_video_yet_says_so(self):
         self.reel.file.delete()

@@ -43,6 +43,9 @@ urlpatterns = [
     # Public, token-gated view of one camera's time-lapse (no login).
     path("share/timelapse/<str:token>", views_timelapse_public.shared_reel,
          name="timelapse-share"),
+    path("share/timelapse/<str:token>/download",
+         views_timelapse_public.shared_reel_download,
+         name="timelapse-share-download"),
     path("share/timelapse/<str:token>/video",
          views_timelapse_public.shared_reel_video,
          name="timelapse-share-video"),

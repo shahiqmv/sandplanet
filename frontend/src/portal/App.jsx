@@ -1017,6 +1017,14 @@ function CamerasPage({ site, onBack }) {
                    style={{ width: "100%", borderRadius: 8, background: "#000" }} />
             {t.covers_from && <p className="muted" style={{ margin: "6px 0 0" }}>
               {fmt(t.covers_from)} – {fmt(t.covers_to)} · {t.weeks} week{t.weeks > 1 ? "s" : ""}</p>}
+            {t.download_url && (
+              <p style={{ margin: "8px 0 0", display: "flex", flexWrap: "wrap",
+                          alignItems: "center", gap: "6px 10px" }}>
+                <a className="btn" href={t.download_url} download
+                   style={{ textDecoration: "none" }}>Download video</a>
+                {t.size_bytes > 0 && <span className="muted" style={{ fontSize: 12.5 }}>
+                  {fileSize(t.size_bytes)} · MP4. A large file can take a while on a slow connection.</span>}
+              </p>)}
           </div>
         ))}
       </div>
@@ -1025,6 +1033,11 @@ function CamerasPage({ site, onBack }) {
 }
 
 /* -------------------------------------------------------------- site portal */
+function fileSize(bytes) {
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+    : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MB`;
+}
+
 function SitePortal({ id, single, onBackToSites }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);

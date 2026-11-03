@@ -22,6 +22,7 @@ from decimal import Decimal
 from django.core.files import File
 from django.db import transaction
 from django.utils import timezone
+from django.utils.text import slugify
 
 from .audit import audit
 from .models import Project, SiteTimelapse, TimelapseCamera, TimelapseReel
@@ -37,6 +38,7 @@ CAMERA_ROLES = PUBLISH_ROLES
 MAX_BYTES = 4 * 1024 * 1024 * 1024
 CHUNK_BYTES = 8 * 1024 * 1024           # under the proxy's 16 MB buffer
 ACTIVE_SECONDS = 10 * 60                # one piece on a poor link, generously
+DOWNLOAD_SECONDS = 6 * 60 * 60
 UPLOAD_DIR = os.environ.get("TIMELAPSE_UPLOAD_DIR") or os.path.join(
     tempfile.gettempdir(), "planet-timelapse-uploads")
 ALLOWED = (".mp4", ".m4v", ".mov", ".webm", ".avi", ".mkv")
@@ -591,6 +593,27 @@ def _url(f, request):
     return request.build_absolute_uri(u) if request and u.startswith("/") else u
 
 
+def download_url(reel, request=None):
+    """The camera's video as a file to save, not a page to play (owner
+    2026-11-03). The store is told to send it as an attachment under a name
+    the client can recognise; signed for hours because a slow link may need
+    to resume. Local storage has no such option, and the page's `download`
+    attribute does the same job there."""
+    if not reel.file:
+        return None
+    storage = reel.file.storage
+    if not hasattr(storage, "bucket_name"):
+        return _url(reel.file, request)
+    cam = reel.camera
+    title = cam.project.title if cam.project_id else reel.site.name
+    name = slugify(f"{title} {cam.location}")[:80].strip("-") or "site"
+    upto = f"-to-{reel.covers_to}" if reel.covers_to else ""
+    return storage.url(reel.file.name, parameters={
+        "ResponseContentDisposition":
+            f'attachment; filename="{name}-time-lapse{upto}.mp4"',
+    }, expire=DOWNLOAD_SECONDS)
+
+
 def set_share_link(reel, on, actor):
     """Turn the public link on or off. A link is minted fresh each time, so one
     that was stopped never works again."""
@@ -626,6 +649,9 @@ def reel_dict(reel, request=None, staff=True):
                         and request.user.role in PUBLISH_ROLES else None),
                     "size_mb": (round(reel.size_bytes / 1048576, 1)
                                 if reel.size_bytes else None)})
+    else:
+        out.update({"download_url": download_url(reel, request),
+                    "size_bytes": reel.size_bytes})
     return out
 
 
