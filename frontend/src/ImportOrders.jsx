@@ -945,16 +945,16 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
                     <strong>{money(m.to)}</strong></span>
                 ))}
               </div>
-            ) : Number(corr.effect.new_payment) === 0 && (
+            ) : Number(corr.effect.to_schedule) === 0 && (
               <div style={{ marginTop: 2, color: "#5a6b78" }}>
                 No milestone moves — nothing unpaid is left to absorb it.</div>
             )}
-            {Number(corr.effect.new_payment) > 0 && (
+            {Number(corr.effect.to_schedule) > 0 && (
               <div style={{ marginTop: 2 }}>
                 Nothing unpaid can take the increase, so{" "}
                 <strong>{corr.effect.currency}{" "}
-                {money(corr.effect.new_payment)}</strong> goes on the schedule
-                as a new payment.</div>
+                {money(corr.effect.to_schedule)}</strong> will need adding to
+                the payment schedule before it can be paid.</div>
             )}
             <div style={{ marginTop: 2, color: "#5a6b78" }}>
               Already paid or vouchered: {corr.effect.currency}{" "}
@@ -3368,8 +3368,11 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
     basis: "pct", value: "" }]);
   const canManage = doc.can_manage;
   const canPay = doc.can_pay;
-  const anyPaid = ms.some((m) => m.status === "PAID");
-  const [extraLabel, setExtraLabel] = useState("Additional charges");
+  // paid or on a voucher: stays as it is, the editor draws up the rest
+  const lockedRows = ms.filter((m) => m.locked);
+  const openRows = ms.filter((m) => !m.locked);
+  const canEdit = canManage && (openRows.length > 0
+    || Number(doc.unscheduled) > 0);
 
   async function call(path, body) {
     onError(null);
@@ -3396,7 +3399,8 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
   const orderTotal = num(doc.order_total);
   const ccy = (doc.order && doc.order.order_currency) || doc.currency || "";
   const scheduled = rows.reduce((a, r) => a + (r.basis === "fixed"
-    ? num(r.value) : (num(r.value) / 100) * orderTotal), 0);
+    ? num(r.value) : (num(r.value) / 100) * orderTotal),
+  lockedRows.reduce((a, m) => a + num(m.due_amount), 0));
   const balanced = Math.abs(scheduled - orderTotal) < 0.01;
 
   return (
@@ -3498,15 +3502,19 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
             <p style={{ fontSize: 12.5, color: "#1a7f37", marginTop: 6 }}>
               Paid to date: MVR {money(paidTotal)}</p>
           )}
-          {canManage && !anyPaid && (
+          {canEdit && (
             <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12,
                              marginTop: 6 }}
-                    onClick={() => { setRows(ms.map((m) => ({ label: m.label,
-                      trigger: m.trigger,
-                      credit_days: m.credit_days ?? "",
-                      basis: m.fixed_amount != null ? "fixed" : "pct",
-                      value: m.fixed_amount != null ? String(num(m.fixed_amount))
-                        : (m.percent ? String(num(m.percent)) : "") })));
+                    onClick={() => { setRows(openRows.length > 0
+                      ? openRows.map((m) => ({ label: m.label,
+                        trigger: m.trigger,
+                        credit_days: m.credit_days ?? "",
+                        basis: m.fixed_amount != null ? "fixed" : "pct",
+                        value: m.fixed_amount != null ? String(num(m.fixed_amount))
+                          : (m.percent ? String(num(m.percent)) : "") }))
+                      : [{ label: "", trigger: "BALANCE", basis: "fixed",
+                           value: String(num(doc.unscheduled)),
+                           credit_days: "" }]);
                       setEditing(true); }}>
               Edit schedule</button>
           )}
@@ -3515,29 +3523,26 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
 
       {/* The order is worth more than its schedule — charges that came after
           it was paid (owner 2026-11-02, IPR-015). Only a milestone can be
-          paid, so until this is added nothing brings the money to Finance. */}
+          paid, so until it is scheduled nothing brings the money to Finance. */}
       {Number(doc.unscheduled) > 0 && !editing && (
         <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6,
                       background: "#fff8e6", border: "1px solid #e8dcae",
                       fontSize: 12.5 }}>
           <strong>{ccy} {money(doc.unscheduled)}</strong> of this order is not
-          on the payment schedule, so it cannot be paid yet.
-          {canManage && doc.status === "AUTHORISED" && (
-            <div style={{ display: "flex", gap: 6, marginTop: 6,
-                          flexWrap: "wrap" }}>
-              <input value={extraLabel} maxLength={60} aria-label="Payment name"
-                style={{ ...inputStyle, flex: "1 1 200px" }}
-                onChange={(e) => setExtraLabel(e.target.value)} />
-              <button style={{ ...buttonStyle, padding: "4px 12px", fontSize: 13 }}
-                      onClick={() => call("/milestones/remainder",
-                        { label: extraLabel })}>
-                Add to schedule</button>
-            </div>)}
+          on the payment schedule, so it cannot be paid yet. Head Office
+          Purchasing adds it with Edit schedule.
         </div>
       )}
 
       {canManage && (ms.length === 0 || editing) && (
         <div style={{ marginTop: 6 }}>
+          {lockedRows.length > 0 && (
+            <div style={{ fontSize: 12.5, color: "#5a6b78", marginBottom: 8 }}>
+              Paid or on a voucher, so these stay as they are:
+              {lockedRows.map((m) => (
+                <div key={m.id} style={{ marginTop: 2 }}>
+                  {m.label} · {ccy} {money(m.due_amount)}</div>))}
+            </div>)}
           {rows.map((r, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
               <input placeholder="Milestone (e.g. Advance)" value={r.label}

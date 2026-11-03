@@ -93,6 +93,7 @@ class OrderSerializer(serializers.ModelSerializer):
 class MilestoneSerializer(serializers.ModelSerializer):
     due_amount = serializers.SerializerMethodField()
     tt_advice_url = serializers.SerializerMethodField()
+    locked = serializers.SerializerMethodField()
     voucher_ref = serializers.CharField(source="voucher.ref", read_only=True,
                                         default=None)
 
@@ -100,10 +101,14 @@ class MilestoneSerializer(serializers.ModelSerializer):
         model = ImportPaymentMilestone
         fields = ["id", "seq", "label", "trigger", "percent", "fixed_amount",
                   "due_date", "status", "due_amount", "tt_ref", "mvr_paid",
-                  "actual_rate", "paid_at", "tt_advice_url", "voucher_ref", "credit_days", "fell_due_on", "pay_by"]
+                  "actual_rate", "paid_at", "tt_advice_url", "voucher_ref", "credit_days", "fell_due_on", "pay_by",
+                  "locked"]
 
     def get_tt_advice_url(self, obj):
         return obj.tt_advice.url if obj.tt_advice else None
+
+    def get_locked(self, obj):
+        return ipr_svc.schedule_row_locked(obj)
 
     def get_due_amount(self, obj):
         # order total is stashed on context to avoid a query per milestone
@@ -1053,27 +1058,14 @@ def ipr_set_milestones(request, ref):
     if request.user.role not in CREATE_ROLES:
         return Response({"detail": "Head Office sets the payment schedule."},
                         status=403)
-    msg = ipr_svc.set_milestones(doc.import_order, request.data.get("rows") or [])
+    rows = request.data.get("rows") or []
+    msg = ipr_svc.set_milestones(doc.import_order, rows)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_serialize(doc, request))
-
-
-@api_view(["POST"])
-def ipr_schedule_remainder(request, ref):
-    doc, err = _get_ipr(request, ref)
-    if err:
-        return err
-    if request.user.role not in CREATE_ROLES:
-        return Response({"detail": "Head Office sets the payment schedule."},
-                        status=403)
-    if doc.status != "AUTHORISED":
-        return Response({"detail": "Only an authorised order has payments to "
-                                   "add to."}, status=400)
-    _, msg = ipr_svc.schedule_remainder(doc.import_order, request.user,
-                                        request.data.get("label"))
-    if msg:
-        return Response({"detail": msg}, status=400)
+    if doc.status == "AUTHORISED":
+        audit("document", doc.id, "IPR_SCHEDULE_EDITED", actor=request.user,
+              detail={"ref": doc.ref,
+                      "rows": [str(r.get("label") or "")[:60] for r in rows]})
     return Response(_serialize(doc, request))
 
 

@@ -766,8 +766,6 @@ def _apply_charge_correction(doc, corr, actor):
     _revise_po_charges(doc, order, actor)
     _freeze_settled_percents(order, old_total, actor)
     _rescale_fixed_milestones(order, old_total, actor)
-    if unscheduled(order):
-        schedule_remainder(order, actor)
     corr.status = "APPLIED"
     corr.decided_by, corr.decided_at = actor, timezone.now()
     corr.save(update_fields=["status", "decided_by", "decided_at"])
@@ -1042,27 +1040,6 @@ def _left_unscheduled(order, old_total, new_total):
     return gap if gap > Decimal("0.01") else ZERO
 
 
-def schedule_remainder(order, actor, label=""):
-    """Put what is off the schedule on it as one more payment (owner
-    2026-11-02, IPR-015): the supplier's statement came in after the order
-    was paid in full, and the paid schedule is locked, so the extra had no
-    way to be paid. It waits as Pending, then runs the same road as any
-    milestone: marked due, vouchered, TT. Returns (milestone, error)."""
-    from .models import ImportPaymentMilestone
-    gap = unscheduled(order)
-    if not gap:
-        return None, "Everything on this order is already on the schedule."
-    last = order.milestones.order_by("-seq").first()
-    m = ImportPaymentMilestone.objects.create(
-        order=order, seq=(last.seq if last else 0) + 1,
-        label=(label or "").strip()[:60] or "Additional charges",
-        trigger="BALANCE", fixed_amount=gap,
-        credit_days=order.supplier.credit_days if order.supplier_id else None)
-    audit("document", order.document_id, "IPR_MILESTONE_ADDED", actor=actor,
-          detail={"milestone": m.label, "amount": str(gap)})
-    return m, None
-
-
 def _freeze_settled_percents(order, old_total, actor):
     """A percent milestone follows the order total, but money already paid or
     vouchered does not. Left alone, a paid 30% would read as 30% of the new
@@ -1128,8 +1105,8 @@ def correction_effect(order, corr):
                         for m in order.milestones.all()
                         if milestone_is_committed(m)), ZERO),
         "milestones": moves,
-        # nothing unpaid can take it, so it becomes a payment of its own
-        "new_payment": _left_unscheduled(order, old_total, new_total),
+        # nothing unpaid can take it, so Purchasing has to schedule it
+        "to_schedule": _left_unscheduled(order, old_total, new_total),
         "amended": amended,
         "added": added,
         # A line the supplier added is not on any manifest until somebody
@@ -1170,27 +1147,24 @@ def _revise_po_charges(doc, order, actor):
                   "ipr": doc.ref})
 
 
+def schedule_row_locked(m):
+    """A row the schedule editor must leave alone: paid, or held by a voucher
+    (whose line protects it from deletion). Everything else can be redrawn."""
+    return bool(m.status in ("AUTHORISED", "PAID") or m.voucher_id
+                or m.voucher_lines.exists())
+
+
 def set_milestones(order, rows):
-    """Replace the order's payment schedule. Each row: {label, trigger,
-    percent|fixed_amount, due_date}. The scheduled amounts must sum to the
-    order total (in the order currency)."""
+    """Replace the unsettled part of the order's payment schedule. Paid and
+    vouchered rows stay as they are, and `rows` are the rest (owner
+    2026-11-02, IPR-015: charges can arrive after an order is paid, and this
+    is how they get on the schedule). Each row: {label, trigger,
+    percent|fixed_amount, due_date}. Together they must sum to the order
+    total (in the order currency)."""
     from .models import ImportPaymentMilestone
-    if order.milestones.filter(status="PAID").exists():
-        return "Some milestones are already paid — the schedule is locked."
-    # A milestone sitting on a live voucher cannot be deleted out from under
-    # it: the FK is PROTECT, so the replace below would raise rather than
-    # explain itself. Name the voucher instead — the fix is to void or
-    # withdraw it first (owner 2026-08-31).
-    held = order.milestones.exclude(status="PAID").filter(
-        voucher_lines__voucher__is_void=False).select_related().distinct()
-    if held.exists():
-        refs = sorted({ln.voucher.ref for m in held
-                       for ln in m.voucher_lines.select_related("voucher")
-                       if not ln.voucher.is_void})
-        return ("The schedule can't be changed while a payment voucher holds "
-                f"part of it: {', '.join(refs)}. Void or withdraw it first.")
+    locked = [m for m in order.milestones.all() if schedule_row_locked(m)]
     total = ipr_order_total(order)
-    scheduled = ZERO
+    scheduled = sum((m.due_amount(total) for m in locked), ZERO)
     cleaned = []
     for i, r in enumerate(rows, 1):
         label = (r.get("label") or "").strip()
@@ -1218,11 +1192,18 @@ def set_milestones(order, rows):
                         "credit_days": cd})
     if abs(scheduled.quantize(Decimal("0.01")) - total.quantize(
             Decimal("0.01"))) > Decimal("0.01"):
-        return (f"The schedule ({scheduled.quantize(Decimal('0.01'))}) must "
-                f"sum to the order total ({total.quantize(Decimal('0.01'))} "
-                f"{order.order_currency}).")
-    order.milestones.exclude(status="PAID").delete()
-    for i, c in enumerate(cleaned, 1):
+        msg = (f"The schedule ({scheduled.quantize(Decimal('0.01'))}) must "
+               f"sum to the order total ({total.quantize(Decimal('0.01'))} "
+               f"{order.order_currency}).")
+        refs = sorted({ln.voucher.ref for m in locked if m.status != "PAID"
+                       for ln in m.voucher_lines.select_related("voucher")})
+        if refs:
+            msg += (f" {', '.join(refs)} holds part of it: void or withdraw "
+                    "it to change that row.")
+        return msg
+    order.milestones.exclude(id__in=[m.id for m in locked]).delete()
+    start = max((m.seq for m in locked), default=0)
+    for i, c in enumerate(cleaned, start + 1):
         ImportPaymentMilestone.objects.create(order=order, seq=i, **c)
     return None
 

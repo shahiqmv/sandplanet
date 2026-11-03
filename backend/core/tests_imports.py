@@ -2960,8 +2960,8 @@ class StoreIssueReceiptReversalTests(MrFromStoreTests):
 class ChargesAfterPaymentTests(IprBase):
     """IPR-015 (owner 2026-11-02): the supplier's statement added charges
     after the order was paid in full. The total and the ledger moved, but
-    nothing could be paid: the paid schedule is locked and only a milestone
-    reaches Finance."""
+    nothing could be paid: the paid schedule was locked and only a milestone
+    reaches Finance. Paid rows now stay locked and the rest can be edited."""
 
     def _paid_order(self, rows):
         ref = self.create_and_authorise()         # 1000 USD @ 15
@@ -3004,7 +3004,7 @@ class ChargesAfterPaymentTests(IprBase):
         self.client.force_authenticate(self.ho)
         return effect
 
-    def test_charge_after_full_payment_becomes_a_payment_finance_can_make(self):
+    def test_charge_after_full_payment_is_scheduled_and_paid_the_normal_way(self):
         from decimal import Decimal
         from .models import CostPosting
         from django.db.models import Sum
@@ -3012,21 +3012,28 @@ class ChargesAfterPaymentTests(IprBase):
             {"label": "Advance", "trigger": "ADVANCE", "fixed_amount": "300"},
             {"label": "Balance", "trigger": "BALANCE", "fixed_amount": "700"}])
         effect = self._add_charge(ref)
-        self.assertEqual(Decimal(str(effect["new_payment"])), Decimal("70.00"))
+        self.assertEqual(Decimal(str(effect["to_schedule"])), Decimal("70.00"))
         d = self.client.get(f"/api/v1/ipr/{ref}").data
-        self.assertEqual(Decimal(str(d["unscheduled"])), Decimal("0"))
-        extra = d["milestones"][-1]
-        self.assertEqual((extra["label"], extra["status"]),
-                         ("Additional charges", "PENDING"))
-        self.assertEqual(Decimal(str(extra["due_amount"])), Decimal("70.00"))
+        self.assertEqual(Decimal(str(d["unscheduled"])), Decimal("70.00"))
+        self.assertEqual(len(d["milestones"]), 2)
+        self.assertTrue(all(m["locked"] for m in d["milestones"]))
+        # Head Office adds it in the schedule editor, like any other row
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "SOA freight", "trigger": "BALANCE",
+             "fixed_amount": "70"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Decimal(str(r.data["unscheduled"])), Decimal("0"))
+        extra = r.data["milestones"][-1]
+        self.assertEqual((extra["label"], extra["status"], extra["locked"]),
+                         ("SOA freight", "PENDING", False))
         # the two paid ones stand as they were
-        self.assertEqual([Decimal(str(m["due_amount"]))
-                          for m in d["milestones"][:2]],
-                         [Decimal("300.00"), Decimal("700.00")])
+        self.assertEqual([(Decimal(str(m["due_amount"])), m["status"])
+                          for m in r.data["milestones"][:2]],
+                         [(Decimal("300.00"), "PAID"), (Decimal("700.00"), "PAID")])
         self.client.force_authenticate(self.finance)
         reg = self.client.get("/api/v1/ipr/payments-due").data
-        self.assertEqual([(r["label"], r["band"]) for r in reg],
-                         [("Additional charges", "COMING")])
+        self.assertEqual([(x["label"], x["band"]) for x in reg],
+                         [("SOA freight", "COMING")])
         # and it pays through, leaving the ledger whole
         self._pay(ref, extra["id"], "70")
         posted = CostPosting.objects.filter(document__ref=ref, source="IPR")
@@ -3041,9 +3048,10 @@ class ChargesAfterPaymentTests(IprBase):
             {"label": "Advance", "trigger": "ADVANCE", "percent": "30"},
             {"label": "Balance", "trigger": "BALANCE", "percent": "70"}])
         self._add_charge(ref)
-        ms = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"]
-        self.assertEqual([Decimal(str(m["due_amount"])) for m in ms],
-                         [Decimal("300.00"), Decimal("700.00"), Decimal("70.00")])
+        d = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertEqual([Decimal(str(m["due_amount"])) for m in d["milestones"]],
+                         [Decimal("300.00"), Decimal("700.00")])
+        self.assertEqual(Decimal(str(d["unscheduled"])), Decimal("70.00"))
 
     def test_an_unpaid_fixed_balance_still_takes_it_with_no_new_payment(self):
         from decimal import Decimal
@@ -3055,7 +3063,7 @@ class ChargesAfterPaymentTests(IprBase):
         ]}, format="json").data["milestones"]
         self._pay(ref, ms[0]["id"], "300")
         effect = self._add_charge(ref)
-        self.assertEqual(Decimal(str(effect["new_payment"])), Decimal("0"))
+        self.assertEqual(Decimal(str(effect["to_schedule"])), Decimal("0"))
         after = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"]
         self.assertEqual([Decimal(str(m["due_amount"])) for m in after],
                          [Decimal("300.00"), Decimal("770.00")])
@@ -3070,26 +3078,31 @@ class ChargesAfterPaymentTests(IprBase):
         order.save(update_fields=["misc_fee"])
         return ref
 
-    def test_an_order_left_short_is_flagged_and_can_be_scheduled(self):
+    def test_an_order_left_short_says_so_until_it_is_scheduled(self):
         from decimal import Decimal
         ref = self._stranded()
         self.client.force_authenticate(self.ho)
-        d = self.client.get(f"/api/v1/ipr/{ref}").data
-        self.assertEqual(Decimal(str(d["unscheduled"])), Decimal("70.00"))
-        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/remainder",
-                             {"label": "SOA freight"}, format="json")
+        rows = self.client.get("/api/v1/ipr").data["rows"]
+        row = next(x for x in rows if x["ref"] == ref)
+        self.assertEqual(row["payment"]["label"], "USD 70.00 to schedule")
+        # the wrong sum is refused, and the paid row cannot be redrawn by it
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Extra", "trigger": "BALANCE", "fixed_amount": "71"}]},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("must sum", r.data["detail"])
+        self.assertEqual(self._order(ref).milestones.count(), 1)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Extra", "trigger": "BALANCE", "fixed_amount": "70"}]},
+            format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(Decimal(str(r.data["unscheduled"])), Decimal("0"))
-        self.assertEqual(r.data["milestones"][-1]["label"], "SOA freight")
-        # nothing left to add, and adding twice does nothing
-        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/remainder", {},
-                             format="json")
-        self.assertEqual(r.status_code, 400)
-        self.assertEqual(self._order(ref).milestones.count(), 2)
+        self.assertEqual(r.data["milestones"][0]["status"], "PAID")
 
-    def test_only_head_office_schedules_it(self):
+    def test_only_head_office_edits_it(self):
         ref = self._stranded()
         self.client.force_authenticate(self.finance)
-        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/remainder", {},
-                             format="json")
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Extra", "trigger": "BALANCE", "fixed_amount": "70"}]},
+            format="json")
         self.assertEqual(r.status_code, 403)

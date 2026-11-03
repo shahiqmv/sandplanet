@@ -83,18 +83,50 @@ class ScheduleAfterAVoucherTests(TestCase):
 
     # ---- the guard -------------------------------------------------------
 
-    def test_a_live_voucher_blocks_the_schedule_with_a_reason(self):
-        """Not a 500: name the voucher, because the fix is to deal with it."""
+    def _priced(self):
+        """A 1,000 order whose whole schedule is one fixed 1,000 row."""
+        self.order.misc_fee = Decimal("1000")
+        self.order.save(update_fields=["misc_fee"])
+        self.m.percent, self.m.fixed_amount = None, Decimal("1000")
+        self.m.save(update_fields=["percent", "fixed_amount"])
+
+    def test_a_vouchered_row_stays_and_a_wrong_sum_names_the_voucher(self):
+        """Not a 500: name the voucher, because that row needs it dealt with."""
+        self._priced()
         self._line("INCLUDED")
         msg = ipr_svc.set_milestones(self.order, self._rows())
+        self.assertIn("must sum", msg)
         self.assertIn("PV-SCH-001", msg)
-        self.assertIn("Void or withdraw", msg)
+        self.assertIn("void or withdraw", msg)
+        self.assertEqual(list(self.order.milestones.all()), [self.m])
 
-    def test_a_paid_milestone_still_locks_the_schedule(self):
+    def test_a_row_can_be_added_beside_a_vouchered_one(self):
+        """IPR-087: the advance is on a voucher, and freight came after."""
+        self._priced()
+        self._line("INCLUDED")
+        self.order.misc_fee = Decimal("1254")
+        self.order.save(update_fields=["misc_fee"])
+        self.assertIsNone(ipr_svc.set_milestones(self.order, [
+            {"label": "Freight", "trigger": "BALANCE", "fixed_amount": "254"}]))
+        self.assertEqual(
+            list(self.order.milestones.values_list("seq", "label")),
+            [(1, "Advance 30%"), (2, "Freight")])
+
+    def test_a_paid_row_stays_and_the_rest_can_be_redrawn(self):
+        self._priced()
         self.m.status = "PAID"
         self.m.save(update_fields=["status"])
-        self.assertIn("already paid",
-                      ipr_svc.set_milestones(self.order, self._rows()))
+        self.order.misc_fee = Decimal("1100")
+        self.order.save(update_fields=["misc_fee"])
+        self.assertIsNone(ipr_svc.set_milestones(self.order, [
+            {"label": "Extra", "trigger": "BALANCE", "fixed_amount": "100"}]))
+        self.assertIsNone(ipr_svc.set_milestones(self.order, [
+            {"label": "Extra A", "trigger": "BALANCE", "fixed_amount": "60"},
+            {"label": "Extra B", "trigger": "BALANCE", "fixed_amount": "40"}]))
+        self.assertEqual(
+            list(self.order.milestones.values_list("label", "status")),
+            [("Advance 30%", "PAID"), ("Extra A", "PENDING"),
+             ("Extra B", "PENDING")])
 
     def test_with_nothing_holding_it_the_schedule_just_changes(self):
         self.assertIsNone(ipr_svc.set_milestones(self.order, self._rows()))
