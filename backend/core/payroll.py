@@ -1357,10 +1357,21 @@ def labour_shares(run):
     A line with no site of its own falls to the run's site, else Head
     Office — it used to be dropped, and with it about USD 7,000 of salaries
     (owner 2026-10-12)."""
+    import calendar as _cal
+
     from .fleet_costs import operator_allocation
-    from .models import Site
+    from .models import HireLog, Site
     ho = Site.objects.filter(is_head_office=True).first()
     sites = {}
+    # Read once per run, not once per line: the Friday hours setting, and
+    # who ran a vehicle this month at all (only they can have an operator
+    # share). The management reports call this for every run in a period.
+    fri_hours = friday_ot_hours()
+    first = date(run.year, run.month, 1)
+    last = date(run.year, run.month, _cal.monthrange(run.year, run.month)[1])
+    operators = set(HireLog.objects.filter(date__range=(first, last))
+                    .exclude(state="OFF_HIRE")
+                    .values_list("operator_id", flat=True))
 
     def site_of(site_id):
         sid = site_id or run.site_id or (ho.id if ho else None)
@@ -1369,10 +1380,10 @@ def labour_shares(run):
         return sites.get(sid)
 
     out = []
-    for line in run.lines.select_related("site").all():
+    for line in run.lines.select_related("site", "employee__job_category"):
         if line.excluded:
             continue
-        money = compute_line(line)
+        money = compute_line(line, fri_hours)
         # What the rounding adds is paid out, so it is labour cost too.
         gross = money["gross"] + money["rounding"]
         if gross <= 0:
@@ -1380,7 +1391,9 @@ def labour_shares(run):
         net = money["net"]
         ratio = (net / gross) if gross else Decimal("0")
         rest = gross
-        for vehicle, share in operator_allocation(line, gross):
+        allocated = (operator_allocation(line, gross)
+                     if line.employee_id in operators else [])
+        for vehicle, share in allocated:
             if share <= 0:
                 continue
             out.append((site_of(line.site_id), vehicle, share,

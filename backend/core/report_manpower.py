@@ -16,7 +16,7 @@ from decimal import Decimal
 
 from . import fx
 from .models import PayrollRun
-from .payroll import compute_line, labour_shares
+from .payroll import compute_line, friday_ot_hours, labour_shares
 from .permissions import is_staff_grade
 from .reports import col, kpi, month_label, months_in, section, sum_rows
 
@@ -48,6 +48,7 @@ def _part(line, site_id):
 
 def build(ctx):
     rate = fx.usd_rate()
+    fri_hours = friday_ot_hours()
     wanted = set(ctx.site_ids)
     months = months_in(ctx.start, ctx.end)
     runs = (PayrollRun.objects.filter(status="LOCKED")
@@ -67,7 +68,7 @@ def build(ctx):
             lines[line.id], sites[site.id] = line, site
         for (line_id, site_id), gross in per.items():
             line, site = lines[line_id], sites[site_id]
-            money = compute_line(line)
+            money = compute_line(line, fri_hours)
             days, ot_h, fri, ot_sh, fri_sh = _part(line, site_id)
             ot_pay = money["ot_pay"] * ot_sh
             fri_pay = money["friday_pay"] * fri_sh
