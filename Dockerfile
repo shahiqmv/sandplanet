@@ -25,8 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 # rclone carries the time-lapse intake from OneDrive (core/drive.py); a
 # pinned release rather than Debian's, which is years behind OneDrive.
-ARG RCLONE_VERSION=1.76.0
-ADD https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.deb /tmp/rclone.deb
+# (No ARG for the version: rclone reads every RCLONE_* variable as one of
+# its own settings, and RCLONE_VERSION broke the build.)
+ADD https://downloads.rclone.org/v1.76.0/rclone-v1.76.0-linux-amd64.deb /tmp/rclone.deb
 RUN dpkg -i /tmp/rclone.deb && rm /tmp/rclone.deb && rclone version
 
 WORKDIR /app/backend
