@@ -124,14 +124,19 @@ export default function ReportsPage() {
                       gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))" }}>
           <label style={{ fontSize: 12.5 }}>Report
             <select value={key} style={{ ...inputStyle, width: "100%" }}
-                    onChange={(e) => { setKey(e.target.value); setRep(null); }}>
+                    onChange={(e) => {
+                      const next = meta.reports.find((r) => r.key === e.target.value);
+                      setKey(e.target.value); setRep(null);
+                      if (next?.company_only) setSite("all");
+                    }}>
               {meta.reports.map((r) => <option key={r.key} value={r.key}>{r.title}</option>)}
             </select></label>
           <label style={{ fontSize: 12.5 }}>Site
             <select value={site} style={{ ...inputStyle, width: "100%" }}
                     onChange={(e) => { setSite(e.target.value); setRep(null); }}>
               {meta.company && <option value="all">Company-wide</option>}
-              {meta.sites.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
+              {!chosen?.company_only && meta.sites.map((s) => (
+                <option key={s.id} value={s.id}>{s.code} — {s.name}</option>))}
             </select></label>
           <label style={{ fontSize: 12.5 }}>From
             <input type="date" value={from} max={to || undefined} style={{ ...inputStyle, width: "100%" }}
@@ -168,7 +173,8 @@ export default function ReportsPage() {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
                           alignItems: "baseline" }}>
               <h2 style={{ margin: 0 }}>{rep.title}</h2>
-              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{rep.scope} · {rep.period} · {rep.currency}</span>
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                {rep.scope} · {rep.period}{rep.months > 1 && ` (${rep.months} months)`} · {rep.currency}</span>
             </div>
             <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginTop: 14 }}>
               {rep.kpis.map((k) => (
@@ -179,7 +185,11 @@ export default function ReportsPage() {
                 {rep.notes.map((n) => <li key={n}>{n}</li>)}
               </ul>)}
           </div>
-          {rep.sections.map((s) => <Section key={s.title} s={s} />)}
+          {rep.sections.map((s, i) => (
+            <div key={`${i}-${s.title}`}>
+              {s.chapter && <h2 style={{ margin: "26px 0 0", fontSize: 19 }}>{s.chapter}</h2>}
+              <Section s={s} />
+            </div>))}
         </>)}
     </div>
   );

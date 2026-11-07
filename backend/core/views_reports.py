@@ -24,8 +24,10 @@ def report_list(request):
     start, end = rp.default_period()
     return Response({
         "reports": [{"key": r.key, "title": r.title,
-                     "description": r.description}
-                    for r in rp.reports().values()],
+                     "description": r.description,
+                     "company_only": r.company_only}
+                    for r in rp.reports().values()
+                    if user.excom or not r.company_only],
         "sites": [_site_row(s) for s in rp.allowed_sites(user)],
         "company": bool(user.excom),
         "default_from": start, "default_to": end,
@@ -42,6 +44,9 @@ def report_run(request, key):
         return Response({"detail": "No such report."}, status=404)
     sites = rp.allowed_sites(user)
     want = request.GET.get("site") or ""
+    if rp.reports()[key].company_only and want != "all":
+        return Response({"detail": "This report is company-wide only."},
+                        status=400)
     if want == "all":
         if not user.excom:
             return Response({"detail": "Company-wide reports are for the "

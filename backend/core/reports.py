@@ -29,6 +29,7 @@ class Report:
     title: str
     description: str
     build: object          # build(ctx) -> report dict
+    company_only: bool = False   # cash is the company's, not a site's
 
 
 @dataclass
@@ -113,9 +114,11 @@ def col(key, label, kind="text", wide=False):
     return {"key": key, "label": label, "kind": kind, "wide": wide}
 
 
-def section(title, columns, rows, total=None, note=""):
+def section(title, columns, rows, total=None, note="", chapter=""):
+    """A table. `chapter` starts a new part of a long report (the ExCom
+    pack): the PDF opens it on a fresh page."""
     return {"title": title, "columns": columns, "rows": rows,
-            "total": total, "note": note}
+            "total": total, "note": note, "chapter": chapter}
 
 
 def kpi(label, value, kind="money", sub=""):
@@ -132,12 +135,27 @@ def sum_rows(rows, keys):
 # ---- the register ----------------------------------------------------------
 
 def _registry():
-    from . import report_manpower, report_progress, report_revenue
+    from . import (report_aging, report_cashflow, report_cost,
+                   report_exceptions, report_manpower, report_pack,
+                   report_performance, report_pnl, report_progress,
+                   report_revenue, report_variations)
     return [
+        Report("performance", "Performance analysis",
+               "Each site on one line: programme against time, cost against "
+               "certified revenue, man-days, and what is open against it.",
+               report_performance.build),
+        Report("pnl", "Profit and loss",
+               "Certified revenue less cost by the owner's rule, site by "
+               "site; the company view adds trading, rental and overheads.",
+               report_pnl.build),
         Report("revenue", "Revenue analysis",
                "Contract value, variations, work certified, billed, received "
                "and outstanding, project by project. Revenue is what the "
                "client has certified.", report_revenue.build),
+        Report("cost", "Cost analysis",
+               "Cost by site, cost head, source and month, with committed "
+               "and paid beside it; the company view adds overheads.",
+               report_cost.build),
         Report("manpower", "Manpower cost analysis",
                "Man-days, headcount and labour cost by site, month and trade, "
                "with overtime and Friday pay, from locked payroll runs.",
@@ -146,6 +164,25 @@ def _registry():
                "Programme progress against time elapsed, project by project, "
                "with milestones, completion dates and the manpower on site.",
                report_progress.build),
+        Report("variations", "Variations and claims",
+               "Contract value by project, variations waiting and how long, "
+               "those the client decided, and the claims in the period.",
+               report_variations.build),
+        Report("aging", "Receivables and payables aging",
+               "What clients owe and, company-wide, what the company owes, "
+               "by how long overdue.", report_aging.build),
+        Report("cashflow", "Cash-flow forecast, 13 weeks",
+               "Money due in against money due out, week by week from the "
+               "start of the period. Company-wide only.", report_cashflow.build,
+               company_only=True),
+        Report("exceptions", "Exceptions",
+               "What does not add up: attendance against the clock, overtime "
+               "approved off-site, months not closed, payables overdue with "
+               "nothing raised, procurement late.", report_exceptions.build),
+        Report("pack", "Monthly ExCom pack",
+               "Every report above for the period in one document, each a "
+               "chapter. Company-wide only.", report_pack.build,
+               company_only=True),
     ]
 
 
@@ -157,7 +194,8 @@ def run(key, ctx):
     rep = reports()[key]
     out = rep.build(ctx)
     out.update(key=key, title=rep.title, scope=ctx.scope_label,
-               period=ctx.period_label, currency="USD")
+               period=ctx.period_label, currency="USD",
+               months=len(months_in(ctx.start, ctx.end)))
     out.setdefault("notes", [])
     return out
 
@@ -258,6 +296,8 @@ def pdf_html(rep, user):
         "rep": rep, "logo_src": logo_src(), "co": company_info(),
         "prepared_by": user.full_name or user.username,
         "prepared_on": timezone.localdate(),
-        "subline": f"{rep['scope']}  |  {rep['period']}  |  "
-                   f"{rep['currency']}",
+        "subline": f"{rep['scope']}  |  {rep['period']}"
+                   + (f" ({rep['months']} months)" if rep.get("months", 1) > 1
+                      else "")
+                   + f"  |  {rep['currency']}",
     })

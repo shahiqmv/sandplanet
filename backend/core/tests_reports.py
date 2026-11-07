@@ -54,13 +54,18 @@ class AccessTests(ReportCase):
         self.assertTrue(d["company"])
         self.assertEqual([s["code"] for s in d["sites"]], ["SJR", "VKR"])
         self.assertEqual({r["key"] for r in d["reports"]},
-                         {"revenue", "manpower", "progress"})
+                         {"performance", "pnl", "revenue", "cost", "manpower",
+                          "progress", "variations", "aging", "cashflow",
+                          "exceptions", "pack"})
         self.assertEqual(self.report(self.qs, "revenue", "all").status_code, 200)
 
     def test_a_pm_sees_only_their_own_sites_and_nothing_company_wide(self):
         d = self.get(self.pm, "/api/v1/reports").data
         self.assertFalse(d["company"])
         self.assertEqual([s["code"] for s in d["sites"]], ["SJR"])
+        self.assertNotIn("cashflow", {r["key"] for r in d["reports"]})
+        self.assertEqual(self.report(self.pm, "cashflow", self.sjr.id)
+                         .status_code, 400)
         self.assertEqual(self.report(self.pm, "progress", "all").status_code, 403)
         self.assertEqual(self.report(self.pm, "progress", self.vkr.id)
                          .status_code, 400)
@@ -248,3 +253,113 @@ class ExportTests(ReportCase):
         self.assertTrue(r.content.startswith(b"PK"))
         r = self.report(self.qs, "progress", self.sjr.id, export="pdf")
         self.assertIn(r.status_code, (200, 503))   # 503: no PDF engine
+
+
+class CostAndPnlTests(ReportCase):
+    """Cost by the owner's rule (2026-11-07): counted when the Signatory
+    approves it; payroll when it locks. Revenue as certified."""
+
+    def _post(self, site, source, state, amount, head="MATERIALS", **kw):
+        from . import costing
+        from .models import CostHead
+        h = CostHead.objects.get_or_create(code=head, defaults={
+            "name": head.title(), "sort_order": 1})[0]
+        return costing.post(site=site, cost_head=h, state=state, source=source,
+                            amount=D(amount), currency="MVR",
+                            posted_on=date(2026, 10, 10), **kw)
+
+    def test_cost_counts_the_owners_event_and_nothing_twice(self):
+        from .models import CostHead
+        # a local purchase: committed and incurred at signing, paid later
+        self._post(self.sjr, "PR", "COMMITTED", "1542")
+        self._post(self.sjr, "PR", "INCURRED", "1542")
+        self._post(self.sjr, "PR", "PAID", "1542")
+        # payroll: incurred at lock only
+        self._post(self.sjr, "STAFF", "INCURRED", "3084", head="LABOUR")
+        # a pool row and an overhead never count against a site
+        self._post(self.sjr, "PR", "COMMITTED", "999", head="INPUT_GST",
+                   is_stock_pool=True)
+        oh = CostHead.objects.create(code="OFFICE", name="Office",
+                                     sort_order=9, overhead=True)
+        from . import costing
+        costing.post(site=self.sjr, cost_head=oh, state="COMMITTED",
+                     source="PYR", amount=D("1542"), currency="MVR",
+                     posted_on=date(2026, 10, 10))
+        rep = self.report(self.qs, "cost", "all").data
+        k = {x["label"]: x["value"] for x in rep["kpis"]}
+        # 1542 + 3084 MVR at 15.42 = USD 300
+        self.assertEqual(D(str(k["Cost in period"])), D("300.00"))
+        self.assertEqual(D(str(k["Paid in period"])), D("100.00"))
+        self.assertEqual(D(str(k["Overheads in period"])), D("100.00"))
+        by_source = next(s for s in rep["sections"] if s["title"] == "By source")
+        self.assertEqual({r["name"]: D(str(r["cost"])) for r in by_source["rows"]},
+                         {"Local purchases": D("100.00"), "Payroll": D("200.00")})
+
+    def test_pnl_margin_per_site_and_company_result(self):
+        from .models import Boq
+        p = Project.objects.create(site=self.sjr, code="P1", title="Villas",
+                                   status="ACTIVE", contract_value=D("10000"))
+        Boq.objects.create(project=p, currency="USD")
+        self._post(self.sjr, "STAFF", "INCURRED", "7710", head="LABOUR")  # USD 500
+        rep = self.report(self.qs, "pnl", "all").data
+        row = rep["sections"][0]["rows"][0]
+        self.assertEqual((row["revenue"], row["cost"], row["margin"]),
+                         (D("0"), D("500.00"), D("-500.00")))
+        self.assertEqual(rep["sections"][1]["total"]["amount"], D("-500.00"))
+        # a PM gets the site view with no company result
+        rep = self.report(self.pm, "pnl", self.sjr.id).data
+        self.assertEqual([s["title"] for s in rep["sections"]], ["Sites"])
+
+
+class OtherReportsRunTests(ReportCase):
+    """Every report runs empty and on a little data, company-wide and per
+    site, and the pack lays them end to end."""
+
+    def test_all_reports_run_for_excom_and_pm(self):
+        for key in ("performance", "variations", "aging", "exceptions"):
+            self.assertEqual(self.report(self.qs, key, "all").status_code,
+                             200, key)
+            self.assertEqual(self.report(self.pm, key, self.sjr.id)
+                             .status_code, 200, key)
+        for key in ("cashflow", "pack"):
+            self.assertEqual(self.report(self.qs, key, "all").status_code,
+                             200, key)
+
+    def test_the_pack_is_every_report_as_a_chapter(self):
+        rep = self.report(self.qs, "pack", "all").data
+        chapters = [s["chapter"] for s in rep["sections"] if s["chapter"]]
+        self.assertEqual(chapters[:3], ["Performance analysis",
+                                        "Profit and loss", "Revenue analysis"])
+        self.assertEqual(len(chapters), 10)
+        self.assertEqual(self.report(self.qs, "pack", "all", export="xlsx")
+                         .status_code, 200)
+
+    def test_exceptions_find_the_clock_disagreeing_with_the_register(self):
+        from datetime import datetime, timezone as tz
+        from .models import Attendance, AttendanceDevice, DevicePunch, Employee
+        e = Employee.objects.create(emp_no="EMP-0648", full_name="Punched",
+                                    basic_pay=1000)
+        dev = AttendanceDevice.objects.create(site=self.sjr, name="Gate",
+                                              serial="X1", registered_by=self.admin)
+        for d, m in ((12, 1), (13, 1)):
+            DevicePunch.objects.create(
+                device=dev, device_user_id="648", employee=e, status="MATCHED",
+                punched_at=datetime(2026, 10, d, 1, 30, tzinfo=tz.utc))
+        Attendance.objects.create(employee=e, site=self.vkr,
+                                  day=date(2026, 10, 12), remark="PRESENT")
+        rep = self.report(self.qs, "exceptions", "all").data
+        k = {x["label"]: x["value"] for x in rep["kpis"]}
+        self.assertEqual(k["Marked at one site, punched at another"], 1)
+        self.assertEqual(k["Punched, not marked"], 1)
+        wrong = rep["sections"][0]["rows"][0]
+        self.assertEqual((wrong["site"], wrong["punched_at"]), ("VKR", "SJR"))
+
+    def test_cashflow_puts_overdue_in_week_one(self):
+        from .models import Payable
+        Payable.objects.create(site=self.sjr, vendor="Pipes Ltd",
+                               amount=D("1542"), currency="MVR",
+                               due_date=date(2026, 9, 1), status="OUTSTANDING")
+        rep = self.report(self.qs, "cashflow", "all").data
+        wk1 = rep["sections"][0]["rows"][0]
+        self.assertEqual(wk1["suppliers"], D("100.00"))
+        self.assertEqual(wk1["cumulative"], D("-100.00"))
