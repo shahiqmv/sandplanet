@@ -68,6 +68,9 @@ const ICON_PATHS = {
     <path d="M8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2" />
     <polyline points="9 13 11 15 15 11" /></>,
   clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
+  // Reports: a bar chart on its baseline.
+  chart: <><line x1="3" y1="21" x2="21" y2="21" /><rect x="5" y="11" width="3" height="7" rx="0.5" />
+    <rect x="10.5" y="6" width="3" height="12" rx="0.5" /><rect x="16" y="9" width="3" height="9" rx="0.5" /></>,
   users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
     <circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" />
     <path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,

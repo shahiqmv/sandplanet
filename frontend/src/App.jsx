@@ -80,6 +80,7 @@ import Discussion from "./Discussion.jsx";
 import DiscussionBadge from "./DiscussionBadge.jsx";
 import HRDashboard from "./HRDashboard.jsx";
 import PortfolioPage from "./PortfolioPage.jsx";
+import ReportsPage from "./ReportsPage.jsx";
 
 // Grouped menu (owner, 2026-07-08): five top-level groups, trimmed by
 // role; approver roles land on the Approvals queue.
@@ -197,6 +198,11 @@ const NAV_GROUPS = [
     roles: ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",
             "MARKETING", "HO_PURCHASING", "SIGNATORY", "PA"],
     subs: [["meetings", "Meetings", null]] },
+  // Management reports: the named ExCom members (me.excom, a pseudo-role
+  // here) and site PMs for their own sites — nobody else, Admin included
+  // (owner 2026-11-07). The API scopes the sites.
+  { key: "reportsGrp", label: "Reports", roles: ["EXCOM", "PM"],
+    subs: [["reports", "Reports", ["EXCOM", "PM"]]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS", "PA"],
     subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN", "SIGNATORY"]],
@@ -263,7 +269,7 @@ const NAV_GROUPS = [
 function visibleGroups(me) {
   // Extra access (Sales / Rental on top of the primary role) opens those
   // groups too (owner 2026-09-26).
-  const mine = [me.role, ...(me.extra_roles || [])];
+  const mine = [me.role, ...(me.extra_roles || []), ...(me.excom ? ["EXCOM"] : [])];
   const can = (roles) => !roles || roles.some((r) => mine.includes(r));
   return NAV_GROUPS.filter((g) => can(g.roles)).map((g) => ({
     ...g, subs: g.subs.filter(([, , roles]) => can(roles)),
@@ -1538,6 +1544,8 @@ export default function App() {
           )}
           {/* Open to every role — see the nav note: reporting must not be
               gated. The API scopes the register to the user's own sites. */}
+          {!docView && !openSite && hoPage === "reports"
+            && (me.excom || me.role === "PM") && <ReportsPage />}
           {!docView && !openSite && hoPage === "hse" && (
             <HsePage me={me} sites={sites} key={inductionId || "hse"}
                      initialTab={inductionId ? "inductions" : undefined}

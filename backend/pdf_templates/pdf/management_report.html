@@ -1,0 +1,58 @@
+{% load brand report_cells %}<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+{% include "pdf/_report_styles.html" %}
+<style>
+  @page { size: A4 landscape; }
+  table.grid { font-size: 7.4pt; }
+  table.grid th { font-size: 6.4pt; padding: 4px 5px; vertical-align: bottom; }
+  table.grid td { padding: 3.5px 5px; }
+  table.grid th.num { text-align: right; white-space: normal; }
+  table.grid td.num { text-align: right; white-space: nowrap; }
+  table.grid tr.tot td { font-weight: 700; background: #F2F7FB; color: {% brand "heading" %}; }
+  table.stats td { width: 16.6%; }
+  table.grid .wide { width: 34mm; }
+  .sect { page-break-after: avoid; }
+  .note { font-size: 7.2pt; color: #61707C; margin: 2px 0 6px; }
+  .notes { font-size: 7.4pt; color: #45535f; margin-top: 12px; }
+  .notes li { margin-bottom: 2px; }
+  .prepared { font-size: 7pt; color: #61707C; margin-top: 10px; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc=rep.title|upper %}
+{% include "pdf/_letterhead.html" with title=rep.title|upper subline=subline %}
+
+<table class="stats">
+  <tr>
+  {% for k in rep.kpis %}
+    <td><div class="k">{{ k.label }}</div>
+        <div class="v" style="font-size:13pt">{{ k.value|cell:k.kind }}</div>
+        {% if k.sub %}<div class="sub">{{ k.sub }}</div>{% endif %}</td>
+    {% if forloop.counter|divisibleby:6 and not forloop.last %}</tr><tr>{% endif %}
+  {% endfor %}
+  </tr>
+</table>
+
+{% for s in rep.sections %}
+<div class="sect">{{ s.title }}</div>
+{% if s.note %}<div class="note">{{ s.note }}</div>{% endif %}
+<table class="grid">
+  <thead><tr>{% for c in s.columns %}<th class="{% if c.kind != "text" %}num{% endif %}{% if c.wide %} wide{% endif %}">{{ c.label }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in s.rows %}<tr>{% for c in s.columns %}<td class="{% if c.kind != "text" %}num{% endif %}{% if c.wide %} wide{% endif %}">{{ r|field:c }}</td>{% endfor %}</tr>
+  {% empty %}<tr><td colspan="{{ s.columns|length }}" class="muted">Nothing in this period.</td></tr>{% endfor %}
+  {% if s.total %}<tr class="tot">{% for c in s.columns %}<td{% if c.kind != "text" %} class="num"{% endif %}>{{ s.total|field:c }}</td>{% endfor %}</tr>{% endif %}
+  </tbody>
+</table>
+{% endfor %}
+
+{% if rep.notes %}
+<ul class="notes">{% for n in rep.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+{% endif %}
+<div class="prepared">Prepared by {{ prepared_by }} on {{ prepared_on|date:"j M Y" }} · amounts in {{ rep.currency }}, to the nearest dollar (the Excel copy has cents)</div>
+</body>
+</html>

@@ -219,6 +219,7 @@ def _me_payload(user):
         "full_name": user.full_name,
         "role": user.role,
         "extra_roles": user.extra_roles or [],
+        "excom": user.excom,
         "is_ho": user.is_ho,
         "allocations": allocations,
         "landing_site_id": landing_site,
@@ -485,6 +486,21 @@ class UserViewSet(viewsets.ModelViewSet):
         if before != roles:
             audit("user", user.id, "USER_EXTRA_ROLES", actor=request.user,
                   from_state=",".join(before), to_state=",".join(roles),
+                  detail={"username": user.username})
+        return Response(UserSerializer(user).data)
+
+    @action(detail=True, methods=["post"], url_path="excom")
+    def excom(self, request, pk=None):
+        """Put someone on, or take them off, the executive committee: the
+        named people who read the management reports company-wide
+        (owner 2026-11-07)."""
+        user = self.get_object()
+        on = bool(request.data.get("on"))
+        if user.excom != on:
+            user.excom = on
+            user.save(update_fields=["excom"])
+            audit("user", user.id, "USER_EXCOM", actor=request.user,
+                  from_state=str(not on), to_state=str(on),
                   detail={"username": user.username})
         return Response(UserSerializer(user).data)
 

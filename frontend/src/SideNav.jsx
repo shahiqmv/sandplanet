@@ -10,6 +10,7 @@ import { Icon } from "./ui.jsx";
 const GROUP_ICON = {
   approvals: "clipboard", sitesGrp: "anchor", procurement: "box", fleet: "truck",
   meetingsGrp: "clock", finance: "wallet", people: "users", adminGrp: "globe",
+  reportsGrp: "chart",
 };
 
 export const RAIL_KEY = "planet:rail";   // "open" | "icons" — the user's own choice

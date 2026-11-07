@@ -106,6 +106,16 @@ export default function UsersPage({ me, sites }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function setExcom(user, on) {
+    setError(null); setNotice(null);
+    try {
+      await api(`/users/${user.id}/excom`, { method: "POST", body: { on } });
+      setNotice(on ? `${user.full_name} now reads the management reports.`
+        : `${user.full_name} no longer reads the management reports.`);
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   async function changeRole(user, role, assignSiteId) {
     setError(null); setNotice(null);
     try {
@@ -334,6 +344,17 @@ export default function UsersPage({ me, sites }) {
                       <span key={r} title="extra access" style={{ fontSize: 11, padding: "1px 7px", borderRadius: 10,
                         background: "var(--sky-soft)", color: "var(--sp-navy)" }}>+ {r.replace(/_/g, " ")}</span>
                     ))}
+                    {user.excom && (
+                      <span title="Executive committee: reads the management reports company-wide"
+                        style={{ fontSize: 11, padding: "1px 7px", borderRadius: 10,
+                                 background: "var(--sp-navy)", color: "#fff" }}>ExCom</span>)}
+                    {me.role === "ADMIN" && user.is_active && extraEdit?.id !== user.id && (
+                      <button title={user.excom ? "Take off the executive committee"
+                        : "Put on the executive committee: reads every site's reports and the company's"}
+                        onClick={() => setExcom(user, !user.excom)}
+                        style={{ border: "none", background: "none", cursor: "pointer",
+                          color: "#2b7bb9", fontSize: 11, padding: 0 }}>
+                        {user.excom ? "− ExCom" : "+ ExCom"}</button>)}
                     {extraEdit?.id === user.id ? (
                       <span style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, width: "100%", marginTop: 4 }}>
                         {EXTRA.filter(([v]) => v !== user.role).map(([v, l]) => (

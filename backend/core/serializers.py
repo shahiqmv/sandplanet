@@ -91,11 +91,13 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "username", "full_name", "email", "phone", "notify_external",
-            "role", "extra_roles", "is_active", "last_login", "password", "allocations",
-            "must_change_password", "designation", "employee",
+            "role", "extra_roles", "excom", "is_active", "last_login", "password",
+            "allocations", "must_change_password", "designation", "employee",
             "employee_detail",
         ]
-        read_only_fields = ["last_login", "is_active", "must_change_password"]
+        # ExCom is set through its own audited action, never a plain update
+        read_only_fields = ["last_login", "is_active", "must_change_password",
+                            "excom"]
 
     def validate_extra_roles(self, value):
         roles = [r for r in (value or []) if isinstance(r, str)]

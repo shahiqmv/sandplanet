@@ -56,6 +56,11 @@ class User(AbstractUser):
     # Set when an admin issues a temporary password by invite email; the user
     # must choose their own password before using the app.
     extra_roles = models.JSONField(default=list, blank=True)   # subset of EXTRA_ROLES
+    # The executive committee: the only people who read the management
+    # reports company-wide — named people, not a role, because Finance and QS
+    # each have several users and only their heads sit on it (owner
+    # 2026-11-07). A PM reads their own sites' reports without this.
+    excom = models.BooleanField(default=False)
     # Where this account's password lives when it is not here: a user
     # mirrored over the bridge from the sister instance (core/peer_auth.py).
     home_instance = models.CharField(max_length=20, blank=True)

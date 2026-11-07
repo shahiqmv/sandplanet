@@ -1,7 +1,7 @@
 from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 
-from . import version as version_api, \
+from . import version as version_api, views_reports as reports_api, \
     views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_hse_warnings as hse_warnings_api, views_hse_inductions as hse_inductions_api, views_ledger as ledger_api, views_rent as rent_api, views_ext_audit as ext_audit_api, views_discussion as discussion_api, views_bills as bills_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
@@ -523,6 +523,9 @@ urlpatterns = [
     path("permits/alerts", hr.permit_alerts, name="permit-alerts"),
     path("permits/batch-renew", hr.permit_batch_renew,
          name="permit-batch-renew"),
+    # Management reports: ExCom and site PMs (owner 2026-11-07)
+    path("reports", reports_api.report_list, name="reports"),
+    path("reports/<str:key>", reports_api.report_run, name="report-run"),
     path("dashboards/portfolio", projects.dashboard_portfolio,
          name="dashboard-portfolio"),
     path("sites/summary", views.sites_summary, name="sites-summary"),
