@@ -14,6 +14,7 @@ from .reports import col, kpi, section, sum_rows
 
 ZERO = Decimal("0")
 CERTIFIED = ("CERTIFIED", "PAID")
+LIVE = ("AWARDED", "ACTIVE", "ON_HOLD")
 
 
 def _usd(amount, currency, rate):
@@ -22,14 +23,22 @@ def _usd(amount, currency, rate):
 
 def build(ctx):
     rate = fx.usd_rate()
-    projects = (Project.objects.filter(site_id__in=ctx.site_ids)
-                .exclude(status="TENDERING")
+    # Awarded and running work. A closed project counts only if the client
+    # certified or paid something on it: one closed with neither never went
+    # ahead, and its contract value is not revenue the company is owed (owner
+    # 2026-11-07, BVR's fish pond and kids' club). A tender not yet won
+    # (POTENTIAL) never counts.
+    projects = (Project.objects.filter(site_id__in=ctx.site_ids,
+                                       status__in=LIVE + ("CLOSED",))
                 .select_related("site").order_by("site__code", "code"))
     rows, period_claims, pending_vos = [], [], []
     for p in projects:
         cache = {}
         summ = project_revenue_summary(p, _cache=cache)
         if not (summ["contract_original"] or summ["claims_certified"]):
+            continue
+        if p.status == "CLOSED" and not (summ["claims_certified"]
+                                         or summ["received"]):
             continue
         ccy = summ["currency"]
         csum = contract_summary(p)
@@ -58,6 +67,7 @@ def build(ctx):
         revised = summ["contract_revised"]
         rows.append({
             "site": p.site.code, "project": f"{p.code} — {p.title}",
+            "status": p.get_status_display(),
             "original": _usd(summ["contract_original"], ccy, rate),
             "approved_vos": _usd(csum["approved_net"], ccy, rate),
             "revised": _usd(revised, ccy, rate),
@@ -76,7 +86,7 @@ def build(ctx):
              "certified", "in_period", "billed", "received", "outstanding",
              "retention")
     total = sum_rows(rows, money)
-    total.update(site="", project="Total",
+    total.update(site="", project="Total", status="",
                  pct=(total["certified"] / total["revised"] * 100
                       if total["revised"] else None))
 
@@ -102,6 +112,7 @@ def build(ctx):
         "sections": [
             section("Projects", [
                 col("site", "Site"), col("project", "Project", wide=True),
+                col("status", "Status"),
                 col("original", "Original contract", "money"),
                 col("approved_vos", "Approved variations", "money"),
                 col("revised", "Revised contract", "money"),
@@ -116,7 +127,9 @@ def build(ctx):
             ], rows, total if rows else None,
                 note="Certified values are ex-GST, the value of work the "
                      "client has certified. Billed is what the invoices ask "
-                     "for, including GST, after deductions."),
+                     "for, including GST, after deductions. A closed project "
+                     "appears only if something was certified or received "
+                     "on it."),
             section("Claims certified in the period", [
                 col("site", "Site"), col("project", "Project", wide=True),
                 col("claim", "Claim"), col("certified_on", "Certified", "date"),

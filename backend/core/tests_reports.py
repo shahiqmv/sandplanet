@@ -127,6 +127,23 @@ class RevenueTests(ReportCase):
         self.assertEqual([(v["vo"], v["waiting"]) for v in vos],
                          [("VO-02", 30)])
 
+    def test_a_closed_project_with_nothing_on_it_is_left_out(self):
+        """BVR's fish pond and kids' club: closed, never certified or paid —
+        their contract value is not revenue (owner 2026-11-07)."""
+        from .models import ClientReceipt
+        for code, status in (("RUN", "ACTIVE"), ("GONE", "CLOSED"),
+                             ("DONE", "CLOSED"), ("BID", "POTENTIAL")):
+            Project.objects.create(site=self.sjr, code=code, title=code,
+                                   status=status, contract_value=D("1000"))
+        ClientReceipt.objects.create(
+            project=Project.objects.get(code="DONE"), amount=D("500"),
+            received_on=date(2026, 9, 1))
+        rep = self.report(self.qs, "revenue", "all").data
+        rows = rep["sections"][0]["rows"]
+        self.assertEqual([r["project"].split(" ")[0] for r in rows],
+                         ["DONE", "RUN"])
+        self.assertEqual(rep["kpis"][0]["value"], D("2000.00"))
+
     def test_a_pm_report_holds_only_their_site(self):
         for site, code in ((self.sjr, "A"), (self.vkr, "B")):
             Project.objects.create(site=site, code=code, title=code,
