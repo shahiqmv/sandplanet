@@ -1079,13 +1079,16 @@ def attendance_bulk(request):
         # change — "I tried several times to put absence for him. But it
         # failed." (owner 2026-09-02). His history can still be TAKEN BACK;
         # what he cannot get is a new mark.
+        # A day already on his record can still be corrected — the remark,
+        # the reason, the hours: SJR could not put the reason on a leaver's
+        # absence and so could not close the month (owner 2026-11-07).
         if not employee.is_active:
             has_row = Attendance.objects.filter(employee=employee,
                                                 day=day).exists()
-            if not (has_row and (row.get("remark") or "") == "OFF"):
-                refused.append(f"{employee.emp_no} is no longer active — his "
-                               f"existing marks can be cleared (mark him OFF), "
-                               f"but no new attendance can be recorded")
+            if not has_row:
+                refused.append(f"{employee.emp_no} is no longer active — the "
+                               f"days already on his record can be corrected, "
+                               f"but no new day can be added")
                 continue
         # A worker's engagement starts on their join date — no attendance
         # before it (owner 2026-07-31). Say so rather than dropping the row in

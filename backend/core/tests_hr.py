@@ -965,15 +965,32 @@ class DeactivatedWorkerAttendanceTests(HrBase):
         self.assertFalse(Attendance.objects.filter(
             employee=self.mason, day=self.day).exists())
 
-    def test_a_new_mark_is_refused_out_loud(self):
-        """It must not look like it worked."""
+    def test_a_day_already_on_his_record_can_be_corrected(self):
+        """SJR could not put the reason on a leaver's absence, and so could
+        not close the month (owner 2026-11-07): a day he already has can be
+        changed; only a new day is refused."""
         r = self._put("ABSENT")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(r.data.get("refused"))
+        row = Attendance.objects.get(employee=self.mason, day=self.day)
+        self.assertEqual((row.remark, row.absence_reason),
+                         ("ABSENT", "NO_SHOW"))
+
+    def test_a_new_day_is_refused_out_loud(self):
+        """It must not look like it worked."""
+        from datetime import timedelta
+        later = self.day - timedelta(days=1)     # a day he was never marked
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": later.isoformat(),
+            "rows": [{"employee_id": self.mason.id, "check_in": "07:00",
+                      "check_out": "18:00", "remark": "PRESENT"}],
+        }, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertTrue(r.data.get("refused"),
                         "a dropped row has to be reported")
         self.assertIn(self.mason.emp_no, " ".join(r.data["refused"]))
-        row = Attendance.objects.get(employee=self.mason, day=self.day)
-        self.assertEqual(row.remark, "PRESENT")     # unchanged, not silently
+        self.assertFalse(Attendance.objects.filter(employee=self.mason,
+                                                   day=later).exists())
 
 
 class OtRevisionAndReviewTests(HrBase):
