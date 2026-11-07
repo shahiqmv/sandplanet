@@ -297,8 +297,17 @@ function DriveIntake({ d, reload, setError }) {
   const cams = Object.fromEntries((d.cameras || []).map((c) => [c.id, c]));
   const withFolder = (d.cameras || []).filter((c) => c.drive_folder);
   if (!withFolder.length && !items.length) return null;
-  const tone = { IMPORTED: "ok", SEEN: "muted", DUPLICATE: "warn",
+  const tone = { IMPORTED: "ok", SEEN: "muted", NEEDS_DATES: "warn", DUPLICATE: "warn",
                  IGNORED: "muted", FAILED: "alert" };
+  const [dating, setDating] = useState(null);   // {id, from, to}
+  async function saveItemDates() {
+    setError(null);
+    try {
+      await api(`/timelapse-drive-items/${dating.id}/dates`, { method: "POST",
+        body: { week_from: dating.from, week_to: dating.to || dating.from } });
+      setDating(null); reload();
+    } catch (e) { setError(e.message); }
+  }
   async function retry(it) {
     setError(null);
     try { await api(`/timelapse-drive-items/${it.id}/retry`, { method: "POST", body: {} }); reload(); }
@@ -318,14 +327,16 @@ function DriveIntake({ d, reload, setError }) {
           <p style={{ fontSize: 12.5, color: "#667", margin: "6px 0" }}>
             Every ten minutes Planet looks in each camera's folder and brings in
             any new video. A file is left in OneDrive as it is. A repeat of a
-            file already in is noted and skipped.</p>
+            file already in is noted and skipped. Name a file by its day, like
+            18_10.MP4 or 2026-10-18.MP4, and it goes in with no typing; a file
+            with no date in its name waits here until someone gives it one.</p>
           {items.length === 0
             ? <p style={{ fontSize: 13, color: "#667" }}>Nothing found yet.</p>
             : (
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr>
                 <th style={th}>File</th><th style={th}>Camera</th>
-                <th style={th}>Size</th><th style={th}>Seen</th>
+                <th style={th}>Size</th><th style={th}>Covers</th>
                 <th style={th}>What happened</th><th style={th}></th></tr></thead>
               <tbody>
                 {items.map((it) => (
@@ -334,7 +345,27 @@ function DriveIntake({ d, reload, setError }) {
                     <td style={td}>{cams[it.camera_id]
                       ? `${cams[it.camera_id].site_code} · ${cams[it.camera_id].name}` : ""}</td>
                     <td style={td}>{it.size_mb} MB</td>
-                    <td style={td}>{fmt(it.first_seen_at)}</td>
+                    <td style={td}>
+                      {dating?.id === it.id ? (
+                        <span style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                          <input type="date" value={dating.from} style={{ ...inputStyle, width: 140 }}
+                            onChange={(e) => setDating({ ...dating, from: e.target.value })} />
+                          <input type="date" value={dating.to} style={{ ...inputStyle, width: 140 }}
+                            title="Leave as the first day for a one-day file"
+                            onChange={(e) => setDating({ ...dating, to: e.target.value })} />
+                          <Btn variant="primary" onClick={saveItemDates}>Save</Btn>
+                          <Btn variant="ghost" onClick={() => setDating(null)}>Cancel</Btn>
+                        </span>
+                      ) : (<>
+                        {it.week_from ? <>{fmt(it.week_from)}{it.week_to !== it.week_from && ` – ${fmt(it.week_to)}`}</>
+                          : <span style={{ color: "#889" }}>not known</span>}
+                        {d.can_upload && it.status !== "IMPORTED" && (
+                          <button title="Say which days this file covers"
+                            onClick={() => setDating({ id: it.id, from: it.week_from || "", to: it.week_to || "" })}
+                            style={{ border: "none", background: "none", cursor: "pointer",
+                                     color: "#2b7bb9", fontSize: 11, marginLeft: 6 }}>
+                            {it.week_from ? "edit" : "set dates"}</button>)}
+                      </>)}</td>
                     <td style={td}><Chip tone={tone[it.status] || "muted"}>{it.status_label}</Chip>
                       {it.note && <div style={{ color: "#667", fontSize: 11.5 }}>{it.note}</div>}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>

@@ -1163,6 +1163,8 @@ urlpatterns = [
          name="timelapse-camera-detail"),
     path("timelapses/<int:pk>", cameras_api.timelapse_detail,
          name="timelapse-detail"),
+    path("timelapse-drive-items/<int:pk>/dates",
+         cameras_api.timelapse_drive_dates, name="timelapse-drive-dates"),
     path("timelapse-drive-items/<int:pk>/retry",
          cameras_api.timelapse_drive_retry, name="timelapse-drive-retry"),
     path("timelapse-reels/<int:pk>", cameras_api.timelapse_reel,

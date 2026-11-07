@@ -27,7 +27,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from django.conf import settings
 from django.core.files import File
@@ -118,6 +118,52 @@ def _when(iso):
 
 # ---- dates in the file ---------------------------------------------------------
 
+STAMP = re.compile(r"(\d{1,2})/(\d{1,2})/(20\d\d)")
+
+
+def _frame_text(path, last=False):
+    """The bottom strip of the first (or last) frame, read by tesseract.
+    The Brinno writes 'TLC300 10/28/2026 06:00:04' into every frame, so the
+    file says its own day whatever its name and metadata say (owner
+    2026-11-07)."""
+    work = tempfile.mkdtemp(prefix="stamp-")
+    try:
+        png = os.path.join(work, "strip.png")
+        seek = ["-sseof", "-0.3"] if last else []
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", *seek, "-i", path,
+             "-update", "1", "-frames:v", "1",
+             "-vf", "crop=iw:ih/8:0:ih-ih/8,scale=iw*2:ih*2", png],
+            capture_output=True, timeout=120)
+        if r.returncode != 0 or not os.path.exists(png):
+            return ""
+        r = subprocess.run(
+            ["tesseract", png, "stdout", "--psm", "7"],
+            capture_output=True, text=True, timeout=60)
+        return r.stdout if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def stamp_dates(path):
+    """(from, to) from the timestamp burned into the first and last frames,
+    month/day/year as the camera writes it; None where it reads nothing."""
+    found = []
+    for last in (False, True):
+        m = STAMP.search(_frame_text(path, last))
+        if m:
+            try:
+                found.append(date(int(m.group(3)), int(m.group(1)),
+                                  int(m.group(2))))
+            except ValueError:
+                pass
+    if not found:
+        return None, None
+    return min(found), max(found)
+
+
 def probe_dates(path, modified=None):
     """(from, to) the clip covers, from what the file itself says: the
     recording's creation time as the start, the file's own modified time (the
@@ -148,6 +194,34 @@ def probe_dates(path, modified=None):
     s = (start or end).astimezone(timezone(timedelta(hours=5))).date()
     e = (end or start).astimezone(timezone(timedelta(hours=5))).date()
     return s, e
+
+
+def dates_from_name(name, today=None):
+    """(from, to) from a file named by its day, the way the sites already
+    name them: 18_10.MP4, 18-10-2026.MP4, 2026-10-18.MP4, 18_10 to 23_10.MP4.
+    None where the name says nothing (TLC00005.MP4)."""
+    today = today or djtz.localdate()
+    stem = os.path.splitext(name)[0]
+    found = []
+    for m in re.finditer(r"(?<!\d)(\d{4})[-_.](\d{1,2})[-_.](\d{1,2})(?!\d)"
+                         r"|(?<!\d)(\d{1,2})[-_.](\d{1,2})(?:[-_.](\d{2,4}))?(?!\d)",
+                         stem):
+        try:
+            if m.group(1):
+                d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            else:
+                y = m.group(6)
+                y = (int(y) + (2000 if len(y) == 2 else 0)) if y else today.year
+                d = date(y, int(m.group(5)), int(m.group(4)))
+                if not m.group(6) and d > today + timedelta(days=7):
+                    d = d.replace(year=y - 1)     # a January file in December
+        except ValueError:
+            continue
+        if date(2020, 1, 1) <= d <= today + timedelta(days=7):
+            found.append(d)
+    if not found:
+        return None, None
+    return min(found), max(found)
 
 
 # ---- the sweep -------------------------------------------------------------------
@@ -181,7 +255,7 @@ def sync_camera(cam, now=None):
                 camera=cam, name=f["name"], size_bytes=f["size"],
                 modified_at=f["modified"], content_hash=f["hash"])
             continue
-        if item.status != "SEEN":
+        if item.status not in ("SEEN", "NEEDS_DATES"):
             continue
         changed = (item.size_bytes != f["size"] or item.content_hash != f["hash"])
         if changed or now - item.first_seen_at < SETTLE:
@@ -191,6 +265,8 @@ def sync_camera(cam, now=None):
                 item.first_seen_at = now
             item.save()
             continue
+        if item.status == "NEEDS_DATES" and not item.week_from:
+            continue                    # still waiting for someone to say
         if item.attempts >= MAX_ATTEMPTS:
             continue
         twin = (TimelapseDriveItem.objects
@@ -218,11 +294,24 @@ def _import(cam, item, f, now):
     work = tempfile.mkdtemp(prefix="drive-")
     try:
         dest = os.path.join(work, f["name"])
-        fetch(cam.drive_folder, f["name"], dest)
-        start, end = probe_dates(dest, f["modified"])
+        # the days it covers: what the site said, else the name, else what
+        # the file itself says; a file with none of those waits for the site
+        start, end = item.week_from, item.week_to
         if start is None:
-            raise DriveError("The file carries no date; give it one on the "
-                             "upload page instead.")
+            start, end = dates_from_name(f["name"])
+        if start is None:
+            fetch(cam.drive_folder, f["name"], dest)
+            start, end = stamp_dates(dest)
+        if start is None:
+            start, end = probe_dates(dest, None)
+        if start is None:
+            item.status, item.attempts = "NEEDS_DATES", 0
+            item.note = ("The file carries no date. Say which days it covers "
+                         "and it will be brought in.")
+            item.save()
+            return False
+        if not os.path.exists(dest):
+            fetch(cam.drive_folder, f["name"], dest)
         with open(dest, "rb") as fh, transaction.atomic():
             clip, err = tl.create(cam, {"week_from": str(start),
                                         "week_to": str(end),
@@ -231,7 +320,7 @@ def _import(cam, item, f, now):
             if err:
                 raise DriveError(str(err))
             item.clip, item.status, item.note = clip, "IMPORTED", ""
-            item.done_at = now
+            item.week_from, item.week_to, item.done_at = start, end, now
             item.save()
         audit("site", cam.site_id, "TIMELAPSE_DRIVE_IMPORTED", actor=None,
               detail={"camera": cam.name, "file": f["name"],
@@ -255,6 +344,33 @@ def clip_deleted(clip):
              "it back.")
 
 
+def set_dates(item, data, actor):
+    """The site says which days a dateless file covers; the next pass brings
+    it in. Also re-dates one not yet imported."""
+    if item.status not in ("NEEDS_DATES", "SEEN", "FAILED", "IGNORED",
+                           "DUPLICATE"):
+        return "That file is already in."
+    try:
+        wf = date.fromisoformat(str(data.get("week_from"))[:10])
+        wt = date.fromisoformat(str(data.get("week_to") or data.get("week_from"))[:10])
+    except ValueError:
+        return "Give the days the file covers."
+    if wt < wf:
+        return "The clip ends before it starts."
+    if wf > djtz.localdate():
+        return "Those days have not come yet."
+    item.week_from, item.week_to = wf, wt
+    if item.status != "SEEN":
+        item.status, item.attempts, item.note = "SEEN", 0, ""
+        item.first_seen_at = djtz.now() - SETTLE
+        item.done_at = None
+    item.save()
+    audit("site", item.camera.site_id, "TIMELAPSE_DRIVE_DATED", actor=actor,
+          detail={"camera": item.camera.name, "file": item.name,
+                  "dates": f"{wf}..{wt}"})
+    return None
+
+
 def import_again(item, actor):
     if item.status not in ("IGNORED", "FAILED", "DUPLICATE"):
         return "That file is already in, or on its way."
@@ -273,4 +389,5 @@ def item_dict(d):
             "modified_at": d.modified_at, "status": d.status,
             "status_label": d.get_status_display(), "note": d.note,
             "clip_id": d.clip_id, "first_seen_at": d.first_seen_at,
+            "week_from": d.week_from, "week_to": d.week_to,
             "done_at": d.done_at}

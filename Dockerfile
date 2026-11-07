@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libffi8 shared-mime-info fonts-dejavu-core ghostscript \
       fonts-noto-core \
       ffmpeg \
+      tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 # rclone carries the time-lapse intake from OneDrive (core/drive.py); a
 # pinned release rather than Debian's, which is years behind OneDrive.

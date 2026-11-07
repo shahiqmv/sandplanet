@@ -10267,6 +10267,7 @@ class TimelapseDriveItem(models.Model):
 
     class Status(models.TextChoices):
         SEEN = "SEEN", "Seen, waiting to settle"
+        NEEDS_DATES = "NEEDS_DATES", "Waiting for its dates"
         IMPORTED = "IMPORTED", "Imported"
         DUPLICATE = "DUPLICATE", "Repeat of a file already in"
         IGNORED = "IGNORED", "Deleted in Planet, left alone"
@@ -10278,12 +10279,16 @@ class TimelapseDriveItem(models.Model):
     size_bytes = models.BigIntegerField(default=0)
     modified_at = models.DateTimeField(null=True, blank=True)
     content_hash = models.CharField(max_length=80, blank=True, db_index=True)
-    status = models.CharField(max_length=10, choices=Status.choices,
+    status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.SEEN)
     clip = models.ForeignKey(SiteTimelapse, on_delete=models.SET_NULL,
                              null=True, blank=True, related_name="drive_items")
     note = models.CharField(max_length=300, blank=True)
     attempts = models.PositiveSmallIntegerField(default=0)
+    # the days the file covers, when the file itself does not say: read
+    # from a name like 18_10.MP4, or typed in by the site
+    week_from = models.DateField(null=True, blank=True)
+    week_to = models.DateField(null=True, blank=True)
     first_seen_at = models.DateTimeField(auto_now_add=True)
     seen_at = models.DateTimeField(auto_now=True)
     done_at = models.DateTimeField(null=True, blank=True)

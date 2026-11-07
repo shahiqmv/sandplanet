@@ -19,6 +19,10 @@ from .tests import make_user
 
 HAVE_TOOLS = (shutil.which("rclone") is not None
               and shutil.which("ffmpeg") is not None)
+FONT = next((f for f in ("/System/Library/Fonts/Supplemental/Courier New.ttf",
+                         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
+             if os.path.exists(f)), None)
+HAVE_OCR = HAVE_TOOLS and shutil.which("tesseract") is not None
 
 
 def _clip(path, created="2026-10-18T06:00:00"):
@@ -28,8 +32,27 @@ def _clip(path, created="2026-10-18T06:00:00"):
                     f"creation_time={created}", path], check=True)
 
 
-@unittest.skipUnless(HAVE_TOOLS, "rclone and ffmpeg needed")
-class DriveIntakeTests(TestCase):
+def _stamped(path, first, last):
+    """A clip the way the Brinno writes one: the day and time in the frame.
+    Drawn with Pillow, since not every ffmpeg build can draw text."""
+    from PIL import Image, ImageDraw, ImageFont
+    font = (ImageFont.truetype(FONT, 28) if FONT
+            else ImageFont.load_default(size=28))
+    work = tempfile.mkdtemp(prefix="stamped-")
+    try:
+        for n in range(30):
+            im = Image.new("RGB", (640, 360), "black")
+            ImageDraw.Draw(im).text((160, 326), f"TLC300 {first if n < 15 else last}",
+                                    fill="white", font=font)
+            im.save(os.path.join(work, f"f{n:02d}.png"))
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-framerate", "10",
+                        "-i", os.path.join(work, "f%02d.png"),
+                        "-pix_fmt", "yuv420p", path], check=True)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+class DriveCase(TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="od-")
         self.addCleanup(shutil.rmtree, self.root, True)
@@ -58,7 +81,12 @@ class DriveIntakeTests(TestCase):
         now = timezone.now() + (later_by or timedelta())
         return drive.sync_camera(self.cam, now=now)
 
+
+@unittest.skipUnless(HAVE_TOOLS, "rclone and ffmpeg needed")
+class DriveIntakeTests(DriveCase):
     def test_a_new_file_waits_one_pass_then_comes_in_with_its_dates(self):
+        """A camera that stamps its recording time: that day. (OneDrive's own
+        file time is the upload, so it is never used.)"""
         self.put("TLC00005.MP4", mtime=timezone.make_aware(
             timezone.datetime(2026, 10, 23, 18, 30)))
         self.assertEqual(self.sweep(), (0, 0, 0))        # seen, left to settle
@@ -69,7 +97,7 @@ class DriveIntakeTests(TestCase):
         clip = SiteTimelapse.objects.get()
         self.assertEqual((item.status, item.clip_id), ("IMPORTED", clip.id))
         self.assertEqual((clip.week_from, clip.week_to),
-                         (date(2026, 10, 18), date(2026, 10, 23)))
+                         (date(2026, 10, 18), date(2026, 10, 18)))
         self.assertEqual((clip.file_name, clip.uploaded_by_id),
                          ("TLC00005.MP4", None))
         # the file is left where it was
@@ -149,6 +177,77 @@ class DriveIntakeTests(TestCase):
         with self.assertRaises(drive.DriveError):
             drive.list_folder("NOWHERE/deeper")
         self.assertEqual(drive.sync_all(), (0, 0, 1))
+
+
+@unittest.skipUnless(HAVE_TOOLS, "rclone and ffmpeg needed")
+class DatelessFileTests(DriveCase):
+    """A Brinno file says nothing about its day (TLC00005.MP4: creation
+    time zero, OneDrive's time the upload): it waits for the site to say,
+    or carries its day in its name."""
+
+    def put_dateless(self, name):
+        path = self.put(name, created="1904-01-01T00:00:00")
+        t = timezone.now().timestamp()
+        os.utime(path, (t, t))
+        return path
+
+    def test_a_dateless_file_waits_until_someone_says_its_days(self):
+        self.put_dateless("TLC00005.MP4")
+        self.sweep()
+        self.sweep(timedelta(minutes=9))
+        item = TimelapseDriveItem.objects.get()
+        self.assertEqual(item.status, "NEEDS_DATES")
+        self.assertFalse(SiteTimelapse.objects.exists())
+        self.assertEqual(self.sweep(timedelta(minutes=30)), (0, 0, 0))
+        r = self.c.post(f"/api/v1/timelapse-drive-items/{item.id}/dates",
+                        {"week_from": "2026-11-04"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.sweep(timedelta(minutes=31)), (1, 0, 0))
+        clip = SiteTimelapse.objects.get()
+        self.assertEqual((clip.week_from, clip.week_to),
+                         (date(2026, 11, 4), date(2026, 11, 4)))
+
+    def test_a_file_named_by_its_day_needs_no_typing(self):
+        self.put_dateless("18_10.MP4")
+        self.sweep()
+        self.assertEqual(self.sweep(timedelta(minutes=9)), (1, 0, 0))
+        clip = SiteTimelapse.objects.get()
+        self.assertEqual((clip.week_from, clip.week_to),
+                         (date(2026, 10, 18), date(2026, 10, 18)))
+
+    def test_names_the_sites_use(self):
+        today = date(2026, 11, 7)
+        for name, want in (("18_10.MP4", (date(2026, 10, 18),) * 2),
+                           ("2026-10-18.MP4", (date(2026, 10, 18),) * 2),
+                           ("18-10-2026.mp4", (date(2026, 10, 18),) * 2),
+                           ("18_10 to 23_10.MP4", (date(2026, 10, 18),
+                                                   date(2026, 10, 23))),
+                           ("TLC00005.MP4", (None, None)),
+                           ("31_12.MP4", (date(2025, 12, 31),) * 2)):
+            self.assertEqual(drive.dates_from_name(name, today), want, name)
+
+
+@unittest.skipUnless(HAVE_OCR, "rclone, ffmpeg, tesseract and a font needed")
+class StampedFileTests(DriveCase):
+    """The Brinno burns 'TLC300 10/28/2026 06:00:04' into every frame: the
+    first and last frames say the days the file covers (owner 2026-11-07)."""
+
+    def test_the_stamp_is_read_and_the_file_comes_in_on_its_day(self):
+        path = os.path.join(self.root, "NORTH JETTY", "TLC00005.MP4")
+        _stamped(path, "10/28/2026 06:00:04", "10/28/2026 21:59:51")
+        self.assertEqual(drive.stamp_dates(path),
+                         (date(2026, 10, 28), date(2026, 10, 28)))
+        self.sweep()
+        self.assertEqual(self.sweep(timedelta(minutes=9)), (1, 0, 0))
+        clip = SiteTimelapse.objects.get()
+        self.assertEqual((clip.week_from, clip.week_to),
+                         (date(2026, 10, 28), date(2026, 10, 28)))
+
+    def test_a_file_spanning_days_gets_both(self):
+        path = os.path.join(self.root, "NORTH JETTY", "TLC00009.MP4")
+        _stamped(path, "10/29/2026 06:00:00", "11/02/2026 21:59:00")
+        self.assertEqual(drive.stamp_dates(path),
+                         (date(2026, 10, 29), date(2026, 11, 2)))
 
 
 class ProbeDatesTests(TestCase):

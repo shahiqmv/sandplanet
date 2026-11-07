@@ -313,6 +313,25 @@ def timelapse_drive_retry(request, pk):
 
 
 @api_view(["POST"])
+def timelapse_drive_dates(request, pk):
+    """Say which days a OneDrive file covers, when the file does not."""
+    from . import drive, timelapse as tl
+    from .models import TimelapseDriveItem
+    ids = _tl_sites(request)
+    item = TimelapseDriveItem.objects.select_related("camera__site") \
+        .filter(pk=pk).first()
+    if item is None or (ids is not None and item.camera.site_id not in ids):
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in tl.UPLOAD_ROLES:
+        return Response({"detail": "The site team, PM or Director does "
+                                   "that."}, status=403)
+    msg = drive.set_dates(item, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(drive.item_dict(item))
+
+
+@api_view(["POST"])
 def timelapse_upload_start(request):
     """Begin a week's video in chunks: camera_id, week_from, week_to, note,
     file_name, size → {token, chunk_size} (owner 2026-10-27)."""
