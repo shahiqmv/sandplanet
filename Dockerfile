@@ -23,6 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fonts-noto-core \
       ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+# rclone carries the time-lapse intake from OneDrive (core/drive.py); a
+# pinned release rather than Debian's, which is years behind OneDrive.
+ARG RCLONE_VERSION=1.76.0
+ADD https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.deb /tmp/rclone.deb
+RUN dpkg -i /tmp/rclone.deb && rm /tmp/rclone.deb && rclone version
 
 WORKDIR /app/backend
 COPY backend/requirements.txt ./

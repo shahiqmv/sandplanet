@@ -225,8 +225,9 @@ def timelapses(request):
     """Each camera's joined reel, the weekly uploads behind it and the camera
     register (?site=), or a new week's video (multipart: camera_id,
     week_from, week_to, file, note)."""
-    from . import timelapse as tl
-    from .models import SiteTimelapse, TimelapseCamera, TimelapseReel
+    from . import drive, timelapse as tl
+    from .models import (SiteTimelapse, TimelapseCamera, TimelapseDriveItem,
+                         TimelapseReel)
     ids = _tl_sites(request)
     if request.method == "POST":
         cam = TimelapseCamera.objects.select_related("site").filter(
@@ -273,7 +274,42 @@ def timelapses(request):
         "can_upload": request.user.role in tl.UPLOAD_ROLES,
         "can_publish": request.user.role in tl.PUBLISH_ROLES,
         "can_manage_cameras": request.user.role in tl.CAMERA_ROLES,
+        # what Planet found in the cameras' OneDrive folders (core/drive.py)
+        "drive": {
+            "connected": _drive_connected(),
+            "items": [drive.item_dict(d) for d in
+                      TimelapseDriveItem.objects.filter(camera__in=cams)
+                      .select_related("camera")[:300]],
+        },
     })
+
+
+def _drive_connected():
+    from . import drive
+    try:
+        return drive.connected()
+    except drive.DriveError:
+        return False
+
+
+@api_view(["POST"])
+def timelapse_drive_retry(request, pk):
+    """Bring a OneDrive file in again after its upload was deleted here, or
+    after it failed."""
+    from . import drive, timelapse as tl
+    from .models import TimelapseDriveItem
+    ids = _tl_sites(request)
+    item = TimelapseDriveItem.objects.select_related("camera__site") \
+        .filter(pk=pk).first()
+    if item is None or (ids is not None and item.camera.site_id not in ids):
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in tl.UPLOAD_ROLES:
+        return Response({"detail": "The site team, PM or Director does "
+                                   "that."}, status=403)
+    msg = drive.import_again(item, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(drive.item_dict(item))
 
 
 @api_view(["POST"])
@@ -368,9 +404,10 @@ def timelapse_camera_detail(request, pk):
     return Response(tl.camera_dict(cam))
 
 
-@api_view(["DELETE"])
+@api_view(["DELETE", "PATCH"])
 def timelapse_detail(request, pk):
-    """Remove a week's upload — its reel is rebuilt without it."""
+    """Remove a week's upload — its reel is rebuilt without it — or correct
+    the days it covers (PATCH week_from, week_to)."""
     from . import timelapse as tl
     from .models import SiteTimelapse
     ids = _tl_sites(request)
@@ -378,6 +415,11 @@ def timelapse_detail(request, pk):
         .filter(pk=pk).first()
     if clip is None or (ids is not None and clip.site_id not in ids):
         return Response({"detail": "Not found."}, status=404)
+    if request.method == "PATCH":
+        msg = tl.set_dates(clip, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(tl.clip_dict(clip, request))
     if not (request.user.role in tl.PUBLISH_ROLES
             or clip.uploaded_by_id == request.user.id):
         return Response({"detail": "Whoever uploaded it, the PM or the "

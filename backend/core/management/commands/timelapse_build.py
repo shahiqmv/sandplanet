@@ -17,7 +17,11 @@ class Command(BaseCommand):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return                       # a run is already working
+            from core import drive
+            got = drive.sync_all()
             converted, failed, built = timelapse.build_pending()
-            if converted or failed or built:
-                self.stdout.write(f"converted {converted}, failed {failed}, "
-                                  f"reels rebuilt {built}")
+            if any(got) or converted or failed or built:
+                self.stdout.write(f"onedrive imported {got[0]}, repeats "
+                                  f"{got[1]}, failed {got[2]}; converted "
+                                  f"{converted}, failed {failed}, reels "
+                                  f"rebuilt {built}")

@@ -10200,6 +10200,10 @@ class TimelapseCamera(models.Model):
                                 null=True, blank=True, related_name="+")
     name = models.CharField(max_length=80)
     location = models.CharField(max_length=200, blank=True)
+    # The OneDrive folder the site copies this camera's card files into;
+    # Planet imports new files from it every ten minutes (owner 2026-11-07:
+    # uploads from the islands kept failing). Blank: upload page only.
+    drive_folder = models.CharField(max_length=300, blank=True)
     # retired: off the upload list, its video kept
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL,
@@ -10253,6 +10257,41 @@ class SiteTimelapse(models.Model):
 
     class Meta:
         ordering = ["-week_from", "-id"]
+
+
+class TimelapseDriveItem(models.Model):
+    """One file Planet has seen in a camera's OneDrive folder, and what it
+    did with it. Kept so a file is never imported twice, so a repeat copy is
+    named rather than silently skipped, and so a file whose upload Planet
+    deleted is not quietly brought back (owner 2026-11-07)."""
+
+    class Status(models.TextChoices):
+        SEEN = "SEEN", "Seen, waiting to settle"
+        IMPORTED = "IMPORTED", "Imported"
+        DUPLICATE = "DUPLICATE", "Repeat of a file already in"
+        IGNORED = "IGNORED", "Deleted in Planet, left alone"
+        FAILED = "FAILED", "Could not import"
+
+    camera = models.ForeignKey(TimelapseCamera, on_delete=models.CASCADE,
+                               related_name="drive_items")
+    name = models.CharField(max_length=200)
+    size_bytes = models.BigIntegerField(default=0)
+    modified_at = models.DateTimeField(null=True, blank=True)
+    content_hash = models.CharField(max_length=80, blank=True, db_index=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.SEEN)
+    clip = models.ForeignKey(SiteTimelapse, on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name="drive_items")
+    note = models.CharField(max_length=300, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    seen_at = models.DateTimeField(auto_now=True)
+    done_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-first_seen_at"]
+        constraints = [models.UniqueConstraint(fields=["camera", "name"],
+                                               name="uniq_drive_item")]
 
 
 class TimelapseReel(models.Model):

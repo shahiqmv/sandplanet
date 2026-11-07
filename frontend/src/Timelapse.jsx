@@ -288,6 +288,67 @@ function Upload({ d, onDone, onCancel }) {
   );
 }
 
+// What Planet found in the cameras' OneDrive folders: each file and what
+// became of it, so a repeat or a failure is seen here rather than wondered
+// about (owner 2026-11-07).
+function DriveIntake({ d, reload, setError }) {
+  const [open, setOpen] = useState(false);
+  const items = d.drive?.items || [];
+  const cams = Object.fromEntries((d.cameras || []).map((c) => [c.id, c]));
+  const withFolder = (d.cameras || []).filter((c) => c.drive_folder);
+  if (!withFolder.length && !items.length) return null;
+  const tone = { IMPORTED: "ok", SEEN: "muted", DUPLICATE: "warn",
+                 IGNORED: "muted", FAILED: "alert" };
+  async function retry(it) {
+    setError(null);
+    try { await api(`/timelapse-drive-items/${it.id}/retry`, { method: "POST", body: {} }); reload(); }
+    catch (e) { setError(e.message); }
+  }
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button onClick={() => setOpen((v) => !v)}
+        style={{ border: "none", background: "none", cursor: "pointer",
+                 color: "var(--navy, #1f3a52)", fontSize: 13, padding: 0 }}>
+        {open ? "▾" : "▸"} From OneDrive ({items.length})</button>
+      {!d.drive?.connected && (
+        <span style={{ fontSize: 12.5, color: "#8a5200", marginLeft: 10 }}>
+          Planet is not connected to OneDrive yet, so nothing is imported.</span>)}
+      {open && (
+        <div style={{ overflowX: "auto" }}>
+          <p style={{ fontSize: 12.5, color: "#667", margin: "6px 0" }}>
+            Every ten minutes Planet looks in each camera's folder and brings in
+            any new video. A file is left in OneDrive as it is. A repeat of a
+            file already in is noted and skipped.</p>
+          {items.length === 0
+            ? <p style={{ fontSize: 13, color: "#667" }}>Nothing found yet.</p>
+            : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr>
+                <th style={th}>File</th><th style={th}>Camera</th>
+                <th style={th}>Size</th><th style={th}>Seen</th>
+                <th style={th}>What happened</th><th style={th}></th></tr></thead>
+              <tbody>
+                {items.map((it) => (
+                  <tr key={it.id}>
+                    <td style={td}>{it.name}</td>
+                    <td style={td}>{cams[it.camera_id]
+                      ? `${cams[it.camera_id].site_code} · ${cams[it.camera_id].name}` : ""}</td>
+                    <td style={td}>{it.size_mb} MB</td>
+                    <td style={td}>{fmt(it.first_seen_at)}</td>
+                    <td style={td}><Chip tone={tone[it.status] || "muted"}>{it.status_label}</Chip>
+                      {it.note && <div style={{ color: "#667", fontSize: 11.5 }}>{it.note}</div>}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>
+                      {d.can_upload && ["IGNORED", "FAILED", "DUPLICATE"].includes(it.status) && (
+                        <Btn variant="ghost" onClick={() => retry(it)}>Import again</Btn>)}
+                    </td>
+                  </tr>))}
+              </tbody>
+            </table>)}
+        </div>)}
+    </div>
+  );
+}
+
 // The camera register — like the live cameras: which site, which project,
 // where it is mounted. Uploads pick from it.
 function CameraForm({ d, cam, onDone, onCancel }) {
@@ -296,6 +357,7 @@ function CameraForm({ d, cam, onDone, onCancel }) {
   const [project, setProject] = useState(
     cam ? (cam.project_id ? String(cam.project_id) : "site") : "");
   const [location, setLocation] = useState(cam?.location || "");
+  const [folder, setFolder] = useState(cam?.drive_folder || "");
   const [error, setError] = useState(null);
   const site = (d.sites || []).find((s) => String(s.id) === String(siteId));
   const projects = site?.projects || [];
@@ -305,7 +367,7 @@ function CameraForm({ d, cam, onDone, onCancel }) {
       setError("Give the site, a name, the project and where it is mounted.");
       return;
     }
-    const body = { name, location,
+    const body = { name, location, drive_folder: folder,
                    project_id: project === "site" ? null : project };
     try {
       if (cam) await api(`/timelapse-cameras/${cam.id}`, { method: "PATCH", body });
@@ -342,6 +404,13 @@ function CameraForm({ d, cam, onDone, onCancel }) {
           <input style={inputStyle} value={location}
             placeholder="e.g. Jetty head pole, facing villas 20–30"
             onChange={(e) => setLocation(e.target.value)} /></label>
+        {/* The site copies the card's files into this OneDrive folder and
+            Planet imports them every ten minutes (owner 2026-11-07); blank
+            means the upload page only. */}
+        <label style={{ fontSize: 12.5, gridColumn: "1 / -1" }}>OneDrive folder the site copies this camera's files into
+          <input style={inputStyle} value={folder}
+            placeholder="e.g. Time-lapse/NORTH JETTY — as it appears in OneDrive; blank for the upload page only"
+            onChange={(e) => setFolder(e.target.value)} /></label>
       </div>
       {error && <p style={{ color: "#b00", fontSize: 13 }}>{error}</p>}
       <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
@@ -389,7 +458,8 @@ function CameraRegister({ d, reload, setError }) {
                           fontSize: 13, marginTop: 6 }}>
             <thead><tr>
               <th style={th}>Camera</th><th style={th}>Project</th>
-              <th style={th}>Mounted at</th><th style={th}>Weeks</th>
+              <th style={th}>Mounted at</th><th style={th}>OneDrive folder</th>
+              <th style={th}>Weeks</th>
               <th style={th}></th></tr></thead>
             <tbody>
               {cams.map((c) => (
@@ -401,6 +471,8 @@ function CameraRegister({ d, reload, setError }) {
                         {c.project_title}</div></>
                     : "Whole site"}</td>
                   <td style={td}>{c.location}</td>
+                  <td style={td}>{c.drive_folder
+                    || <span style={{ color: "#889" }}>upload page only</span>}</td>
                   <td style={td}>{c.uploads}</td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>
                     {d.can_manage_cameras && (<>
@@ -443,6 +515,15 @@ export default function TimelapseSection() {
                                                            body: { on } });
           load(); }
     catch (e) { setError(e.message); }
+  }
+  const [datesEdit, setDatesEdit] = useState(null);   // {id, from, to}
+  async function saveDates(u) {
+    setError(null);
+    try {
+      await api(`/timelapses/${u.id}`, { method: "PATCH",
+        body: { week_from: datesEdit.from, week_to: datesEdit.to } });
+      setDatesEdit(null); load();
+    } catch (e) { setError(e.message); }
   }
   async function removeWeek(u) {
     if (!window.confirm(`Remove the upload for ${fmt(u.week_from)}${u.week_to !== u.week_from ? ` – ${fmt(u.week_to)}` : ""}? The camera's video is rebuilt without it.`)) return;
@@ -537,6 +618,7 @@ export default function TimelapseSection() {
       </div>
 
       <CameraRegister d={d} reload={load} setError={setError} />
+      <DriveIntake d={d} reload={load} setError={setError} />
 
       {(d.uploads || []).length > 0 && (
         <div style={{ marginTop: 14 }}>
@@ -554,8 +636,25 @@ export default function TimelapseSection() {
               <tbody>
                 {d.uploads.map((u) => (
                   <tr key={u.id}>
-                    <td style={td}>{fmt(u.week_from)}
-                      {u.week_to !== u.week_from && ` – ${fmt(u.week_to)}`}</td>
+                    <td style={td}>
+                      {datesEdit?.id === u.id ? (
+                        <span style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+                          <input type="date" value={datesEdit.from} style={{ ...inputStyle, width: 140 }}
+                            onChange={(e) => setDatesEdit({ ...datesEdit, from: e.target.value })} />
+                          <input type="date" value={datesEdit.to} style={{ ...inputStyle, width: 140 }}
+                            onChange={(e) => setDatesEdit({ ...datesEdit, to: e.target.value })} />
+                          <Btn variant="primary" onClick={() => saveDates(u)}>Save</Btn>
+                          <Btn variant="ghost" onClick={() => setDatesEdit(null)}>Cancel</Btn>
+                        </span>
+                      ) : (<>
+                        {fmt(u.week_from)}
+                        {u.week_to !== u.week_from && ` – ${fmt(u.week_to)}`}
+                        {d.can_upload && (
+                          <button title="Correct the days this upload covers"
+                            onClick={() => setDatesEdit({ id: u.id, from: u.week_from, to: u.week_to })}
+                            style={{ border: "none", background: "none", cursor: "pointer",
+                                     color: "#2b7bb9", fontSize: 11, marginLeft: 6 }}>edit</button>)}
+                      </>)}</td>
                     <td style={td}>{u.site_code} · {u.camera_label}</td>
                     <td style={td}>{u.status_label}
                       {u.error && <div style={{ color: "#b00", fontSize: 11.5 }}>{u.error}</div>}</td>

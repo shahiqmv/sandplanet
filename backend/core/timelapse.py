@@ -73,6 +73,8 @@ def _camera_fields(site, data, cam=None):
                 or "").strip()[:200]
     if not location:
         return "Say where it is mounted and what it looks at."
+    drive_folder = (data.get("drive_folder", cam.drive_folder if cam else "")
+                    or "").strip().strip("/")[:300]
     project = cam.project if cam else None
     if "project_id" in data:
         pid = data.get("project_id")
@@ -81,7 +83,11 @@ def _camera_fields(site, data, cam=None):
             project = Project.objects.filter(pk=pid, site=site).first()
             if project is None:
                 return "That project is not on this site."
-    return name, location, project
+    if drive_folder and TimelapseCamera.objects.filter(
+            drive_folder__iexact=drive_folder).exclude(
+            pk=cam.pk if cam else None).exists():
+        return "Another camera already imports from that OneDrive folder."
+    return name, location, project, drive_folder
 
 
 def camera_create(site, data, actor):
@@ -90,9 +96,10 @@ def camera_create(site, data, actor):
     got = _camera_fields(site, data)
     if isinstance(got, str):
         return None, got
-    name, location, project = got
+    name, location, project, drive_folder = got
     cam = TimelapseCamera.objects.create(site=site, name=name,
                                          location=location, project=project,
+                                         drive_folder=drive_folder,
                                          created_by=actor)
     audit("site", site.id, "TIMELAPSE_CAMERA_ADDED", actor=actor,
           detail={"site": site.code, "camera": name,
@@ -106,7 +113,7 @@ def camera_update(cam, data, actor):
     got = _camera_fields(cam.site, data, cam)
     if isinstance(got, str):
         return got
-    cam.name, cam.location, cam.project = got
+    cam.name, cam.location, cam.project, cam.drive_folder = got
     if "is_active" in data:
         cam.is_active = bool(data.get("is_active"))
     cam.save()
@@ -135,7 +142,7 @@ def camera_dict(cam):
             "project_id": cam.project_id,
             "project_code": cam.project.code if cam.project_id else "",
             "project_title": cam.project.title if cam.project_id else "",
-            "is_active": cam.is_active,
+            "is_active": cam.is_active, "drive_folder": cam.drive_folder,
             "uploads": cam.uploads.count()}
 
 
@@ -143,9 +150,10 @@ def camera_dict(cam):
 
 @transaction.atomic
 def create(camera, data, upload, actor):
-    """Returns (clip, error)."""
+    """Returns (clip, error). `actor` None is the OneDrive intake
+    (core/drive.py), which answers to the camera's folder, not a role."""
     site = camera.site
-    if actor.role not in UPLOAD_ROLES:
+    if actor is not None and actor.role not in UPLOAD_ROLES:
         return None, "The site team, PM or Director uploads time-lapses."
     if upload is None:
         return None, "Attach the week's video from the camera's card."
@@ -421,9 +429,36 @@ def _sweep(days=2):
             pass
 
 
+def set_dates(clip, data, actor):
+    """Correct the days an upload covers (owner 2026-11-07): a date read off
+    a card file, or typed late, can be wrong, and deleting the upload to fix
+    it would only bring the file back from OneDrive."""
+    if actor.role not in UPLOAD_ROLES:
+        return "The site team, PM or Director edits uploads."
+    try:
+        wf = date.fromisoformat(str(data.get("week_from"))[:10])
+        wt = date.fromisoformat(str(data.get("week_to"))[:10])
+    except ValueError:
+        return "Give the days the video covers."
+    if wt < wf:
+        return "The clip ends before it starts."
+    if wf > date.today():
+        return "Those days have not come yet."
+    was = f"{clip.week_from}..{clip.week_to}"
+    clip.week_from, clip.week_to = wf, wt
+    clip.save(update_fields=["week_from", "week_to"])
+    TimelapseReel.objects.filter(camera=clip.camera).update(needs_build=True)
+    audit("site", clip.site_id, "TIMELAPSE_DATES_SET", actor=actor,
+          detail={"site": clip.site.code, "camera": clip.camera.name,
+                  "file": clip.file_name, "was": was, "now": f"{wf}..{wt}"})
+    return None
+
+
 @transaction.atomic
 def remove(clip, actor):
+    from . import drive
     site, camera = clip.site, clip.camera
+    drive.clip_deleted(clip)
     if clip.file:
         clip.file.delete(save=False)
     clip.delete()
@@ -664,5 +699,5 @@ def clip_dict(clip, request=None):
             "file_name": clip.file_name,
             "play_url": _url(clip.file, request) if clip.normalized else None,
             "uploaded_by": (clip.uploaded_by.full_name
-                            if clip.uploaded_by_id else ""),
+                            if clip.uploaded_by_id else "OneDrive"),
             "created_at": clip.created_at}

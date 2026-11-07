@@ -31,6 +31,9 @@ SHIPSGO_WEBHOOK_SECRET = os.environ.get("SHIPSGO_WEBHOOK_SECRET", "")
 FOLLOWME_BASE_URL = os.environ.get("FOLLOWME_BASE_URL",
                                    "https://followme.mv/api/v5")
 FOLLOWME_API_KEY = os.environ.get("FOLLOWME_API_KEY", "")
+# rclone's config for the time-lapse intake from OneDrive (core/drive.py):
+# on a persistent volume, because rclone rewrites it as it renews access.
+RCLONE_CONFIG = os.environ.get("RCLONE_CONFIG", "")
 TRACKING_ETA_SLIP_HOURS = int(os.environ.get("TRACKING_ETA_SLIP_HOURS", "24"))
 TRACKING_CREDIT_FLOOR = int(os.environ.get("TRACKING_CREDIT_FLOOR", "10"))
 
