@@ -40,6 +40,66 @@ SOURCE_LABEL = {
 }
 
 
+# The cost of the work done, for the P&L (owner 2026-11-07: "the most
+# realistic way"): what has gone into the work, not what has been ordered for
+# it. Payroll once locked, subcontractors' certified work, imports once the
+# store has issued them to site, local purchases on order (sites use them
+# within days), the rest as booked. An import ordered or cleared but still in
+# the store is stock, shown on its own line; an order not yet delivered is a
+# commitment, likewise.
+WORK_DONE = {
+    "STAFF": "INCURRED", "SUBCONTRACT": "INCURRED", "STORE_ISSUE": "INCURRED",
+    "PR": "INCURRED", "PYR": "COMMITTED", "PETTY_CASH": "INCURRED",
+    "RENT": "INCURRED", "UTILITY": "INCURRED", "STOCK_ADJ": "INCURRED",
+}
+
+
+def work_done_q():
+    q = Q()
+    for source, state in WORK_DONE.items():
+        q |= Q(source=source, state=state)
+    # labour only once a run has locked: the attendance estimate before it
+    # carries no run and is replaced at lock
+    q &= ~Q(source="STAFF", payroll_run__isnull=True)
+    return (q & ~Q(source="PYR",
+                   document__payment_request__payment_type=
+                   "PETTY_CASH_REPLENISH")
+            & ~Q(source="PYR", document__salary_advances__isnull=False))
+
+
+def work_done_cost(site_ids, start=None, end=None):
+    """USD cost of the work done at these sites, in a period."""
+    return sum(usd_sum(site_postings(site_ids, start, end)
+                       .filter(work_done_q())).values(), ZERO)
+
+
+def work_done_by_source(site_ids, start=None, end=None):
+    """{source: USD} of the work done, for the P&L's cost lines."""
+    return usd_sum(site_postings(site_ids, start, end).filter(work_done_q()),
+                   "source")
+
+
+def stock_on_hand(site_ids, end=None):
+    """Imports cleared for these sites' projects and still in the HO store,
+    at landed cost: the IPR's Incurred, which steps down as the store issues
+    them (imports.sync_cleared_incurred)."""
+    return sum(usd_sum(site_postings(site_ids, end=end)
+                       .filter(source="IPR", state="INCURRED")).values(), ZERO)
+
+
+def undelivered(site_ids, end=None):
+    """Imports approved for these sites and not yet cleared, at the order's
+    value: the commitment less what has cleared (in store or issued). Issues
+    from general stock were never committed here, so this is a floor."""
+    qs = site_postings(site_ids, end=end)
+    committed = sum(usd_sum(qs.filter(source="IPR", state="COMMITTED"))
+                    .values(), ZERO)
+    arrived = sum(usd_sum(qs.filter(Q(source="IPR", state="INCURRED")
+                                    | Q(source="STORE_ISSUE",
+                                        state="INCURRED"))).values(), ZERO)
+    return max(committed - arrived, ZERO)
+
+
 def recognised_q():
     """The ledger rows that are cost by the owner's rule."""
     q = Q()

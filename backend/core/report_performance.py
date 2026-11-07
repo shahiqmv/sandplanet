@@ -7,8 +7,8 @@ from decimal import Decimal
 
 
 from .models import Attendance, Document, Project
-from .report_cost import recognised_cost
-from .report_pnl import certified_revenue
+from .report_cost import work_done_cost
+from .report_pnl import certified_revenue, uncertified_work
 from .report_progress import LIVE, _progress, _rating, RATING
 from .reports import col, kpi, section, sum_rows
 from .submittals import TO_CLIENT, WITH_CLIENT
@@ -49,8 +49,9 @@ def build(ctx):
                 wsum += w
         counts[worst] += 1
         in_p, to_d = rev.get(s.id, (ZERO, ZERO))
-        cost_d = recognised_cost([s.id], end=on)
-        cost_p = recognised_cost([s.id], ctx.start, on)
+        to_d = to_d + uncertified_work(projects, certified_revenue.per_project)
+        cost_d = work_done_cost([s.id], end=on)
+        cost_p = work_done_cost([s.id], ctx.start, on)
         docs = Document.objects.filter(site=s, is_void=False)
         man_days = Attendance.objects.filter(
             site=s, day__gte=ctx.start, day__lte=on,
@@ -96,7 +97,7 @@ def build(ctx):
             kpi("Attention", counts["attention"], "int",
                 sub="a site takes its worst project's rating"),
             kpi("Cost as % of revenue", total["cost_pct"], "pct",
-                sub="to date, where the client has certified"),
+                sub="cost of the work done against revenue earned, to date"),
             kpi("Man-days in period", total["man_days"], "int"),
         ],
         "sections": [section("Sites", [
@@ -104,9 +105,9 @@ def build(ctx):
             col("progress", "Progress", "pct"),
             col("elapsed", "Time elapsed", "pct"), col("rating", "Rating"),
             col("revenue", "Certified in period", "money"),
-            col("cost", "Cost in period", "money"),
-            col("revenue_to_date", "Certified to date", "money"),
-            col("cost_to_date", "Cost to date", "money"),
+            col("cost", "Cost of work in period", "money"),
+            col("revenue_to_date", "Revenue earned to date", "money"),
+            col("cost_to_date", "Cost of work to date", "money"),
             col("cost_pct", "Cost % of revenue", "pct"),
             col("man_days", "Man-days", "int"),
             col("cost_per_man_day", "Cost / man-day", "money"),
@@ -122,7 +123,9 @@ def build(ctx):
         "notes": [
             "Rating: on track within 10 points of time elapsed, watch within "
             "25, attention beyond; a site shows its worst project.",
-            "Cost by the owner's rule, revenue as certified; see the cost and "
-            "revenue reports for the detail.",
+            "Revenue earned is work certified plus work done not yet "
+            "certified, by programme progress; cost is the cost of the work "
+            "done, as on the profit and loss. The cost report shows "
+            "commitments.",
         ],
     }

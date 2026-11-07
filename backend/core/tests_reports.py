@@ -295,20 +295,44 @@ class CostAndPnlTests(ReportCase):
         self.assertEqual({r["name"]: D(str(r["cost"])) for r in by_source["rows"]},
                          {"Local purchases": D("100.00"), "Payroll": D("200.00")})
 
-    def test_pnl_margin_per_site_and_company_result(self):
-        from .models import Boq
+    def test_pnl_matches_work_done_to_cost_of_work_and_holds_the_rest_apart(self):
+        from .models import Boq, ProgrammeActivity
         p = Project.objects.create(site=self.sjr, code="P1", title="Villas",
                                    status="ACTIVE", contract_value=D("10000"))
         Boq.objects.create(project=p, currency="USD")
-        self._post(self.sjr, "STAFF", "INCURRED", "7710", head="LABOUR")  # USD 500
+        ProgrammeActivity.objects.create(project=p, sort_order=1, name="Shell",
+                                         duration_days=10, progress=20)
+        run = PayrollRun.objects.create(
+            ref="PAY-SJR-2026-10", site=self.sjr, kind="MONTHLY",
+            currency="MVR", year=2026, month=10, working_days=26,
+            status="LOCKED", created_by=self.fin)
+        # labour: locked USD 500; an estimate for the next month, no run
+        self._post(self.sjr, "STAFF", "INCURRED", "7710", head="LABOUR",
+                   payroll_run=run)
+        self._post(self.sjr, "STAFF", "INCURRED", "1542", head="LABOUR")
+        # an import: USD 300 committed, 200 cleared into the store, 50 issued
+        self._post(self.sjr, "IPR", "COMMITTED", "4626")
+        self._post(self.sjr, "IPR", "INCURRED", "2313")
+        self._post(self.sjr, "STORE_ISSUE", "INCURRED", "771")
         rep = self.report(self.qs, "pnl", "all").data
         row = rep["sections"][0]["rows"][0]
-        self.assertEqual((row["revenue"], row["cost"], row["margin"]),
-                         (D("0"), D("500.00"), D("-500.00")))
-        self.assertEqual(rep["sections"][1]["total"]["amount"], D("-500.00"))
-        # a PM gets the site view with no company result
+        # work done = 20% of 10,000 = 2,000 earned, nothing certified
+        self.assertEqual((row["certified_to_date"], row["uncertified"],
+                          row["earned"]),
+                         (D("0"), D("2000.00"), D("2000.00")))
+        # cost of the work: labour 500 + issued 50; stock 150 (200 − 50
+        # already stepped down in the ledger), ordered not delivered 100
+        self.assertEqual((row["cost_to_date"], row["margin_to_date"]),
+                         (D("550.00"), D("1450.00")))
+        self.assertEqual((row["stock"], row["undelivered"]),
+                         (D("150.00"), D("100.00")))
+        lines = {r["line"]: r["amount"] for r in rep["sections"][2]["rows"]}
+        self.assertEqual(lines, {"Payroll": D("500.00"),
+                                 "Issued from HO store": D("50.00")})
+        # the company result and a PM's site view
+        self.assertEqual(rep["sections"][3]["total"]["amount"], D("-550.00"))
         rep = self.report(self.pm, "pnl", self.sjr.id).data
-        self.assertEqual([s["title"] for s in rep["sections"]], ["Sites"])
+        self.assertEqual(len(rep["sections"]), 3)
 
 
 class OtherReportsRunTests(ReportCase):
