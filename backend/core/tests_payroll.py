@@ -2986,6 +2986,66 @@ class UsdSalaryRunTests(TestCase):
         self.assertEqual(fx.usd_rate(), Decimal("15.42"))
         self.assertEqual(line.advance, Decimal("1000.00"))   # 15,420 / 15.42
 
+    def _usd_pyr(self, ref, amount, kind, months, year, month):
+        from .models import CostHead, Document, PaymentRequest, SalaryAdvance
+        doc = Document.objects.create(doc_type="PYR", ref=ref, site=self.site,
+                                      doc_date=date(2026, 7, 2), status="PAID",
+                                      created_by=self.hr)
+        head = CostHead.objects.get_or_create(code="LABOUR", defaults={
+            "name": "Labour", "sort_order": 1})[0]
+        PaymentRequest.objects.create(
+            document=doc, cost_head=head, payee=self.pm.full_name,
+            purpose="advance", amount_requested=amount, currency="USD")
+        SalaryAdvance.objects.create(
+            employee=self.pm, document=doc, amount=amount, months=months,
+            period_year=year, period_month=month, kind=kind)
+        return doc
+
+    def test_a_dollar_advance_comes_off_dollar_for_dollar(self):
+        """A USD 667 advance was coming off as USD 43: every advance was
+        converted as if lent in rufiyaa (owner 2026-11-08)."""
+        from .models import SalaryAdvance
+        self._usd_pyr("PYR-USD-002", Decimal("667"), SalaryAdvance.Kind.ADVANCE,
+                      1, 2026, 7)
+        self._usd_pyr("PYR-USD-003", Decimal("500"), SalaryAdvance.Kind.LOAN,
+                      2, 2026, 7)
+        line = self._run().lines.get(employee=self.pm)
+        self.assertEqual((line.advance, line.loan),
+                         (Decimal("667.00"), Decimal("250.00")))
+
+    def test_the_command_brings_a_drawn_up_run_into_line(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from .models import SalaryAdvance
+        self._usd_pyr("PYR-USD-002", Decimal("667"), SalaryAdvance.Kind.ADVANCE,
+                      1, 2026, 7)
+        run = self._run()
+        line = run.lines.get(employee=self.pm)
+        # as the old rule left it
+        line.advance = Decimal("43.26")
+        line.save(update_fields=["advance"])
+        out = StringIO()
+        call_command("payroll_recompute_deductions", year=2026, month=7,
+                     stdout=out)
+        self.assertIn("43.26 -> 667.00", out.getvalue())
+        line.refresh_from_db()
+        self.assertEqual(line.advance, Decimal("43.26"))      # a report only
+        call_command("payroll_recompute_deductions", year=2026, month=7,
+                     apply=True, stdout=out)
+        line.refresh_from_db()
+        self.assertEqual(line.advance, Decimal("667.00"))
+        # a locked run is left alone
+        run.status = "LOCKED"
+        run.save(update_fields=["status"])
+        line.advance = Decimal("1.00")
+        line.save(update_fields=["advance"])
+        call_command("payroll_recompute_deductions", year=2026, month=7,
+                     apply=True, stdout=out)
+        line.refresh_from_db()
+        self.assertEqual(line.advance, Decimal("1.00"))
+
 
 
 class UsdSalariesAreTransferredPerPersonTests(UsdSalaryRunTests):

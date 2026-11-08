@@ -728,19 +728,13 @@ def deductions_on_run(employee, run, usd=False):
                  .exclude(run=run))
     if elsewhere.exists():
         return zero
-    return (_usd_deductions(employee, run.year, run.month) if usd
-            else deductions_for(employee, run.year, run.month))
+    return deductions_for(employee, run.year, run.month,
+                          "USD" if usd else "MVR")
 
 
 def _usd_deductions(employee, year, month):
-    """A USD line's advance and loan, converted from the rufiyaa they were
-    lent in at the company rate (owner's choice, 2026-09-05)."""
-    from . import fx
-    ded = deductions_for(employee, year, month)
-    rate = fx.usd_rate()
-    zero = Decimal("0")
-    return {"advance": q(ded["advance"] / rate) if ded["advance"] else zero,
-            "loan": q(ded["loan"] / rate) if ded["loan"] else zero}
+    """A USD line's advance and loan, in dollars."""
+    return deductions_for(employee, year, month, "USD")
 
 
 def usd_paid_days(employee, year, month):
@@ -1499,32 +1493,51 @@ def lock_run(run, actor):
 RECOVERABLE_ADVANCE_STATUSES = ("PAID", "AUTHORISED")
 
 
-def deductions_for(employee, year, month):
-    """Advance + loan installments due for this worker in this payroll period.
+def deductions_for(employee, year, month, currency="MVR"):
+    """Advance + loan installments due for this worker in this payroll
+    period, in the run's `currency`.
 
     Counted from the moment the PYR is authorised, not when Finance gets round
     to marking it paid (owner 2026-08-15). An advance falls in one period; a
-    loan spreads equally over its `months`."""
+    loan spreads equally over its `months`.
+
+    Each is recovered in the currency it was lent in: a dollar advance on the
+    USD run comes off dollar for dollar, a rufiyaa one is converted at the
+    company rate (owner 2026-09-05). The conversion used to be applied to
+    every advance as if all were rufiyaa, so a USD 667 advance came off as
+    USD 43 (owner 2026-11-08)."""
+    from . import fx
     period = year * 12 + (month - 1)
     advance = Decimal("0")
     loan = Decimal("0")
+    rate = fx.usd_rate()
+
+    def in_run(amount, lent_in):
+        if lent_in == currency:
+            return q(amount)
+        if currency == "USD":
+            return q(amount / rate)
+        return q(amount * rate)
+
     rows = SalaryAdvance.objects.filter(
         employee=employee,
         document__status__in=RECOVERABLE_ADVANCE_STATUSES).select_related(
-        "document")
+        "document__payment_request")
     for a in rows:
         start = a.period_year * 12 + (a.period_month - 1)
         n = max(a.months, 1)
         if start <= period < start + n:
-            installment = q(a.amount / n)
+            pr = getattr(a.document, "payment_request", None)
+            lent_in = (pr.currency if pr and pr.currency else "MVR")
+            installment = in_run(a.amount / n, lent_in)
             if a.kind == SalaryAdvance.Kind.LOAN:
                 loan += installment
             else:
                 advance += installment
-    # What his phone ran over its allowance: the company paid the provider,
-    # so it is recovered like an advance (owner 2026-10-03, core/bills.py).
+    # What his phone ran over its allowance: the company paid the provider in
+    # rufiyaa, so it is recovered like an advance (owner 2026-10-03).
     from .bills import recoveries_for
-    advance += recoveries_for(employee, year, month)
+    advance += in_run(recoveries_for(employee, year, month), "MVR")
     return {"advance": advance, "loan": loan}
 
 
