@@ -249,6 +249,10 @@ def sync_camera(cam, now=None):
     for f in list_folder(cam.drive_folder):
         if not f["name"].lower().endswith(VIDEO):
             continue
+        if f["size"] <= 0:
+            # OneDrive lists a file the app is still carrying up as 0 bytes
+            # (DTE, 2026-11-08: six of eight); it is not here yet
+            continue
         item = seen.get(f["name"])
         if item is None:
             TimelapseDriveItem.objects.create(
@@ -262,7 +266,10 @@ def sync_camera(cam, now=None):
             item.size_bytes, item.content_hash = f["size"], f["hash"]
             item.modified_at = f["modified"]
             if changed:
+                # a different file under the same name: start again, a
+                # verdict on the old bytes says nothing about the new
                 item.first_seen_at = now
+                item.status, item.attempts, item.note = "SEEN", 0, ""
             item.save()
             continue
         if item.status == "NEEDS_DATES" and not item.week_from:
@@ -372,7 +379,7 @@ def set_dates(item, data, actor):
 
 
 def import_again(item, actor):
-    if item.status not in ("IGNORED", "FAILED", "DUPLICATE"):
+    if item.status not in ("IGNORED", "FAILED", "DUPLICATE", "NEEDS_DATES"):
         return "That file is already in, or on its way."
     item.status, item.attempts, item.note = "SEEN", 0, ""
     item.first_seen_at = djtz.now() - SETTLE

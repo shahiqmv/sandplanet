@@ -215,6 +215,28 @@ class DatelessFileTests(DriveCase):
         self.assertEqual((clip.week_from, clip.week_to),
                          (date(2026, 10, 18), date(2026, 10, 18)))
 
+    def test_an_empty_placeholder_is_not_a_file_yet(self):
+        """OneDrive lists a file still on its way up as 0 bytes."""
+        path = os.path.join(self.root, "NORTH JETTY", "TLC00013.MP4")
+        open(path, "wb").close()
+        self.sweep()
+        self.assertFalse(TimelapseDriveItem.objects.exists())
+        # once the bytes arrive it is seen like any other
+        _clip(path, "1904-01-01T00:00:00")
+        self.sweep(timedelta(minutes=1))
+        self.assertEqual(TimelapseDriveItem.objects.get().status, "SEEN")
+
+    def test_a_file_replaced_under_its_name_is_judged_afresh(self):
+        path = self.put_dateless("TLC00005.MP4")
+        self.sweep()
+        self.sweep(timedelta(minutes=9))
+        self.assertEqual(TimelapseDriveItem.objects.get().status,
+                         "NEEDS_DATES")
+        _clip(path, "2026-10-18T06:00:00")          # a dated file now
+        self.sweep(timedelta(minutes=10))
+        self.assertEqual(TimelapseDriveItem.objects.get().status, "SEEN")
+        self.assertEqual(self.sweep(timedelta(minutes=19)), (1, 0, 0))
+
     def test_names_the_sites_use(self):
         today = date(2026, 11, 7)
         for name, want in (("18_10.MP4", (date(2026, 10, 18),) * 2),
