@@ -253,6 +253,17 @@ def create_remove_batch(site, employee_ids, actor, reason=""):
     return batch, None
 
 
+def settled_months(site):
+    """{(year, month)} whose pay at this site is done with: the register
+    locked, or a payroll run for the month locked."""
+    from .models import PayrollRun, TimesheetMonth
+    done = set(TimesheetMonth.objects.filter(site=site, status="LOCKED")
+               .values_list("year", "month"))
+    done |= set(PayrollRun.objects.filter(site=site, status="LOCKED")
+                .values_list("year", "month"))
+    return done
+
+
 def transfer_block(employee, site, on=None):
     """Why this man cannot leave `site` today, or None.
 
@@ -264,9 +275,14 @@ def transfer_block(employee, site, on=None):
     from .models import Attendance, WorkerFine
     on = on or date.today()
     problems = []
-    pending = Attendance.objects.filter(
+    # Overtime left unapproved in a month already paid is not open: that
+    # month's pay is settled and the PM's pending list no longer shows it
+    # (SJR 2026-11-08, four August days held a transfer in November).
+    settled = settled_months(site)
+    pending = sum(1 for d in Attendance.objects.filter(
         employee=employee, site=site, ot_requested__gt=0,
-        ot_approved__isnull=True).count()
+        ot_approved__isnull=True).values_list("day", flat=True)
+        if (d.year, d.month) not in settled)
     if pending:
         problems.append(f"{pending} day{'s' if pending != 1 else ''} of "
                         "overtime awaiting approval")

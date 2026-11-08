@@ -746,6 +746,25 @@ class TransferGateTests(WorkerBatchTests):
         row.save()
         self.assertEqual(self._request(emp).status_code, 201)
 
+    def test_overtime_in_a_paid_month_does_not_hold_the_transfer(self):
+        """SJR 2026-11-08: four August days of unapproved overtime held a
+        November transfer, though August was paid and the PM's pending
+        list no longer showed them."""
+        from datetime import date as _d
+        from .models import Attendance, PayrollRun
+        emp = self._direct(self.site, 1)[0]
+        self._closed_month(emp)
+        today = _d.today()
+        y, m = (today.year, today.month - 3) if today.month > 3 \
+            else (today.year - 1, today.month + 9)
+        Attendance.objects.create(employee=emp, site=self.site,
+                                  day=_d(y, m, 7), remark="PRESENT",
+                                  ot_requested=3)
+        PayrollRun.objects.create(ref=f"PRL-T-{y}{m:02d}", site=self.site,
+                                  year=y, month=m, status="LOCKED",
+                                  working_days=26, created_by=self.pm)
+        self.assertEqual(self._request(emp).status_code, 201)
+
     def test_a_pending_fine_holds_the_transfer(self):
         from datetime import date as _d
         from .models import FineOffence, WorkerFine
