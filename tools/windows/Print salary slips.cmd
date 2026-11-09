@@ -136,43 +136,125 @@ if (-not ($bytes[0] -eq 0x1B -and $bytes[1] -eq 0x40)) {
           "'Slips preview', which gives a PDF for reading on screen.")
 }
 
-$slips = 0
-for ($i = 0; $i -lt $bytes.Length - 2; $i++) {
-    if ($bytes[$i] -eq 0x1D -and $bytes[$i+1] -eq 0x56) { $slips++ }   # GS V = cut
+# ---- split into slips ------------------------------------------------------
+# Every slip ends with GS V B 0 — feed to the cutter and cut. The job used
+# to go down the wire in one piece, and with 44 raster slips (about 4 MB)
+# the printer dropped the connection part-way (Finance, BVR October,
+# 2026-11-08). So the slips go one at a time with a breath between, the
+# printer is reconnected and the job carried on from the slip that failed,
+# and a run that still fails can be resumed from where it stopped instead of
+# printing everyone's slip twice.
+$ends = New-Object System.Collections.Generic.List[int]
+$pos = 0
+while (($pos = [Array]::IndexOf($bytes, [byte]0x1D, $pos)) -ge 0) {
+    if ($pos + 3 -lt $bytes.Length -and $bytes[$pos+1] -eq 0x56 -and
+        $bytes[$pos+2] -eq 0x42 -and $bytes[$pos+3] -eq 0x00) {
+        $ends.Add($pos + 4); $pos += 4
+    } else { $pos++ }
 }
+if ($ends.Count -eq 0 -or $ends[$ends.Count - 1] -ne $bytes.Length) {
+    $ends.Add($bytes.Length)
+}
+$slips = $ends.Count
 Say ''
 Say "$slips slip(s) -> $Printer" 'White'
+
+# ---- carry on from last time? ---------------------------------------------
+$resumePath = Join-Path (Split-Path $configPath) 'resume.json'
+$sent = 0
+if (Test-Path $resumePath) {
+    try {
+        $r = Get-Content $resumePath -Raw | ConvertFrom-Json
+        if ($r.File -eq (Split-Path $Path -Leaf) -and $r.Size -eq $bytes.Length -and
+            $r.Sent -gt 0 -and $r.Sent -lt $slips) {
+            Say ''
+            Say "Last time $($r.Sent) of $slips slips of this file went through before the printer stopped." 'Yellow'
+            $ans = (Read-Host "  Carry on from slip $($r.Sent + 1)? [Y/n]").Trim()
+            if ($ans -eq '' -or $ans -match '^[Yy]') { $sent = [int]$r.Sent }
+        }
+    } catch { }
+    Remove-Item $resumePath -ErrorAction SilentlyContinue
+}
 Say ''
 
 # ---- print -----------------------------------------------------------------
-try {
-    $client = New-Object System.Net.Sockets.TcpClient
-    $conn = $client.BeginConnect($Printer, $Port, $null, $null)
-    if (-not $conn.AsyncWaitHandle.WaitOne(5000, $false)) {
-        $client.Close()
-        Fail "The printer at $Printer did not answer." `
-             'Check it is switched on, has paper, and is on the office WiFi.'
-    }
-    $client.EndConnect($conn)
-    $stream = $client.GetStream()
-    $chunk = 8192
-    for ($off = 0; $off -lt $bytes.Length; $off += $chunk) {
-        $n = [Math]::Min($chunk, $bytes.Length - $off)
-        $stream.Write($bytes, $off, $n)
-        if ($bytes.Length -gt 200000) {
-            $pct = [int](100 * ($off + $n) / $bytes.Length)
-            Write-Progress -Activity 'Printing salary slips' `
-                           -Status "$pct%" -PercentComplete $pct
-        }
-    }
-    $stream.Flush()
-    Start-Sleep -Milliseconds 500      # let the printer drain before hanging up
-    $stream.Close(); $client.Close()
-    Write-Progress -Activity 'Printing salary slips' -Completed
-} catch {
-    Fail "Could not print: $($_.Exception.Message)" `
-         'If it keeps failing, check the printer IP has not changed.'
+function Connect-Printer {
+    $c = New-Object System.Net.Sockets.TcpClient
+    $c.SendTimeout = 30000
+    $a = $c.BeginConnect($Printer, $Port, $null, $null)
+    if (-not $a.AsyncWaitHandle.WaitOne(5000, $false)) { $c.Close(); return $null }
+    $c.EndConnect($a)
+    return $c
+}
+function Save-Progress($n) {
+    @{ File = (Split-Path $Path -Leaf); Size = $bytes.Length; Sent = $n } |
+        ConvertTo-Json | Set-Content -Path $resumePath -Encoding UTF8
 }
 
+$client = Connect-Printer
+if (-not $client) {
+    Fail "The printer at $Printer did not answer." `
+         'Check it is switched on, has paper, and is on the office WiFi.'
+}
+$stream = $client.GetStream()
+$chunk = 8192
+$tries = 0
+$doubtful = @()
+$init = [byte[]](0x1B, 0x40)             # ESC @ — initialise, after a reconnect
+while ($sent -lt $slips) {
+    $from = if ($sent -eq 0) { 0 } else { $ends[$sent - 1] }
+    $to = $ends[$sent]
+    try {
+        if ($tries -gt 0) { $stream.Write($init, 0, 2) }
+        for ($off = $from; $off -lt $to; $off += $chunk) {
+            $n = [Math]::Min($chunk, $to - $off)
+            $stream.Write($bytes, $off, $n)
+        }
+        $stream.Flush()
+        if ($tries -gt 0) { $doubtful += ($sent + 1) }
+        $sent++; $tries = 0
+        Save-Progress $sent
+        Write-Progress -Activity 'Printing salary slips' `
+                       -Status "slip $sent of $slips" `
+                       -PercentComplete ([int](100 * $sent / $slips))
+        # A breath between slips: the printer's buffer is small and its head
+        # runs hot on raster. Nothing is lost by waiting.
+        Start-Sleep -Milliseconds 400
+    } catch {
+        $tries++
+        try { $stream.Close(); $client.Close() } catch { }
+        Write-Progress -Activity 'Printing salary slips' -Completed
+        Say "The printer dropped the connection at slip $($sent + 1) of ${slips}: $($_.Exception.Message)" 'Yellow'
+        if ($tries -gt 5) {
+            Fail "Could not print. $sent of $slips slip(s) went through." `
+                 ("Check the printer has paper and its cover is shut, then run this " +
+                  "again — it will offer to carry on from slip $($sent + 1).")
+        }
+        while ($true) {
+            Say "Check it has paper and the cover is shut. Trying again in 10 seconds ($tries of 5)..." 'Yellow'
+            Start-Sleep -Seconds 10
+            $client = Connect-Printer
+            if ($client) { break }
+            $tries++
+            if ($tries -gt 5) {
+                Fail "The printer at $Printer did not answer. $sent of $slips slip(s) went through." `
+                     ("Check it is switched on and has paper, then run this again — " +
+                      "it will offer to carry on from slip $($sent + 1).")
+            }
+        }
+        $stream = $client.GetStream()
+    }
+}
+try {
+    Start-Sleep -Milliseconds 500      # let the printer drain before hanging up
+    $stream.Close(); $client.Close()
+} catch { }
+Write-Progress -Activity 'Printing salary slips' -Completed
+Remove-Item $resumePath -ErrorAction SilentlyContinue
+
 Say "Sent. $slips slip(s) printing." 'Green'
+if ($doubtful.Count -gt 0) {
+    Say ("Slip " + ($doubtful -join ', ') + " went out again after the printer stopped — " +
+         "if a part-printed copy came out first, discard it.") 'Yellow'
+}
 if (-not $Quiet) { Start-Sleep -Seconds 3 }

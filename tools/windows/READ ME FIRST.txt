@@ -36,6 +36,14 @@ The window stays open and tells you what happened.
   "Not a slip file"          You clicked Preview (a PDF) instead of
                              Print slips.
 
+  "The printer dropped the   Usually paper ran out or the cover is open
+   connection at slip N"     part-way through a long run. Fix that; the
+                             window tries again on its own and carries on
+                             from the slip that failed. If it gives up,
+                             run it again - it offers to carry on from
+                             where it stopped, so nobody's slip prints
+                             twice.
+
 To print an OLDER run instead of the newest: drag that .escpos file
 onto Print salary slips.cmd.
 
