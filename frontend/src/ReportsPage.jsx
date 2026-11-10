@@ -71,6 +71,160 @@ function Section({ s }) {
   );
 }
 
+// Ask Claude about the report on screen (owner 2026-11-09). The question goes
+// with the report to the server, which answers in the background from
+// Planet's own figures within the asker's rights; the page polls, then draws
+// the answer — headings, paragraphs, tables — and can print it.
+const EXAMPLES = [
+  "Compare the last three months and explain the biggest movement",
+  "Who are the highest overtime earners, and is it concentrated in a few people?",
+  "What should the director act on first here?",
+];
+
+function AnswerTable({ t }) {
+  const right = (c) => (c.kind === "text" ? {} : { textAlign: "right", whiteSpace: "nowrap" });
+  return (
+    <div style={{ overflowX: "auto", margin: "6px 0 10px" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5,
+                      fontVariantNumeric: "tabular-nums" }}>
+        <thead><tr>{t.columns.map((c, i) => (
+          <th key={i} style={{ ...th, ...right(c) }}>{c.label}</th>))}</tr></thead>
+        <tbody>{t.rows.map((r, i) => (
+          <tr key={i}>{t.columns.map((c, j) => (
+            <td key={j} style={{ ...td, ...right(c) }}>{fmt(r[j], c.kind)}</td>))}</tr>))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Answer({ a }) {
+  const ans = a.answer;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>{ans.title}</h3>
+      <p style={{ margin: "0 0 10px", fontSize: 13.5 }}>{ans.summary}</p>
+      {ans.sections.map((s, i) => (
+        <div key={i} style={{ marginTop: 10 }}>
+          <h4 style={{ margin: "0 0 4px", fontSize: 13.5, color: "var(--navy)" }}>{s.heading}</h4>
+          {s.paragraphs.map((p, j) => <p key={j} style={{ margin: "4px 0", fontSize: 13 }}>{p}</p>)}
+          {s.bullets.length > 0 && (
+            <ul style={{ margin: "4px 0", paddingLeft: 18, fontSize: 13 }}>
+              {s.bullets.map((b, j) => <li key={j}>{b}</li>)}</ul>)}
+          {s.table && <AnswerTable t={s.table} />}
+        </div>))}
+      {ans.caveats.length > 0 && (
+        <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12.5, color: "var(--muted)" }}>
+          {ans.caveats.map((c, j) => <li key={j}>{c}</li>)}</ul>)}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, fontSize: 12,
+                    color: "var(--muted)", flexWrap: "wrap" }}>
+        <span>{a.model}{a.cost_usd && ` · USD ${Number(a.cost_usd).toFixed(2)}`}</span>
+        <a href={`/api/v1/reports/ask/${a.id}?export=pdf`} target="_blank" rel="noreferrer"
+           style={{ color: "var(--navy)" }}>⬇ PDF of this conversation</a>
+      </div>
+    </div>
+  );
+}
+
+function AskPanel({ reportKey, scope, from, to, siteId }) {
+  const [items, setItems] = useState([]);
+  const [question, setQuestion] = useState("");
+  const [cont, setCont] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    setItems([]); setErr(null);
+    api(`/reports/asks?report=${encodeURIComponent(reportKey)}&scope=${encodeURIComponent(scope)}`)
+      .then((d) => setItems(d.analyses)).catch((e) => setErr(e.message));
+  }, [reportKey, scope]);
+
+  const running = items.filter((a) => a.status === "RUNNING");
+  useEffect(() => {
+    if (running.length === 0) return undefined;
+    const id = setInterval(() => {
+      running.forEach((r) => api(`/reports/ask/${r.id}`).then((d) => {
+        setItems((cur) => cur.map((a) => (a.id === d.analysis.id ? d.analysis : a)));
+      }).catch(() => {}));
+    }, 3000);
+    return () => clearInterval(id);
+  }, [running.map((r) => r.id).join(",")]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lastDone = [...items].reverse().find((a) => a.status === "DONE");
+
+  async function ask(text) {
+    const q = (text || question).trim();
+    if (!q) return;
+    setBusy(true); setErr(null);
+    try {
+      const body = { report: reportKey, site: siteId, from, to, question: q };
+      if (cont && lastDone) body.follow_up_of = lastDone.id;
+      const d = await api("/reports/ask", { method: "POST", body });
+      setItems((cur) => [...cur, d.analysis]);
+      setQuestion("");
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  const threads = [];
+  items.forEach((a) => {
+    const t = threads.find((x) => x.id === a.thread);
+    if (t) t.items.push(a); else threads.push({ id: a.thread, items: [a] });
+  });
+
+  return (
+    <div style={{ ...card, marginTop: 14 }}>
+      <h3 style={{ margin: "0 0 4px", fontSize: 15 }}>Ask about this report</h3>
+      <p style={{ margin: "0 0 10px", fontSize: 12.5, color: "var(--muted)" }}>
+        Ask in plain words — compare months, rank people, explain a movement. Claude works from this
+        report and Planet's own figures, within your access, and says what the data cannot show.
+        Check any figure before it leaves the company.</p>
+
+      {threads.map((t) => (
+        <div key={t.id} style={{ borderTop: "1px solid var(--line)", paddingTop: 10, marginTop: 10 }}>
+          {t.items.map((a) => (
+            <div key={a.id} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                <b style={{ color: "var(--navy)" }}>You</b> · {new Date(a.started_at).toLocaleString("en-GB", {
+                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+              <div style={{ fontSize: 13.5, margin: "2px 0 6px", whiteSpace: "pre-wrap" }}>{a.question}</div>
+              {a.status === "RUNNING" && (
+                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                  <div>Working on it…</div>
+                  {a.steps.map((s, i) => <div key={i}>· {s}</div>)}
+                </div>)}
+              {a.status === "FAILED" && (
+                <p style={{ color: "var(--red-fg)", fontSize: 13, margin: 0 }}>{a.error}</p>)}
+              {a.status === "DONE" && <Answer a={a} />}
+            </div>))}
+        </div>))}
+
+      <div style={{ marginTop: 12 }}>
+        {items.length === 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {EXAMPLES.map((x) => (
+              <button key={x} onClick={() => ask(x)} disabled={busy || running.length > 0}
+                style={{ ...ghostButton, padding: "4px 10px", fontSize: 12.5 }}>{x}</button>))}
+          </div>)}
+        <textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={3}
+          placeholder={lastDone && cont ? "Follow up on the answer above…" : "Your question…"}
+          style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "inherit" }}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask(); }} />
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          <Btn disabled={busy || running.length > 0 || !question.trim()} onClick={() => ask()}>
+            {running.length > 0 ? "Answering…" : "Ask"}</Btn>
+          {lastDone && (
+            <label style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              <input type="checkbox" checked={cont} onChange={(e) => setCont(e.target.checked)} />
+              {" "}continue the conversation above</label>)}
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>Answers take a minute or two.</span>
+        </div>
+        {err && <p style={{ color: "var(--red-fg)", fontSize: 13, margin: "8px 0 0" }}>{err}</p>}
+      </div>
+    </div>
+  );
+}
+
 export default function ReportsPage() {
   const [meta, setMeta] = useState(null);
   const [key, setKey] = useState("");
@@ -190,6 +344,9 @@ export default function ReportsPage() {
               {s.chapter && <h2 style={{ margin: "26px 0 0", fontSize: 19 }}>{s.chapter}</h2>}
               <Section s={s} />
             </div>))}
+          <AskPanel reportKey={rep.key} siteId={site} from={from} to={to}
+                    scope={site === "all" ? "all"
+                      : (meta.sites.find((x) => String(x.id) === String(site))?.code || "")} />
         </>)}
     </div>
   );

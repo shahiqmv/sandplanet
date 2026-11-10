@@ -525,6 +525,11 @@ urlpatterns = [
          name="permit-batch-renew"),
     # Management reports: ExCom and site PMs (owner 2026-11-07)
     path("reports", reports_api.report_list, name="reports"),
+    # Ask Claude about a report (owner 2026-11-09); before <str:key>
+    path("reports/ask", reports_api.report_ask, name="report-ask"),
+    path("reports/ask/<int:pk>", reports_api.report_ask_detail,
+         name="report-ask-detail"),
+    path("reports/asks", reports_api.report_asks, name="report-asks"),
     path("reports/<str:key>", reports_api.report_run, name="report-run"),
     path("dashboards/portfolio", projects.dashboard_portfolio,
          name="dashboard-portfolio"),

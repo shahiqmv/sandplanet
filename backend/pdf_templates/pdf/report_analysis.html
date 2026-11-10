@@ -1,0 +1,52 @@
+{% load brand report_cells %}<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+{% include "pdf/_report_styles.html" %}
+<style>
+  @page { size: A4 portrait; }
+  .q { font-size: 8.5pt; color: #61707C; margin: 14px 0 4px; }
+  .q b { color: {% brand "heading" %}; }
+  h2.ans { font-size: 13pt; color: {% brand "heading" %}; margin: 0 0 4px; }
+  .summary { font-size: 9.5pt; margin: 0 0 8px; }
+  .sect { page-break-after: avoid; margin-top: 10px; }
+  p.body { font-size: 9pt; margin: 3px 0; }
+  ul.body { font-size: 9pt; margin: 3px 0 3px 14px; padding: 0; }
+  table.grid { font-size: 8pt; margin: 4px 0 6px; }
+  table.grid th { font-size: 7pt; padding: 4px 5px; vertical-align: bottom; }
+  table.grid td { padding: 3.5px 5px; }
+  table.grid th.num, table.grid td.num { text-align: right; white-space: nowrap; }
+  .caveats { font-size: 8pt; color: #45535f; margin-top: 8px; }
+  .caveats li { margin-bottom: 2px; }
+  .prepared { font-size: 7pt; color: #61707C; margin-top: 12px; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="MANAGEMENT ANALYSIS" %}
+{% include "pdf/_letterhead.html" with title=ans.title|default:"Analysis"|upper subline=subline %}
+
+{% for it in items %}
+<div class="q"><b>Question</b> ({{ it.asked_at|date:"j M Y H:i" }}): {{ it.question }}</div>
+<h2 class="ans">{{ it.title }}</h2>
+<p class="summary">{{ it.summary }}</p>
+{% for s in it.sections %}
+<div class="sect">{{ s.heading }}</div>
+{% for p in s.paragraphs %}<p class="body">{{ p }}</p>{% endfor %}
+{% if s.bullets %}<ul class="body">{% for b in s.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% endif %}
+{% if s.table %}
+<table class="grid">
+  <thead><tr>{% for c in s.table.columns %}<th class="{% if c.kind != "text" %}num{% endif %}">{{ c.label }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in s.table.rows %}<tr>{% for c in row %}<td class="{% if c.kind != "text" %}num{% endif %}">{{ c.v|cell:c.kind }}</td>{% endfor %}</tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endfor %}
+{% if it.caveats %}<ul class="caveats">{% for c in it.caveats %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
+{% endfor %}
+
+<div class="prepared">Prepared with Claude for {{ prepared_by }} on {{ prepared_on|date:"j M Y" }} from Planet's own figures · amounts in USD unless stated · check any figure before it leaves the company</div>
+</body>
+</html>

@@ -10323,3 +10323,34 @@ class TimelapseReel(models.Model):
 
     class Meta:
         ordering = ["site__code", "camera__name"]
+
+
+class ReportAnalysis(models.Model):
+    """One question put to Claude about a management report, with its answer
+    (owner 2026-11-09). See core/report_ask.py. `thread` points at the first
+    question of a follow-up chain; `messages` is the model transcript the
+    next follow-up continues from."""
+    user = models.ForeignKey(User, on_delete=models.PROTECT,
+                             related_name="report_analyses")
+    thread = models.ForeignKey("self", on_delete=models.SET_NULL, null=True,
+                               blank=True, related_name="followers")
+    report_key = models.CharField(max_length=30)
+    scope = models.CharField(max_length=20)       # site code or "all"
+    start = models.DateField()
+    end = models.DateField()
+    question = models.TextField()
+    status = models.CharField(max_length=8, default="RUNNING")  # /DONE/FAILED
+    model = models.CharField(max_length=60, blank=True)
+    messages = models.JSONField(default=list, blank=True)
+    steps = models.JSONField(default=list, blank=True)
+    answer = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    input_tokens = models.IntegerField(default=0)
+    output_tokens = models.IntegerField(default=0)
+    cost_usd = models.DecimalField(max_digits=10, decimal_places=4,
+                                   null=True, blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
