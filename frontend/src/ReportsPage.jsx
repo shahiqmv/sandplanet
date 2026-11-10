@@ -339,14 +339,14 @@ export default function ReportsPage() {
                 {rep.notes.map((n) => <li key={n}>{n}</li>)}
               </ul>)}
           </div>
+          <AskPanel reportKey={rep.key} siteId={site} from={from} to={to}
+                    scope={site === "all" ? "all"
+                      : (meta.sites.find((x) => String(x.id) === String(site))?.code || "")} />
           {rep.sections.map((s, i) => (
             <div key={`${i}-${s.title}`}>
               {s.chapter && <h2 style={{ margin: "26px 0 0", fontSize: 19 }}>{s.chapter}</h2>}
               <Section s={s} />
             </div>))}
-          <AskPanel reportKey={rep.key} siteId={site} from={from} to={to}
-                    scope={site === "all" ? "all"
-                      : (meta.sites.find((x) => String(x.id) === String(site))?.code || "")} />
         </>)}
     </div>
   );
