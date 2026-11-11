@@ -49,6 +49,33 @@ function WorkerPhoto({ worker, canManage, onSaved }) {
 
 const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
 const KIND_LABEL = { ADD: "New hires", REMOVE: "Removals", TRANSFER: "Transfers" };
+
+// Find a man by typing rather than scrolling: a site of a hundred men meant
+// scrolling the whole roster to remove or transfer one (PM 2026-11-11). The
+// search covers the number, the name, the trade and the nationality, and
+// every word typed has to match somewhere ("mason bangla", "0231").
+function matchesWorker(w, q) {
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [w.emp_no, w.full_name, w.job_title, w.nationality]
+    .filter(Boolean).join(" ").toLowerCase();
+  return words.every((x) => hay.includes(x));
+}
+
+function WorkerSearch({ value, onChange, shown, total }) {
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center",
+                  margin: "0 0 8px", flexWrap: "wrap" }}>
+      <input type="search" value={value} autoFocus
+             onChange={(e) => onChange(e.target.value)}
+             placeholder="Search by emp no, name, trade or nationality…"
+             style={{ ...inputStyle, width: 320, maxWidth: "100%" }} />
+      {value && (
+        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          {shown} of {total}</span>)}
+    </div>
+  );
+}
 const STATUS_TONE = {
   SUBMITTED: "warn", PM_APPROVED: "warn", APPROVED: "ok",
   RETURNED: "alert", REJECTED: "alert", CANCELLED: "info",
@@ -66,6 +93,7 @@ export default function WorkerManagementPanel({ site, me }) {
   const [view, setView] = useState(null);   // 'add' | 'roster'
   const [revising, setRevising] = useState(null);  // worker being revised
   const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
   const canManage = SITE_MANAGE.includes(me.role);
 
   function load() {
@@ -78,6 +106,7 @@ export default function WorkerManagementPanel({ site, me }) {
   useEffect(load, [site.id]);
 
   const openRev = (revisions || []).filter((r) => r.is_open);
+  const shownRoster = (roster || []).filter((w) => matchesWorker(w, q));
   const openRevIds = new Set(openRev.map((r) => r.employee_id));
 
   const open = (batches || []).filter((b) =>
@@ -156,10 +185,16 @@ export default function WorkerManagementPanel({ site, me }) {
 
       <h4 style={{ margin: "16px 0 6px", color: "var(--navy)" }}>
         On site — {(roster || []).length} worker(s)</h4>
+      {roster && roster.length > 0 && (
+        <WorkerSearch value={q} onChange={setQ} total={roster.length}
+                      shown={shownRoster.length} />)}
       {roster === null ? <p style={{ color: "var(--muted)" }}>Loading…</p>
        : roster.length === 0 ? (
         <p style={{ fontSize: 12.5, color: "var(--muted)" }}>
           No active direct workers here.</p>
+      ) : shownRoster.length === 0 ? (
+        <p style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          Nobody on site matches "{q}".</p>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -173,7 +208,7 @@ export default function WorkerManagementPanel({ site, me }) {
               {canManage && <th style={th}></th>}
             </tr></thead>
             <tbody>
-              {roster.map((w) => (
+              {shownRoster.map((w) => (
                 <tr key={w.id}>
                   <td style={{ ...td, padding: "4px 6px" }}>
                     <WorkerPhoto worker={w} canManage={canManage}
@@ -677,8 +712,10 @@ function RosterPicker({ site, onCancel, onDone }) {
   const [sites, setSites] = useState([]);
   const [sel, setSel] = useState(() => new Set());
   const [dest, setDest] = useState("");
+  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const shown = (roster || []).filter((e) => matchesWorker(e, q));
 
   useEffect(() => {
     api(`/sites/${site.id}/direct-workers`).then(setRoster)
@@ -726,6 +763,11 @@ function RosterPicker({ site, onCancel, onDone }) {
         <p style={{ color: "var(--muted)" }}>No active direct workers here.</p>
       ) : (
         <>
+          <WorkerSearch value={q} onChange={setQ} total={roster.length}
+                        shown={shown.length} />
+          {shown.length === 0 && (
+            <p style={{ color: "var(--muted)", fontSize: 12.5 }}>
+              Nobody on site matches "{q}".</p>)}
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
               <th style={{ ...th, width: 30 }}></th>
@@ -733,7 +775,7 @@ function RosterPicker({ site, onCancel, onDone }) {
               <th style={th}>Trade</th><th style={th}>Nationality</th>
             </tr></thead>
             <tbody>
-              {roster.map((e) => (
+              {shown.map((e) => (
                 <tr key={e.id} style={e.busy ? { opacity: 0.5 } : {}}>
                   <td style={td}>
                     <input type="checkbox" disabled={e.busy}

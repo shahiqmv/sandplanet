@@ -646,10 +646,91 @@ def permit_batch_renew(request):
 # ===== Attendance =====
 
 
+def _lock_state(site_id, day):
+    """Why a day cannot be marked: "month" when the month is signed off,
+    "week" when the register is locked through that day or later (the
+    weekly sign-off, PM 2026-11-11), None when it is open."""
+    row = TimesheetMonth.objects.filter(
+        site_id=site_id, year=day.year, month=day.month).only(
+        "status", "locked_through").first()
+    if row is None:
+        return None
+    if row.status == "LOCKED":
+        return "month"
+    if row.locked_through and day <= row.locked_through:
+        return "week"
+    return None
+
+
 def _month_locked(site_id, day):
-    return TimesheetMonth.objects.filter(
-        site_id=site_id, year=day.year, month=day.month, status="LOCKED"
-    ).exists()
+    """True when the day may not be marked — the month signed off, or the
+    week it falls in. Kept under its old name: every guard calls it."""
+    return _lock_state(site_id, day) is not None
+
+
+def _locked_through(site_id, day):
+    row = TimesheetMonth.objects.filter(
+        site_id=site_id, year=day.year, month=day.month).only(
+        "locked_through").first()
+    return (row.locked_through.isoformat()
+            if row and row.locked_through else None)
+
+
+def _locked_detail(site_id, day):
+    if _lock_state(site_id, day) == "week":
+        row = TimesheetMonth.objects.get(site_id=site_id, year=day.year,
+                                         month=day.month)
+        return (f"This day is signed off — the register is locked through "
+                f"{row.locked_through:%-d %b}. Ask the site PM or HR to "
+                f"reopen it.")
+    return "This month is locked. Ask HO HR to reopen it."
+
+
+def _sign_offs(site, start, end):
+    """For the client record: which part of the range is signed off, and by
+    whom — the month lock or the weekly lock (PM 2026-11-11). One line per
+    month touched; a month with nothing locked is left out."""
+    out = []
+    for tm in (TimesheetMonth.objects.filter(site=site)
+               .filter(Q(year=start.year, month__gte=start.month) |
+                       Q(year__gt=start.year))
+               .filter(Q(year=end.year, month__lte=end.month) |
+                       Q(year__lt=end.year))
+               .select_related("signed_off_by", "locked_through_by")
+               .order_by("year", "month")):
+        if tm.status == "LOCKED":
+            out.append(f"{date(tm.year, tm.month, 1):%B %Y} signed off by "
+                       f"{tm.signed_off_by.full_name if tm.signed_off_by_id else 'HR'}"
+                       + (f" on {tm.signed_off_at:%-d %b %Y}"
+                          if tm.signed_off_at else ""))
+        elif tm.locked_through and tm.locked_through >= start:
+            out.append(f"{date(tm.year, tm.month, 1):%B %Y} signed off "
+                       f"through {tm.locked_through:%-d %b} by "
+                       f"{tm.locked_through_by.full_name if tm.locked_through_by_id else 'HR'}"
+                       + (f" on {tm.locked_through_at:%-d %b %Y}"
+                          if tm.locked_through_at else ""))
+    return out
+
+
+def _suggest_lock_through(site, year, month, row):
+    """The date the weekly sign-off offers: the site's most recent rest day
+    up to yesterday, inside the month and past what is already locked, or
+    yesterday itself when no rest day has come round yet."""
+    import calendar
+    last = date(year, month, calendar.monthrange(year, month)[1])
+    cap = min(last, date.today() - timedelta(days=1))
+    floor = date(year, month, 1)
+    if row is not None and row.locked_through:
+        floor = row.locked_through + timedelta(days=1)
+    if cap < floor:
+        return None
+    work_week = set(site.working_days)
+    d = cap
+    while d >= floor:
+        if d.isoweekday() not in work_week:
+            return d
+        d -= timedelta(days=1)
+    return cap
 
 
 def _mark_snapshot(a):
@@ -859,6 +940,8 @@ def attendance_grid(request):
         "site": site.code, "date": day.isoformat(),
         "is_rest_day": is_rest_day,
         "locked": _month_locked(site.id, day),
+        "lock_kind": _lock_state(site.id, day),
+        "locked_through": _locked_through(site.id, day),
         "has_devices": device is not None,
         "device_unmatched": device["unmatched"] if device else [],
         # gate punches by men with no induction on this site are listed
@@ -1007,11 +1090,21 @@ def attendance_register(request):
         for k in ("present", "absent", "leave", "sick", "ot_hours", "fridays",
                   "ot_pending", "ot_pending_days"):
             sums[k] += t[k]
+    tm = TimesheetMonth.objects.filter(site=site, year=year, month=month)\
+        .select_related("locked_through_by").first()
+    suggest = (None if (tm and tm.status == "LOCKED")
+               else _suggest_lock_through(site, year, month, tm))
     return Response({
         "site": site.code, "year": year, "month": month,
         "days": days, "today": today_day,
-        "locked": TimesheetMonth.objects.filter(
-            site=site, year=year, month=month, status="LOCKED").exists(),
+        "locked": bool(tm and tm.status == "LOCKED"),
+        # the weekly sign-off: day number the register is locked through,
+        # who did it, and the date the button offers next
+        "locked_through": (tm.locked_through.day
+                           if tm and tm.locked_through else None),
+        "locked_through_by": (tm.locked_through_by.full_name
+                              if tm and tm.locked_through_by_id else None),
+        "lock_suggest": suggest.isoformat() if suggest else None,
         "rows": rows, "totals": sums,
     })
 
@@ -1034,8 +1127,7 @@ def attendance_bulk(request):
         return Response({"detail": "Attendance cannot be entered for future "
                                    "days."}, status=400)
     if _month_locked(site.id, day):
-        return Response({"detail": "This month is locked. Ask HO HR to "
-                                   "reopen it."}, status=400)
+        return Response({"detail": _locked_detail(site.id, day)}, status=400)
 
     def parse_time(value):
         if not value:
@@ -1392,7 +1484,8 @@ def ot_approve(request):
             return Response({"detail": f"Only the site PM or HR approves OT "
                                        f"({row.site.code})."}, status=403)
         if _month_locked(row.site_id, row.day):
-            return Response({"detail": "Month is locked."}, status=400)
+            return Response({"detail": _locked_detail(row.site_id, row.day)},
+                            status=400)
     hours_override = request.data.get("hours")
     decided, total_cost = [], Decimal("0")
     for row in rows:
@@ -1472,6 +1565,7 @@ def attendance_range_pdf(request, site_id):
     ctx["co"] = pdf_mod.company_info()
     ctx["subline"] = (f"{site.code}  |  {start:%d %b %Y} – {end:%d %b %Y}"
                       "  |  for the client")
+    ctx["sign_offs"] = _sign_offs(site, start, end)
     html = render_to_string("pdf/attendance_range.html", ctx)
     return _pdf_response(html, f"{site.code}-attendance-{start}-to-{end}.pdf")
 
@@ -1828,22 +1922,76 @@ def timesheet_lock(request, site_id, year, month):
                      "signed_off_by": request.user.full_name})
 
 
+def _may_sign_off(user, site):
+    return (user.role in ("ADMIN", "HO_HR", "PA") or
+            (user.role == "PM" and site.is_current_pm(user)))
+
+
 @api_view(["POST"])
-def timesheet_reopen(request, site_id, year, month):
-    """Reopen a locked month with a reason — audited (spec §6A.3). Whoever may
-    lock may unlock: the site PM (accidental locks) as well as HO HR / Admin
-    (owner 2026-07-14)."""
+def timesheet_lock_through(request, site_id, year, month):
+    """Sign the register off through a date inside the month — the weekly
+    lock (PM 2026-11-11). Forward only: moving it back is a reopen, with a
+    reason. The month lock is still the close."""
     try:
         site = Site.objects.get(pk=site_id)
     except Site.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
-    if not (request.user.role in ("ADMIN", "HO_HR", "PA") or
-            (request.user.role == "PM" and site.is_current_pm(request.user))):
+    if not _may_sign_off(request.user, site):
+        return Response({"detail": "The site PM or HR signs off the week."},
+                        status=403)
+    try:
+        through = date.fromisoformat(request.data.get("through") or "")
+    except ValueError:
+        return Response({"detail": "through is required, YYYY-MM-DD."},
+                        status=400)
+    if (through.year, through.month) != (year, month):
+        return Response({"detail": "That date is not in this month."},
+                        status=400)
+    if through > date.today():
+        return Response({"detail": "A day that has not happened cannot be "
+                                   "signed off."}, status=400)
+    row, _ = TimesheetMonth.objects.get_or_create(site=site, year=year,
+                                                  month=month)
+    if row.status == "LOCKED":
+        return Response({"detail": "The month is already signed off."},
+                        status=400)
+    if row.locked_through and through <= row.locked_through:
+        return Response({"detail": f"Already locked through "
+                                   f"{row.locked_through:%-d %b}. Reopen it "
+                                   f"to move the lock back."}, status=400)
+    was = row.locked_through
+    row.locked_through = through
+    row.locked_through_by = request.user
+    row.locked_through_at = timezone.now()
+    row.save(update_fields=["locked_through", "locked_through_by",
+                            "locked_through_at"])
+    audit("timesheet", row.id, "TIMESHEET_WEEK_LOCKED", actor=request.user,
+          detail={"site": site.code, "from": was.isoformat() if was else None,
+                  "through": through.isoformat()})
+    return Response({"locked_through": through.isoformat(),
+                     "by": request.user.full_name})
+
+
+@api_view(["POST"])
+def timesheet_reopen(request, site_id, year, month):
+    """Reopen a locked month with a reason — audited (spec §6A.3). Whoever may
+    lock may unlock: the site PM (accidental locks) as well as HO HR / Admin
+    (owner 2026-07-14).
+
+    With "through" in the body it moves the weekly lock back instead (to
+    that date, or clears it when null), leaving a signed-off month alone."""
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _may_sign_off(request.user, site):
         return Response({"detail": "The site PM or HR reopens a month."},
                         status=403)
     reason = (request.data.get("reason") or "").strip()
     if not reason:
         return Response({"detail": "A reason is required."}, status=400)
+    if "through" in request.data:
+        return _reopen_week(request, site, year, month, reason)
     try:
         row = TimesheetMonth.objects.get(site_id=site_id, year=year,
                                          month=month, status="LOCKED")
@@ -1861,6 +2009,38 @@ def timesheet_reopen(request, site_id, year, month):
           detail={"reason": reason, "period": f"{year}-{month:02d}"})
     return Response({"status": "OPEN"})
 
+
+def _reopen_week(request, site, year, month, reason):
+    raw = request.data.get("through")
+    row = TimesheetMonth.objects.filter(site=site, year=year,
+                                       month=month).first()
+    if row is None or not row.locked_through:
+        return Response({"detail": "No week is signed off in this month."},
+                        status=400)
+    if row.status == "LOCKED":
+        return Response({"detail": "The month is signed off; reopen the "
+                                   "month first."}, status=400)
+    try:
+        through = date.fromisoformat(raw) if raw else None
+    except (TypeError, ValueError):
+        return Response({"detail": "through must be YYYY-MM-DD or empty."},
+                        status=400)
+    if through and (through.year, through.month) != (year, month):
+        return Response({"detail": "That date is not in this month."},
+                        status=400)
+    if through and through >= row.locked_through:
+        return Response({"detail": "Reopening moves the lock back, not "
+                                   "forward."}, status=400)
+    was = row.locked_through
+    row.locked_through = through
+    row.reopened_by = request.user
+    row.reopen_reason = reason
+    row.save(update_fields=["locked_through", "reopened_by", "reopen_reason"])
+    audit("timesheet", row.id, "TIMESHEET_WEEK_REOPENED", actor=request.user,
+          detail={"site": site.code, "from": was.isoformat(),
+                  "through": through.isoformat() if through else None,
+                  "reason": reason})
+    return Response({"locked_through": through.isoformat() if through else None})
 
 def _param_decimal(key, default):
     try:

@@ -3711,6 +3711,17 @@ class TimesheetMonth(models.Model):
     reopened_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                     null=True, blank=True, related_name="+")
     reopen_reason = models.TextField(blank=True)
+    # Week by week inside the month (PM 2026-11-11): the register is signed
+    # off up to and including this date, so a week once reviewed cannot
+    # drift while the rest of the month is still being marked, and month
+    # end is a look at the last few days rather than thirty. The month lock
+    # above is still the close that posts staff cost; this only guards the
+    # marks. Moving it back needs a reason, like reopening the month.
+    locked_through = models.DateField(null=True, blank=True)
+    locked_through_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                          null=True, blank=True,
+                                          related_name="+")
+    locked_through_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [

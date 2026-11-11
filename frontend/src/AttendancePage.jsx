@@ -8,6 +8,10 @@ import OtApprovalPanel from "./OtApprovalPanel.jsx";
 import OtRegister from "./OtRegister.jsx";
 import Discussion from "./Discussion.jsx";
 
+// "2026-11-08" → "8 Nov"
+const fmtDay = (iso) => iso ? new Date(iso + "T00:00:00").toLocaleDateString(
+  "en-GB", { day: "numeric", month: "short" }) : "";
+
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
 const REST_REMARKS = ["OFF", "PRESENT", "HALF_DAY"];
 // An ABSENT mark carries one of these, mandatory (owner 2026-10-10).
@@ -211,6 +215,31 @@ export default function AttendancePage({ site, me, onClose,
     }
   }
 
+  // The weekly sign-off is reopened from the day that needs fixing: the
+  // lock moves back to the day before it, and the days after stay as they
+  // were (PM 2026-11-11).
+  async function reopenWeekFromDay() {
+    const [y, m, d] = day.split("-").map(Number);
+    const reason = window.prompt(`Reopen the register from ${d} ${new Date(y,
+      m - 1, 1).toLocaleDateString("en", { month: "short" })} — reason:`);
+    if (reason === null) return;
+    if (!reason.trim()) { setError("A reason is required to reopen."); return; }
+    const before = d > 1
+      ? `${y}-${String(m).padStart(2, "0")}-${String(d - 1).padStart(2, "0")}`
+      : null;
+    setError(null);
+    try {
+      await api(`/timesheets/${site.id}/${y}/${m}/reopen`,
+        { method: "POST", body: { reason: reason.trim(), through: before } });
+      setNotice(before
+        ? `Reopened — the register is now signed off through ${d - 1} only.`
+        : "Reopened — no week is signed off in this month now.");
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   const restDay = grid?.is_rest_day;
   const remarkOptions = restDay ? REST_REMARKS : NORMAL_REMARKS;
 
@@ -321,7 +350,8 @@ export default function AttendancePage({ site, me, onClose,
             </span>)}
           {grid?.locked && (
             <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
-              🔒 month signed off — nothing to approve</span>
+              🔒 {grid.lock_kind === "week" ? "day" : "month"} signed off —
+              nothing to approve</span>
           )}
         </div>
         {error && <p style={{ color: "#a3271b", fontSize: 13 }}>{error}</p>}
@@ -445,7 +475,24 @@ export default function AttendancePage({ site, me, onClose,
           At the gate with no safety induction on this site:{" "}
           {grid.device_not_inducted.join(" · ")} — run an induction (HSE → Inductions).
         </p>)}
-      {grid?.locked && (
+      {grid?.locked && grid.lock_kind === "week" && (
+        <div style={{ background: "#fdeceb", borderRadius: 8,
+                      padding: "8px 12px", fontSize: 13, display: "flex",
+                      alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span>🔒 This day is signed off — the register is locked through{" "}
+            {fmtDay(grid.locked_through)}.
+            {isPm ? " Reopen from this day to correct it; the days after stay "
+              + "as they are." : " Ask the site PM or HR to reopen it for "
+              + "corrections."}</span>
+          {isPm && (
+            <button onClick={reopenWeekFromDay}
+                    style={{ ...ghostButton, marginLeft: "auto",
+                             color: "#b35900" }}>
+              🔓 Reopen from this day</button>
+          )}
+        </div>
+      )}
+      {grid?.locked && grid.lock_kind !== "week" && (
         <div style={{ background: "#fdeceb", borderRadius: 8,
                       padding: "8px 12px", fontSize: 13, display: "flex",
                       alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -761,6 +808,21 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
   const pdfFrom = range.from || monthStart;
   const pdfTo = range.to || monthEnd;
   const [error, setError] = useState(null);
+  const [through, setThrough] = useState("");
+  const [lockBusy, setLockBusy] = useState(false);
+
+  async function lockThrough() {
+    const when = through || data?.lock_suggest;
+    if (!when) return;
+    setError(null); setLockBusy(true);
+    try {
+      await api(`/timesheets/${site.id}/${year}/${month}/lock-through`,
+                { method: "POST", body: { through: when } });
+      setThrough("");
+      setReload((n) => n + 1);
+    } catch (e) { setError(e.message); }
+    finally { setLockBusy(false); }
+  }
 
   const isPastMonth = year < nowD.getFullYear() ||
     (year === nowD.getFullYear() && month < nowD.getMonth() + 1);
@@ -810,6 +872,13 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
           </button>)}
         {data?.locked && <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
           🔒 Locked</span>}
+        {data && !data.locked && data.locked_through && (
+          <span style={{ fontSize: 12.5, color: "#1a7f37" }}
+                title={data.locked_through_by
+                  ? `signed off by ${data.locked_through_by}` : ""}>
+            🔒 Signed off through {fmtDay(dateStr(data.locked_through))}
+            {data.locked_through_by ? ` by ${data.locked_through_by}` : ""}
+          </span>)}
         <span style={{ fontSize: 11.5, color: "var(--muted)", marginLeft: 8 }}>
           P present · F Friday/rest worked · ½ half day (half the Friday pay on a Friday) · A absent · L leave (no pay) ·
           PL leave (paid) · S sick · ½ half
@@ -827,6 +896,36 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
           </span>
         )}
       </div>
+      {/* Week by week: the PM reviews the week and signs the register off
+          through its last day. Those days are closed to the clerks; the
+          rest of the month stays open, and month end is a look at the last
+          few days (PM 2026-11-11). */}
+      {data && !data.locked && isPm && data.lock_suggest && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center",
+                      flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
+          <span style={{ color: "var(--muted)" }}>Weekly sign-off</span>
+          <input type="date" value={through || data.lock_suggest}
+                 min={monthStart} max={monthEnd}
+                 onChange={(e) => setThrough(e.target.value)}
+                 style={{ ...inputStyle, width: 140, padding: "3px 6px" }} />
+          <button onClick={lockThrough} disabled={lockBusy}
+                  style={{ ...ghostButton, color: "#b35900", padding: "3px 10px",
+                           fontSize: 12.5 }}>
+            🔒 Sign off through {fmtDay(through || data.lock_suggest)}</button>
+          <span style={{ color: "var(--muted)", fontSize: 11.5 }}>
+            closes every day up to that date; reopen from the day sheet</span>
+        </div>)}
+      {data && data.locked_through && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center",
+                      flexWrap: "wrap", marginTop: 6, fontSize: 12.5 }}>
+          <a href={`/api/v1/sites/${site.id}/attendance.pdf?from=${monthStart}`
+                   + `&to=${dateStr(data.locked_through)}`}
+             target="_blank" rel="noreferrer"
+             title="The finalised record, with who signed it off"
+             style={{ ...ghostButton, padding: "3px 10px", fontSize: 12.5,
+                      textDecoration: "none", color: "var(--navy)" }}>
+            ⬇ PDF of the signed-off days (1–{data.locked_through})</a>
+        </div>)}
       <div style={{ display: "flex", gap: 8, alignItems: "center",
                     flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
         <span style={{ color: "var(--muted)" }}>Client attendance record</span>
@@ -881,17 +980,20 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
                            background: "#fff" }}>Employee</th>
               {data.days.map((d) => {
                 const open = dayOpen(d.day);
+                const signed = !data.locked && data.locked_through
+                  && d.day <= data.locked_through;
                 return (
                 <th key={d.day}
                     onClick={open ? () => onOpenDay(dateStr(d.day)) : undefined}
                     style={{ ...dcell, fontWeight: 600,
-                      background: d.rest ? "#eef4fb"
+                      background: signed ? "#e6f1e8" : d.rest ? "#eef4fb"
                         : d.day === data.today ? "#fff8e6" : "#f6f8fa",
                       color: open ? "var(--sp-navy)" : "#3a4750",
                       cursor: open ? "pointer" : "default",
                       textDecoration: open ? "underline" : "none" }}
-                    title={open ? `${d.dow} — click to enter attendance`
-                      : d.dow}>{d.day}</th>
+                    title={(signed ? "signed off · " : "")
+                      + (open ? `${d.dow} — click to open the day` : d.dow)}>
+                  {d.day}</th>
                 );
               })}
               <th style={{ ...th, textAlign: "right" }}>Pr</th>

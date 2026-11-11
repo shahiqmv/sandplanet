@@ -896,6 +896,8 @@ urlpatterns = [
          hr.timesheet_lock, name="timesheet-lock"),
     path("timesheets/<int:site_id>/<int:year>/<int:month>/reopen",
          hr.timesheet_reopen, name="timesheet-reopen"),
+    path("timesheets/<int:site_id>/<int:year>/<int:month>/lock-through",
+         hr.timesheet_lock_through, name="timesheet-lock-through"),
     path("payroll-export/<int:year>/<int:month>", hr.payroll_export,
          name="payroll-export"),
     path("overtime-rates", hr.overtime_rates, name="overtime-rates"),

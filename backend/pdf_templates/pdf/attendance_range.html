@@ -45,6 +45,7 @@
   ({{ days_covered }} day{{ days_covered|pluralize }}) ·
   {{ workers|length }} on the site register ({{ staff_count }} staff, {{ worker_count }} workers) ·
   prepared {{ prepared_on|date:"j F Y" }}.
+  {% for line in sign_offs %}{{ line }}.{% if not forloop.last %} {% endif %}{% endfor %}
 </div>
 
 

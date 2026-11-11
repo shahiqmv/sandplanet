@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+from rest_framework.response import Response
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -289,6 +290,147 @@ class OtAndLockTests(HrBase):
         r = self.client.post(f"/api/v1/timesheets/{self.site.id}/"
                              f"{day.year}/{day.month}/lock")
         self.assertEqual(r.status_code, 200, r.data)
+
+
+class WeekLockTests(HrBase):
+    """The register is signed off week by week inside the month (PM
+    2026-11-11): days up to the date are closed, the rest of the month
+    stays open, and the month lock is still the close."""
+
+    def _two_days(self):
+        # two working days in the same month, the later one today-ish
+        later = working_day(self.site)
+        earlier = working_day(self.site, 1)
+        if earlier.month != later.month:
+            self.skipTest("month boundary")
+        return earlier, later
+
+    def url(self, day, tail):
+        return (f"/api/v1/timesheets/{self.site.id}/{day.year}/{day.month}/"
+                f"{tail}")
+
+    def test_lock_through_closes_days_up_to_the_date_only(self):
+        earlier, later = self._two_days()
+        self.save_attendance(earlier)
+        self.save_attendance(later)
+        self.as_user(self.pm)
+        r = self.client.post(self.url(earlier, "lock-through"),
+                             {"through": earlier.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.as_user(self.sa)
+        r = self.save_attendance(earlier, ot=1)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("signed off", r.data["detail"])
+        self.assertIn(f"{earlier:%-d %b}", r.data["detail"])
+        r = self.save_attendance(later, ot=1)
+        self.assertEqual(r.status_code, 200, r.data)
+        # the day sheet and the register say so
+        r = self.client.get(f"/api/v1/attendance?site={self.site.id}"
+                            f"&date={earlier}")
+        self.assertTrue(r.data["locked"])
+        self.assertEqual(r.data["lock_kind"], "week")
+        r = self.client.get(f"/api/v1/attendance/register?site={self.site.id}"
+                            f"&year={earlier.year}&month={earlier.month}")
+        self.assertFalse(r.data["locked"])
+        self.assertEqual(r.data["locked_through"], earlier.day)
+        self.assertEqual(r.data["locked_through_by"], self.pm.full_name)
+
+    def test_lock_through_is_forward_only_and_pm_gated(self):
+        earlier, later = self._two_days()
+        self.as_user(self.sa)
+        r = self.client.post(self.url(later, "lock-through"),
+                             {"through": later.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 403)
+        self.as_user(self.pm)
+        r = self.client.post(self.url(later, "lock-through"),
+                             {"through": later.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.client.post(self.url(earlier, "lock-through"),
+                             {"through": earlier.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Reopen", r.data["detail"])
+        tomorrow = date.today() + timedelta(days=1)
+        if tomorrow.month == later.month:
+            r = self.client.post(self.url(later, "lock-through"),
+                                 {"through": tomorrow.isoformat()},
+                                 format="json")
+            self.assertEqual(r.status_code, 400)
+
+    def test_ot_approval_refused_in_a_signed_off_week(self):
+        earlier, later = self._two_days()
+        self.save_attendance(earlier, ot=3)
+        att = Attendance.objects.get(employee=self.mason, day=earlier)
+        self.as_user(self.pm)
+        self.client.post(self.url(earlier, "lock-through"),
+                         {"through": earlier.isoformat()}, format="json")
+        r = self.client.post("/api/v1/attendance/ot-approve",
+                             {"ids": [att.id]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("signed off", r.data["detail"])
+
+    def test_reopen_moves_the_week_lock_back_with_a_reason(self):
+        earlier, later = self._two_days()
+        self.save_attendance(earlier)
+        self.as_user(self.pm)
+        self.client.post(self.url(later, "lock-through"),
+                         {"through": later.isoformat()}, format="json")
+        # a reason is required; forward is refused
+        r = self.client.post(self.url(later, "reopen"),
+                             {"through": earlier.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(self.url(later, "reopen"),
+                             {"through": later.isoformat(), "reason": "x"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        day_before = earlier - timedelta(days=1)
+        through = day_before.isoformat() if day_before.month == earlier.month \
+            else None
+        r = self.client.post(self.url(later, "reopen"),
+                             {"through": through, "reason": "missed a mark"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(AuditLog.objects.filter(
+            event="TIMESHEET_WEEK_REOPENED").exists())
+        self.as_user(self.sa)
+        r = self.save_attendance(earlier, ot=1)
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.save_attendance(later, ot=1)
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_month_lock_outranks_and_reopening_it_keeps_the_weeks(self):
+        earlier, later = self._two_days()
+        self.save_attendance(earlier)
+        self.as_user(self.pm)
+        self.client.post(self.url(earlier, "lock-through"),
+                         {"through": earlier.isoformat()}, format="json")
+        r = self.client.post(self.url(later, "lock"))
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.client.post(self.url(later, "lock-through"),
+                             {"through": later.isoformat()}, format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(self.url(later, "reopen"),
+                             {"reason": "fix one day"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        # the month is open again, the signed-off week is not
+        r = self.save_attendance(later, ot=1)
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.save_attendance(earlier, ot=1)
+        self.assertEqual(r.status_code, 400)
+
+    def test_client_pdf_names_the_sign_off(self):
+        earlier, later = self._two_days()
+        self.save_attendance(earlier)
+        self.as_user(self.pm)
+        self.client.post(self.url(earlier, "lock-through"),
+                         {"through": earlier.isoformat()}, format="json")
+        from unittest.mock import patch
+        with patch("core.views_payroll._pdf_response",
+                   side_effect=lambda html, name: Response({"html": html})):
+            r = self.client.get(f"/api/v1/sites/{self.site.id}/attendance.pdf"
+                                f"?from={earlier}&to={later}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(f"signed off through {earlier:%-d %b} by "
+                      f"{self.pm.full_name}", r.data["html"])
 
 
 class PayrollExportTests(HrBase):
