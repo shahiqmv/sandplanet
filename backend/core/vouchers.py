@@ -267,7 +267,7 @@ def close_balance(actor, reason, doc=None, payable=None, milestone=None):
             if pr.currency == "USD":
                 from . import fx
                 committed = (left * fx.usd_rate()).quantize(Decimal("0.01"))
-            if not pr.is_capitalized:
+            if not pr.is_capitalized and pr.booking != "PAYABLE_SETTLEMENT":
                 from .payments import cost_centre
                 _c.post(site=doc.site, cost_head=pr.cost_head,
                         state="COMMITTED", source="PYR", amount=-committed,
@@ -801,7 +801,8 @@ def authorise_source(doc, actor):
         # nothing, to avoid double counting.
         from . import subcontract
 
-        if not pr.is_capitalized and not subcontract.is_advance_prepayment(pr):
+        if (not pr.is_capitalized and not subcontract.is_advance_prepayment(pr)
+                and pr.booking != "PAYABLE_SETTLEMENT"):
             committed = pr.amount_requested
             if pr.currency == "USD":
                 from . import fx

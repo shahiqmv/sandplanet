@@ -912,3 +912,126 @@ def payment_voucher_action(request, ref, action):
         return Response({"detail": err}, status=400)
     pv.refresh_from_db()
     return Response(_voucher_info(pv))
+
+
+# ---- putting a head-office payment where it belongs (owner 2026-11-10) ----
+
+def _finance(request):
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance reclassifies payments."},
+                        status=403)
+    return None
+
+
+def _pyr(ref):
+    return Document.objects.filter(ref=ref, doc_type="PYR").select_related(
+        "payment_request__cost_head", "site", "project").first()
+
+
+@api_view(["GET", "POST"])
+def pyr_reclassify(request, ref):
+    """GET: what the request is now and the choices. POST: change it."""
+    from . import reclassify
+    from .models import CostHead, Project, Site
+    denied = _finance(request)
+    if denied:
+        return denied
+    doc = _pyr(ref)
+    if doc is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "GET":
+        pr = doc.payment_request
+        return Response({
+            "ref": doc.ref, "booking": pr.booking,
+            "cost_head_id": pr.cost_head_id, "site_id": doc.site_id,
+            "project_id": doc.project_id, "shared_cost": doc.shared_cost,
+            "fixed": reclassify._why_fixed(doc),
+            "bookings": [{"key": k, "label": lbl} for k, lbl in
+                         (("COST", "A cost"),
+                          ("CURRENCY_EXCHANGE", "Currency exchange"),
+                          ("GST_SETTLEMENT", "GST / tax payment"),
+                          ("PRIOR_PERIOD", "Prior-period creditor"))],
+            "heads": reclassify.heads_for_picker(),
+            "sites": reclassify.sites_for_picker(),
+            "projects": reclassify.projects_for(
+                Site.objects.filter(pk=request.GET.get("site")).first()
+                or doc.site),
+        })
+    d = request.data
+    head = site = project = None
+    if d.get("cost_head_id"):
+        head = CostHead.objects.filter(pk=d["cost_head_id"],
+                                       is_active=True).first()
+        if head is None:
+            return Response({"detail": "Pick a cost head."}, status=400)
+    if d.get("site_id"):
+        site = Site.objects.filter(pk=d["site_id"]).first()
+        if site is None:
+            return Response({"detail": "Pick a site."}, status=400)
+    if d.get("project_id"):
+        project = Project.objects.filter(pk=d["project_id"]).first()
+        if project is None:
+            return Response({"detail": "Pick a project."}, status=400)
+    err = reclassify.reclassify(
+        doc, request.user, booking=d.get("booking"), cost_head=head,
+        site=site, project=project, shared_cost=d.get("shared_cost"),
+        reason=d.get("reason") or "")
+    if err:
+        return Response({"detail": err}, status=400)
+    return Response({"ok": True, "ref": doc.ref})
+
+
+@api_view(["GET", "POST"])
+def pyr_apply_to_payables(request, ref):
+    """GET: the open payables this request could have paid. POST: it did."""
+    from . import reclassify
+    denied = _finance(request)
+    if denied:
+        return denied
+    doc = _pyr(ref)
+    if doc is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "GET":
+        pr = doc.payment_request
+        return Response({
+            "ref": doc.ref, "payee": pr.payee, "currency": pr.currency,
+            "paid": pr.amount_paid if pr.amount_paid is not None
+            else pr.amount_requested,
+            "fixed": reclassify._why_fixed(doc),
+            "payables": reclassify.payable_candidates(doc)})
+    summary, err = reclassify.apply_to_payables(
+        doc, request.data.get("payable_ids") or [], request.user,
+        request.data.get("reason") or "")
+    if err:
+        return Response({"detail": err}, status=400)
+    return Response(summary)
+
+
+@api_view(["GET", "POST"])
+def pyr_backlog(request):
+    """GET: every head-office request still booked as cost, with what it
+    most likely is. POST: reclassify a batch of them as one kind."""
+    from . import reclassify
+    denied = _finance(request)
+    if denied:
+        return denied
+    if request.method == "GET":
+        return Response({"rows": reclassify.backlog()})
+    booking = (request.data.get("booking") or "").upper()
+    if booking not in reclassify.NON_COST:
+        return Response({"detail": "A batch becomes a currency exchange, a "
+                                   "tax payment or a prior-period creditor; "
+                                   "the rest are done one by one."},
+                        status=400)
+    reason = request.data.get("reason") or ""
+    results = []
+    for ref in request.data.get("refs") or []:
+        doc = _pyr(ref)
+        if doc is None:
+            results.append({"ref": ref, "error": "Not found."})
+            continue
+        err = reclassify.reclassify(doc, request.user, booking=booking,
+                                    reason=reason)
+        results.append({"ref": ref, "error": err})
+    return Response({"results": results,
+                     "done": sum(1 for r in results if not r["error"])})

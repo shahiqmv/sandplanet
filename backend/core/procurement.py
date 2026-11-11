@@ -1363,7 +1363,8 @@ def reverse_pr_authorisation(pr, actor):
     pr.payables.filter(status="OUTSTANDING").update(status="CANCELLED")
 
 
-def post_pr_vendor_paid(pr, line, actor, ref, side=None, part=None):
+def post_pr_vendor_paid(pr, line, actor, ref, side=None, part=None,
+                        posted_on=None):
     """PAID leg when Finance records a vendor payment / settlement (§4A).
     Settles the vendor's payable if credit.
 
@@ -1392,14 +1393,16 @@ def post_pr_vendor_paid(pr, line, actor, ref, side=None, part=None):
         ccy = row_currency(line)
         costing.post(site=pr.site, cost_head=line.cost_head or materials,
                      state="PAID", source="PR", amount=net, document=pr,
-                     document_line=line, actor=actor, currency=ccy)
+                     document_line=line, actor=actor, currency=ccy,
+                     posted_on=posted_on)
         gst_head = costing.by_code(costing.INPUT_GST)
         if gst > 0 and gst_head is not None:
             costing.post(site=_ho_site(), cost_head=gst_head, state="PAID",
                          source="PR", amount=gst, document=pr,
                          document_line=line, is_stock_pool=True, actor=actor,
-                         currency=ccy)
+                         currency=ccy, posted_on=posted_on)
     if settle:
         Payable.objects.filter(document=pr, document_line=line,
                                status="OUTSTANDING").update(
-            status="SETTLED", settled_on=date.today(), settled_ref=ref)
+            status="SETTLED", settled_on=posted_on or date.today(),
+            settled_ref=ref)

@@ -10,6 +10,16 @@ const TYPES = [
   ["REIMBURSEMENT", "Reimbursement"],
   ["SALARY_ADVANCE", "Salary advance / loan"],
 ];
+// What the money IS (owner 2026-11-10). Head office pays for things that are
+// nobody's cost — dollars bought for rufiyaa, GST handed to MIRA, a creditor
+// from before the books — and booking them as cost put USD 1.9m against the
+// head-office site. A site's payment is always a cost.
+const BOOKINGS = [
+  ["COST", "A cost — materials, services, fees, salaries…"],
+  ["CURRENCY_EXCHANGE", "Currency exchange — dollars bought or sold"],
+  ["GST_SETTLEMENT", "GST / tax payment to MIRA"],
+  ["PRIOR_PERIOD", "Prior-period creditor — a balance from before the books"],
+];
 const METHODS = [["BANK", "Bank transfer"], ["CASH", "Cash"],
                  ["CHEQUE", "Cheque"]];
 
@@ -41,7 +51,7 @@ export default function PaymentRequestForm({ site, sites, onSaved,
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
   const [f, setF] = useState({
-    payment_type: "DIRECT", cost_head_id: "", payee: "",
+    payment_type: "DIRECT", cost_head_id: "", payee: "", booking: "COST",
     payment_method: "BANK", payee_account: "", amount_requested: "",
     currency: "MVR",
     required_by: "", purpose: "", is_urgent: false, urgent_reason: "",
@@ -55,6 +65,23 @@ export default function PaymentRequestForm({ site, sites, onSaved,
   const [busy, setBusy] = useState(false);
 
   const isSalary = f.payment_type === "SALARY_ADVANCE";
+  const atHo = !!activeSite?.is_head_office;
+  const nonCost = atHo && !isSalary && f.booking !== "COST";
+  // A vendor with invoices already waiting on signed orders is paid off the
+  // Payables page — raising a request as well books the same cost twice
+  // (owner 2026-11-10: 463k of Sonee, Manas and Scaling cheques did).
+  const [owed, setOwed] = useState(null);
+  useEffect(() => {
+    if (!atHo || isSalary || f.payee.trim().length < 4) { setOwed(null); return undefined; }
+    const t = setTimeout(() => {
+      api(`/finance/payables?q=${encodeURIComponent(f.payee.trim())}`)
+        .then((d) => {
+          const rows = (d.payables || []).filter((r) => r.group !== "SALARY");
+          setOwed(rows.length ? { n: rows.length, totals: d.totals } : null);
+        }).catch(() => setOwed(null));
+    }, 500);
+    return () => clearTimeout(t);
+  }, [f.payee, atHo, isSalary]);
   // Paying a subcontractor: link the payment to their agreement so whatever
   // is paid — an up-front advance, a part payment — nets off their next
   // valuation (owner 2026-08-13).
@@ -88,7 +115,7 @@ export default function PaymentRequestForm({ site, sites, onSaved,
     // as "broken" (owner: site admin "can't save")
     const missing = [];
     if (!activeSite) missing.push("filing site / centre");
-    if (!f.cost_head_id) missing.push("cost head");
+    if (!f.cost_head_id && !nonCost) missing.push("cost head");
     if (isSalary) {
       const clean = salaryLines.filter((l) => l.employee_id &&
                                               Number(l.amount) > 0);
@@ -113,6 +140,7 @@ export default function PaymentRequestForm({ site, sites, onSaved,
       const body = {
         doc_type: "PYR", site_id: activeSite.id, payload: {},
         cost_head_id: f.cost_head_id, payee: f.payee,
+        booking: atHo && !isSalary ? f.booking : "COST",
         payment_type: f.payment_type, payment_method: f.payment_method,
         payee_account: f.payee_account,
         currency: f.currency,
@@ -198,6 +226,16 @@ export default function PaymentRequestForm({ site, sites, onSaved,
             {TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </label>
+        {atHo && !isSalary && (
+        <label style={{ fontSize: 13 }}>What is this payment?
+          <select value={f.booking}
+                  onChange={(e) => set("booking", e.target.value)}
+                  style={inputStyle}>
+            {BOOKINGS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        )}
+        {!nonCost && (
         <label style={{ fontSize: 13 }}>Cost head
           <select value={f.cost_head_id}
                   onChange={(e) => set("cost_head_id", e.target.value)}
@@ -206,6 +244,13 @@ export default function PaymentRequestForm({ site, sites, onSaved,
             {heads.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
         </label>
+        )}
+        {nonCost && (
+          <div style={{ fontSize: 12.5, color: "var(--muted)", alignSelf: "end",
+                        paddingBottom: 6 }}>
+            Not a cost: it is kept out of every cost report.
+          </div>
+        )}
         {projects.filter((pr) => pr.status === "ACTIVE").length > 0 && (
           <label style={{ fontSize: 13 }}
                  title="Which job this money is for. Costs shared across several jobs — site transport, site office, common freight — are Common cost, and get apportioned to the projects later.">
@@ -228,6 +273,17 @@ export default function PaymentRequestForm({ site, sites, onSaved,
         <label style={{ fontSize: 13 }}>Payee / vendor
           <input value={f.payee} onChange={(e) => set("payee", e.target.value)}
                  style={inputStyle} />
+          {owed && f.booking === "COST" && (
+            <span style={{ display: "block", fontSize: 11.5,
+                           color: "var(--amber-fg)", marginTop: 2 }}>
+              {owed.n} invoice{owed.n === 1 ? "" : "s"} already waiting on
+              signed orders for this vendor
+              {owed.totals && Object.entries(owed.totals).map(([c, v]) =>
+                ` · ${c} ${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 })}`).join("")}.
+              A cheque against their statement is paid from the Payables
+              page, not raised here — raising it here books the cost twice.
+            </span>
+          )}
         </label>
         )}
         {/* Tie the payment to a subcontract and it nets off that

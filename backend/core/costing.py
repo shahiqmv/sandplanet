@@ -181,6 +181,16 @@ RECRUITMENT = "RECRUITMENT"
 INSURANCE_BONDS = "INSURANCE_BONDS"
 GENERAL_STOCK = "GENERAL_STOCK"
 FOREX = "FOREX"
+# Money that leaves without being anyone's cost (owner 2026-11-10): dollars
+# bought for rufiyaa, GST handed on to MIRA, a creditor from before the
+# books. Pool heads, so every cost report leaves them out; a payment
+# request's `booking` picks them, never the raiser (seeded by migration 0304).
+CURRENCY_EXCHANGE = "CURRENCY_EXCHANGE"
+GST_SETTLEMENT = "GST_SETTLEMENT"
+PRIOR_PERIOD = "PRIOR_PERIOD"
+BOOKING_HEADS = {"CURRENCY_EXCHANGE": CURRENCY_EXCHANGE,
+                 "GST_SETTLEMENT": GST_SETTLEMENT,
+                 "PRIOR_PERIOD": PRIOR_PERIOD}
 # Trading book (TRADING_BUILD_BRIEF.md §5) — seeded by migration 0245.
 TRD_COGS = "TRD_COGS"
 TRD_REVENUE = "TRD_REVENUE"

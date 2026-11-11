@@ -64,6 +64,7 @@ import ReceivablesPage from "./ReceivablesPage.jsx";
 import PmrRegister from "./PmrRegister.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PayablesPage from "./PayablesPage.jsx";
+import HoCleanupPage from "./HoCleanupPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
 import FinesPanel, { OffencesPanel } from "./FinesPanel.jsx";
@@ -209,6 +210,7 @@ const NAV_GROUPS = [
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]],
            ["payables", "Payables", ["FINANCE", "ADMIN", "SIGNATORY"]],
+           ["ho-cleanup", "HO Cost Cleanup", ["FINANCE", "ADMIN"]],
            ["import-payments", "International Payables", ["FINANCE", "ADMIN",
                                                    "SIGNATORY"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
@@ -1531,6 +1533,9 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "payables" && (
             <PayablesPage me={me} onOpenDoc={openDoc} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "ho-cleanup" && (
+            <HoCleanupPage me={me} onOpenDoc={openDoc} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "my-pyr" && (
             <MyPaymentRequests me={me} onOpenDoc={openDoc} />

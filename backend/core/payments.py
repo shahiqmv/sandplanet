@@ -55,6 +55,10 @@ def cost_centre(pr):
     RENTAL book against its vehicle; everything else is a project cost."""
     if pr.vehicle_id:
         return {"vehicle": pr.vehicle, "book": "RENTAL"}
+    if pr.booking in ("CURRENCY_EXCHANGE", "GST_SETTLEMENT", "PRIOR_PERIOD"):
+        # nobody's cost: a Head Office pool posting, which the cost reports
+        # leave out (owner 2026-11-10)
+        return {"is_stock_pool": True}
     return {}
 
 
@@ -116,13 +120,31 @@ def create_payment_request(doc, data, user):
     """Create the typed PaymentRequest row alongside the PYR document
     (called from document_create). Validation of the supporting-document
     rule happens at submit, not here."""
-    try:
-        cost_head = CostHead.objects.get(pk=data.get("cost_head_id"),
-                                         is_active=True)
-    except CostHead.DoesNotExist:
-        return None, "A valid cost head is required."
-    if cost_head.is_pool:
-        return None, "That cost head is a Head Office pool, not a project head."
+    # What the money is (owner 2026-11-10). Dollars bought for rufiyaa, GST
+    # handed to MIRA or a creditor from before the books is nobody's cost:
+    # the request books to the pool head of its kind, which every cost
+    # report leaves out. Only head office raises such a request.
+    booking = (data.get("booking") or "COST").upper()
+    if booking not in ("COST", "CURRENCY_EXCHANGE", "GST_SETTLEMENT",
+                       "PRIOR_PERIOD"):
+        return None, "That kind of payment is not one a request can be."
+    if booking != "COST":
+        if not doc.site.is_head_office:
+            return None, ("Only head office raises a currency exchange, a "
+                          "tax payment or a prior-period creditor. A site's "
+                          "payment is a cost.")
+        cost_head = costing.by_code(costing.BOOKING_HEADS[booking])
+        if cost_head is None:
+            return None, "The pool head for that kind of payment is missing."
+    else:
+        try:
+            cost_head = CostHead.objects.get(pk=data.get("cost_head_id"),
+                                             is_active=True)
+        except CostHead.DoesNotExist:
+            return None, "A valid cost head is required."
+        if cost_head.is_pool:
+            return None, ("That cost head is a Head Office pool, not a "
+                          "project head.")
     # A fleet cost head needs its vehicle (the cost centre); a project head
     # never carries one.
     vehicle = job = None
@@ -185,7 +207,7 @@ def create_payment_request(doc, data, user):
         payment_type="ADVANCE" if salary_lines
         else "PERMIT_RENEWAL" if permit_lines
         else data.get("payment_type", "DIRECT"),
-        cost_head=cost_head,
+        cost_head=cost_head, booking=booking,
         vehicle=vehicle, maintenance_job=job,
         payee=payee,
         payment_method=data.get("payment_method", "BANK"),
@@ -532,6 +554,10 @@ def pyr_action(request, doc, action_name):
                 # An import charge already capitalized into the material's landed
                 # cost at receipt — the PYR pays the agent but posts nothing here,
                 # to avoid double counting (import-charge-payments).
+                pass
+            elif pr.booking == "PAYABLE_SETTLEMENT":
+                # The payables it pays posted the Paid leg at their own
+                # site when Finance applied the request (owner 2026-11-10).
                 pass
             else:
                 costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",

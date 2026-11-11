@@ -247,6 +247,12 @@ class DocumentSerializer(serializers.ModelSerializer):
             "vehicle_id": pr.vehicle_id,
             "maintenance_job": pr.maintenance_job.ref if pr.maintenance_job_id else None,
             "cost_head_id": pr.cost_head_id, "payee": pr.payee,
+            "booking": pr.booking,
+            "settled_payables": [
+                {"vendor": p.vendor, "ref": p.document.ref,
+                 "site": p.site.code, "amount": p.amount}
+                for p in obj.settled_payables.select_related(
+                    "document", "site")],
             "payment_method": pr.payment_method,
             "payee_account": pr.payee_account, "currency": pr.currency,
             "origin": pr.origin, "fx_rate": pr.fx_rate,

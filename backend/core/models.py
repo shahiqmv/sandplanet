@@ -6037,6 +6037,23 @@ class PaymentRequest(models.Model):
     # charge already in the material's landed cost), so it posts NOTHING to the
     # cost ledger — same idea as a salary advance (import-charge-payments).
     is_capitalized = models.BooleanField(default=False)
+    # What the money IS, not merely what it was spent on (owner 2026-11-10:
+    # head office showed USD 1.9m of "cost" that was mostly dollars bought
+    # for rufiyaa, GST handed to MIRA and cheques honouring orders the sites
+    # had already booked). A COST request posts to the project ledger as it
+    # always did. The other kinds post to a Head Office pool head, which
+    # every cost report ignores, or — a PAYABLE_SETTLEMENT — post nothing of
+    # their own because the payables they pay post the Paid leg at their
+    # own site.
+    class Booking(models.TextChoices):
+        COST = "COST", "Cost"
+        CURRENCY_EXCHANGE = "CURRENCY_EXCHANGE", "Currency exchange"
+        GST_SETTLEMENT = "GST_SETTLEMENT", "GST / tax payment"
+        PRIOR_PERIOD = "PRIOR_PERIOD", "Prior-period creditor"
+        PAYABLE_SETTLEMENT = "PAYABLE_SETTLEMENT", "Settles payables"
+
+    booking = models.CharField(max_length=20, choices=Booking.choices,
+                               default=Booking.COST)
     payee = models.TextField()
     payment_method = models.CharField(max_length=16, choices=Method.choices,
                                       default=Method.BANK)
@@ -6149,6 +6166,11 @@ class Payable(models.Model):
     status = models.CharField(max_length=12, default="OUTSTANDING")  # /SETTLED
     settled_on = models.DateField(null=True, blank=True)
     settled_ref = models.TextField(blank=True)
+    # The payment request Finance applied to this payable when the cheque
+    # had been raised as a request instead of a voucher (owner 2026-11-10).
+    settled_by_request = models.ForeignKey(
+        Document, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="settled_payables")
     # A balance left unpaid on purpose — a discount, a short delivery —
     # closed by Finance with a reason (owner 2026-10-27).
     closed_amount = models.DecimalField(max_digits=14, decimal_places=2,

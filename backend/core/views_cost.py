@@ -92,7 +92,12 @@ def _site_cost(site):
     # not this project's cost, and charging it to whichever site happened to
     # raise the payment misstated that project. Those heads are totalled on
     # their own instead, on the cost head page (owner 2026-09-07).
-    agg = CostPosting.objects.filter(site=site, book="PROJECT").exclude(
+    # A pool posting — input GST, general stock, a currency exchange, GST
+    # handed to MIRA — is money moving, not this site's cost; the cost
+    # report already leaves it out, and head office showed USD 0.9m of
+    # dollars bought as cost until this page did too (owner 2026-11-10).
+    agg = CostPosting.objects.filter(site=site, book="PROJECT",
+                                     is_stock_pool=False).exclude(
         cost_head__overhead=True).values(
         "cost_head__name", "state", "currency").annotate(t=Sum("amount"))
     heads = {name: {s: Decimal("0") for s in STATES} for name in DEFAULT_HEADS}
@@ -166,7 +171,8 @@ def site_cost_postings(request, site_id):
         return Response({"detail": "Cost data is restricted."}, status=403)
     # Matches the summary above: an overhead head is not this site's cost, so
     # drilling in must not show rows the totals never counted.
-    qs = CostPosting.objects.filter(site=site, book="PROJECT").exclude(
+    qs = CostPosting.objects.filter(site=site, book="PROJECT",
+                                    is_stock_pool=False).exclude(
         cost_head__overhead=True).select_related("cost_head", "document")
     if request.GET.get("head"):
         qs = qs.filter(cost_head__name=request.GET["head"])

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, RefStamp, StatusChip, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
+import { ApplyPayablesPanel, BOOKING_LABEL, ReclassifyPanel }
+  from "./PyrReclassify.jsx";
 
 // PYR detail + workflow actions (§5.9, §7.5). Which actions show depends
 // on the viewer's role and the request's stage.
@@ -108,6 +110,13 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
   const awaitingVoucher = st === "DIRECTOR_APPROVED";
   const canPay = st === "AUTHORISED" && (isFinance || isAdmin);
   const canWithdraw = st === "AUTHORISED" && (isFinance || isAdmin);
+  // Once the money has gone Finance may still say what it was: a currency
+  // exchange, a tax payment, a creditor from before the books, a cost of
+  // another site — or the cheque that paid a vendor's payables
+  // (owner 2026-11-10). The server refuses the kinds that post by their
+  // own rule (advances, fleet, import charges, salary runs).
+  const canReclassify = ["AUTHORISED", "PART_PAID", "PAID"].includes(st)
+    && (isFinance || isAdmin) && pr.booking !== "PAYABLE_SETTLEMENT";
   const canReturn = ["SUBMITTED", "PM_APPROVED", "DIRECTOR_APPROVED"]
     .includes(st) && (isPmHere || isDirector || isSignatory || isFinance ||
                       isAdmin);
@@ -151,7 +160,11 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
         <tbody>
           {[["Site", doc.site_code],
             ["Payment type", pr.payment_type],
-            ["Cost head", pr.cost_head],
+            ...(pr.booking && pr.booking !== "COST"
+              ? [["What it is", BOOKING_LABEL[pr.booking] || pr.booking]]
+              : []),
+            ["Cost head", pr.booking === "PAYABLE_SETTLEMENT"
+              ? "— (the orders it paid carry the cost)" : pr.cost_head],
             ...(pr.vehicle ? [["Vehicle", `${pr.vehicle}${pr.maintenance_job ? " · job card " + pr.maintenance_job : ""}`]] : []),
             ["Payee", pr.payee],
             ["Method", `${pr.payment_method}${pr.payee_account
@@ -183,6 +196,30 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
           ))}
         </tbody>
       </table>
+
+      {pr.settled_payables?.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--navy)",
+                        marginBottom: 4 }}>Payables this payment settled</div>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 12.5 }}>
+            <thead><tr>
+              <th style={th}>Vendor</th><th style={th}>Order</th>
+              <th style={th}>Site</th>
+              <th style={{ ...th, textAlign: "right" }}>Amount</th>
+            </tr></thead>
+            <tbody>
+              {pr.settled_payables.map((p, i) => (
+                <tr key={i}>
+                  <td style={td}>{p.vendor}</td>
+                  <td style={td}>{p.ref}</td>
+                  <td style={td}>{p.site}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{money(p.amount)}</td>
+                </tr>))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {pr.salary_advances?.length > 0 && (
         <div style={{ marginTop: 12 }}>
@@ -278,6 +315,14 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
           </div>
         </div>
       )}
+      {panel === "reclassify" && (
+        <ReclassifyPanel doc={doc} onCancel={() => setPanel(null)}
+                         onDone={() => { setPanel(null); onChanged(); }} />
+      )}
+      {panel === "payables" && (
+        <ApplyPayablesPanel doc={doc} onCancel={() => setPanel(null)}
+                            onDone={() => { setPanel(null); onChanged(); }} />
+      )}
       {panel === "pay" && (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 8,
                       border: "1px solid var(--line)" }}>
@@ -369,6 +414,16 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
         {canSubmit && (
           <button onClick={() => act("cancel")} style={ghostButton}>
             Cancel request</button>
+        )}
+        {canReclassify && (
+          <button onClick={() => setPanel("reclassify")} style={ghostButton}
+                  title="Say what this payment really is, or move it to another head, site or project">
+            Reclassify</button>
+        )}
+        {canReclassify && (
+          <button onClick={() => setPanel("payables")} style={ghostButton}
+                  title="This payment was a cheque against the vendor's statement: settle their payables with it">
+            Apply to payables</button>
         )}
       </div>
     </section>
