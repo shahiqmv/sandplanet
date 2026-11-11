@@ -820,11 +820,53 @@ function DeliveryForm({ o, deliverable, onSaved, onCancel }) {
   );
 }
 
+// A draft note's header can change until it is despatched — the vessel is
+// often not known when the note is drafted, and despatch refuses a note
+// without one, which left a draft with no way forward (owner 2026-11-11).
+function DeliveryEdit({ o, dn, onSaved, onCancel }) {
+  const [d, setD] = useState({ delivery_date: dn.delivery_date || "", vessel: dn.vessel || "",
+                               jetty: dn.jetty || "", receiver: dn.receiver || "", notes: dn.notes || "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setD({ ...d, [k]: e.target.value });
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try { onSaved(await api(`/trading/orders/${o.id}/deliveries/${dn.id}`, { method: "PATCH", body: d })); }
+    catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <form onSubmit={save} style={{ ...card, marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Delivery note {dn.ref}</h3>
+      <p className="t-sub">{dn.lines.map((l) => `${fmtQty(l.qty)} ${l.uom} ${l.description}`).join("; ")}</p>
+      <div className="t-grid">
+        <label className="t-field"><span>Delivery date</span>
+          <input style={inputStyle} type="date" value={d.delivery_date} onChange={set("delivery_date")} /></label>
+        <label className="t-field"><span>Customer's vessel</span>
+          <input style={inputStyle} value={d.vessel} onChange={set("vessel")} placeholder={o.customer_detail?.vessels || "boat name"} autoFocus /></label>
+        <label className="t-field"><span>Jetty</span>
+          <input style={inputStyle} value={d.jetty} onChange={set("jetty")} /></label>
+        <label className="t-field"><span>Received on board by</span>
+          <input style={inputStyle} value={d.receiver} onChange={set("receiver")} placeholder="captain / crew name" /></label>
+        <label className="t-field t-field-wide"><span>Notes</span>
+          <input style={inputStyle} value={d.notes} onChange={set("notes")} /></label>
+      </div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <Btn type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</Btn>
+        <Btn type="button" variant="secondary" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
 const DN_TONE = { DRAFT: "warn", DESPATCHED: "info", RECEIVED: "ok", CANCELLED: "alert" };
 
 function Deliveries({ o }) {
   const [data, setData] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);   // a draft note being edited
   const [error, setError] = useState(null);
   const file = useRef({});
   function load() { return api(`/trading/orders/${o.id}/deliveries`).then(setData).catch((e) => setError(e.message)); }
@@ -847,8 +889,9 @@ function Deliveries({ o }) {
   return (
     <div>
       {error && <p className="t-note t-note-red">{error}</p>}
+      {editing && <DeliveryEdit o={o} dn={editing} onSaved={() => { setEditing(null); load(); }} onCancel={() => setEditing(null)} />}
       {creating ? <DeliveryForm o={o} deliverable={data.deliverable} onSaved={() => { setCreating(false); load(); }} onCancel={() => setCreating(false)} />
-        : canNew && <Btn onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>+ New delivery note</Btn>}
+        : canNew && !editing && <Btn onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>+ New delivery note</Btn>}
       {data.deliveries.length === 0 ? <p className="t-empty">Nothing delivered yet. A delivery note takes goods from the store to the customer's boat; the invoice follows the despatch.</p> : (
         <table className="t-table">
           <thead><tr><th style={th}>Note</th><th style={th}>Status</th><th style={th}>Date</th><th style={th}>Vessel · receiver</th>
@@ -859,13 +902,16 @@ function Deliveries({ o }) {
                 <td style={td}><b>{dn.ref}</b></td>
                 <td style={td}><Chip tone={DN_TONE[dn.status]}>{dn.status.toLowerCase()}</Chip></td>
                 <td style={td}>{fmtDate(dn.delivery_date)}</td>
-                <td style={td}>{dn.vessel || <span className="t-sub">vessel?</span>}<div className="t-sub">{dn.receiver}</div></td>
+                <td style={td}>{dn.vessel || (o.can_manage && dn.status === "DRAFT"
+                    ? <button className="t-link" onClick={() => { setEditing(dn); window.scrollTo({ top: 0, behavior: "smooth" }); }}>enter vessel</button>
+                    : <span className="t-sub">vessel?</span>)}<div className="t-sub">{dn.receiver}</div></td>
                 <td style={td}>{dn.lines.map((l) => `${fmtQty(l.qty)} ${l.uom} ${l.description}`).join("; ")}</td>
                 <td style={{ ...td, textAlign: "right" }}>{Number(dn.cogs_mvr) ? fmtMoney(dn.cogs_mvr) : ""}</td>
                 <td style={td}>{dn.invoice || <span className="t-sub">—</span>}</td>
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
                   <a className="t-link" href={`/api/v1/trading/orders/${o.id}/deliveries/${dn.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
-                  {o.can_manage && dn.status === "DRAFT" && <> · <button className="t-link" onClick={() => act(dn, "despatch")}>Despatch</button>
+                  {o.can_manage && dn.status === "DRAFT" && <> · <button className="t-link" onClick={() => { setEditing(dn); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Edit</button>
+                    · <button className="t-link" onClick={() => act(dn, "despatch")}>Despatch</button>
                     · <button className="t-link" onClick={() => act(dn, "cancel")}>Cancel</button></>}
                   {o.can_manage && dn.status === "DESPATCHED" && <>
                     <div style={{ marginTop: 4 }}><input type="file" accept=".pdf,image/*" ref={(el) => { file.current[dn.id] = el; }} style={{ fontSize: 12 }} />
