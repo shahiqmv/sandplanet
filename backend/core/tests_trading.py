@@ -898,7 +898,7 @@ class InvoiceTests(MoneyInBase):
         self.assertEqual(m["invoiced"], "80207.28")
         self.assertEqual(m["received"], "0.00")
 
-    def test_freight_bills_once_and_a_tin_is_required(self):
+    def test_freight_bills_once_and_no_tin_does_not_stop_the_invoice(self):
         d, dn = self.delivered("300")
         self.login(self.sm)
         TradingOrder.objects.filter(id=d["id"]).update(freight_sell=600)   # quoted freight
@@ -908,10 +908,11 @@ class InvoiceTests(MoneyInBase):
                              {"delivery_ids": [dn["id"]], "include_freight": True}, format="json")
         self.assertTrue(r.data["includes_freight"])
         self.assertEqual(r.data["subtotal"], "56112.00")                  # 300 × 185.04 + 600
+        # a customer with no TIN on file is still invoiced (owner 2026-11-12)
         r2 = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{r.data['id']}",
                               {"action": "issue"}, format="json")
-        self.assertEqual(r2.status_code, 400)
-        self.assertIn("TIN", r2.data["detail"])
+        self.assertEqual(r2.status_code, 200, r2.data)
+        self.assertEqual(r2.data["status"], "ISSUED")
         self.assertTrue(self.client.get(f"/api/v1/trading/orders/{d['id']}/invoices")
                         .data["freight_billed"])
         # a second delivery's invoice cannot carry freight again

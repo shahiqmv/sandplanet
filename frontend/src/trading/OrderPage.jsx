@@ -351,7 +351,7 @@ function Overview({ o, onSaved }) {
           {o.customer_detail.address && <div className="t-sub" style={{ whiteSpace: "pre-line" }}>{o.customer_detail.address}</div>}
           {o.customer_detail.contact && <div className="t-sub">{o.customer_detail.contact}</div>}
           {o.customer_detail.tin ? <div className="t-sub">GST TIN {o.customer_detail.tin}</div>
-                                 : <div className="t-sub t-bad">No GST TIN on file — needed on the tax invoice</div>}
+                                 : <div className="t-sub">No GST TIN on file</div>}
           {o.customer_detail.gst_exempt && <Chip tone="warn">GST exempt</Chip>}
         </div>
         <p className="t-sub" style={{ marginTop: 12 }}>The commercial terms that print on the quotation are on the Quotation tab.</p>

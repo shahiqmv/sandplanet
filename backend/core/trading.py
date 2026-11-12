@@ -1372,9 +1372,9 @@ def issue_invoice(inv, actor):
         return "Only the Sales Manager issues a tax invoice."
     if inv.status != "DRAFT":
         return "This invoice is not a draft."
-    if not inv.customer.tin and not inv.customer.gst_exempt:
-        return ("The customer has no GST TIN on file — a tax invoice needs "
-                "it. Add it on the customer, or mark them GST exempt.")
+    # A missing customer TIN no longer stops the invoice: many customers
+    # never give one and the invoice has to go out regardless (owner
+    # 2026-11-12). The overview still points it out.
     with transaction.atomic():
         inv.status = "ISSUED"
         inv.issued_by = actor
