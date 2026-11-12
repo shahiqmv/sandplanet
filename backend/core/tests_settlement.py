@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from django.test import TestCase
 
-from .models import (Attendance, Document, Employee, EmployeeSiteAllocation,
+from .models import (AuditLog, Attendance, Document, Employee, EmployeeSiteAllocation,
                      ManpowerCategory, OvertimeRate, PayrollLine, PayrollRun,
                      SalaryAdvance, Site, User)
 from .payroll import eligible_workers, lock_run
@@ -205,6 +205,71 @@ class SettlementTests(TestCase):
             last_working_day=date(2026, 8, 24), reason="", actor=self.hr)
         self.assertIsNone(msg, msg)
         self.assertEqual(run.kind, PayrollRun.Kind.SETTLEMENT)
+
+
+class SettlementRefreshTests(SettlementTests):
+    """Refreshing a settlement keeps it to its batch (owner 2026-11-12:
+    PRL-SFR-005, generated for 50 demobilised men, grew to 141 on a Refresh
+    because the monthly rule added every active worker at the site)."""
+
+    def test_refresh_adds_nobody_and_recomputes_the_batch(self):
+        from core import payroll
+        self._mark(self.emp, range(1, 11))
+        stay = self._worker("EMP-S2", Decimal("9300"))     # still on site
+        self._mark(stay, range(1, 11))
+        run, msg = generate_settlement(
+            site=self.site, employees=[self.emp], last_working_day=date(2026, 8, 20),
+            reason="demob", actor=self.hr)
+        self.assertIsNone(msg)
+        self.assertEqual(run.lines.count(), 1)
+        before = run.lines.get().days_worked
+        # a day marked after generation reaches the line; EMP-S2 does not
+        self._mark(self.emp, [11])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(summary["added"], [])
+        self.assertEqual(summary["changed"], ["EMP-S1"])
+        self.assertTrue(summary["settlement"])
+        self.assertEqual(list(run.lines.values_list("employee__emp_no", flat=True)),
+                         ["EMP-S1"])
+        self.assertEqual(run.lines.get().days_worked, before + 1)
+
+    def test_refresh_keeps_the_last_working_day_cap(self):
+        from core import payroll
+        self._mark(self.emp, range(1, 11))
+        run, _ = generate_settlement(
+            site=self.site, employees=[self.emp], last_working_day=date(2026, 8, 10),
+            reason="demob", actor=self.hr)
+        self._mark(self.emp, range(11, 20))             # after the last day
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(summary["changed"], [])
+        self.assertEqual(run.lines.get().days_worked, Decimal("10"))
+
+    def test_a_draft_run_can_be_discarded_by_hr_only(self):
+        from core import payroll
+        from core.models import PayrollRun
+        self._mark(self.emp, range(1, 11))
+        run, _ = generate_settlement(
+            site=self.site, employees=[self.emp], last_working_day=date(2026, 8, 20),
+            reason="wrong batch", actor=self.hr)
+        pm = make_user("pm_stl", User.Role.PM, site=self.site)
+        self.assertIn("HR", payroll.discard_run(run, pm))
+        ref = run.ref
+        self.assertIsNone(payroll.discard_run(run, self.hr))
+        self.assertFalse(PayrollRun.objects.filter(ref=ref).exists())
+        self.assertTrue(AuditLog.objects.filter(event="PAYROLL_RUN_DISCARDED",
+                                                detail__ref=ref).exists())
+
+    def test_a_submitted_run_is_not_discarded(self):
+        from core import payroll
+        self._mark(self.emp, range(1, 11))
+        run, _ = generate_settlement(
+            site=self.site, employees=[self.emp], last_working_day=date(2026, 8, 20),
+            reason="demob", actor=self.hr)
+        run.status = "PM_REVIEW"
+        run.save(update_fields=["status"])
+        self.assertIn("draft", payroll.discard_run(run, self.hr))
 
 
 class SettlementApiTests(TestCase):

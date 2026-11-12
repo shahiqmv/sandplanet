@@ -168,6 +168,63 @@ def preview(site, employees, last_working_day, working_days=None):
     return out
 
 
+def settlement_figures(run, emp):
+    """Days, overtime hours and Fridays a man is owed on this settlement:
+    every month still unpaid at the site, capped at the last working day."""
+    site, lwd = run.site, run.last_working_day
+    days, ot, fridays = Decimal(0), Decimal("0"), 0
+    for (y, m) in unpaid_months(emp, site, lwd):
+        start, end = settlement_window(emp, site, y, m, lwd)
+        if start > end:
+            continue
+        d, o, f, _rest = _attendance_prefill(emp, site, y, m,
+                                             run.working_days, cap=lwd)
+        days += d
+        ot += o
+        fridays += f
+    return days, ot, fridays
+
+
+def refresh_settlement(run, actor):
+    """Re-pull a settlement's lines from the register, rates and balances.
+
+    The batch is the batch: nobody is added and nobody dropped. The monthly
+    refresh adds every worker eligible for the month, and run on a
+    settlement it pulled all 91 men still working at SFR onto a 50-man
+    demobilisation (PRL-SFR-005, owner 2026-11-12)."""
+    from .fines import apply_fines
+    from .payroll import reset_to_draft
+    if run.status == "LOCKED":
+        return None, "This run is locked — reopen it before refreshing."
+    changed = []
+    with transaction.atomic():
+        for line in run.lines.select_related("employee"):
+            emp = line.employee
+            days, ot, fridays = settlement_figures(run, emp)
+            bal = outstanding_balance(emp)
+            before = (line.days_worked, line.ot_hours, line.fridays_worked,
+                      line.ot_rate, line.basic_pay, line.advance, line.loan)
+            line.days_worked, line.ot_hours, line.fridays_worked = days, ot, fridays
+            line.basic_pay = emp.basic_pay or 0
+            line.ot_rate = emp.ot_rate()
+            line.advance, line.loan = bal["advance"], bal["loan"]
+            after = (line.days_worked, line.ot_hours, line.fridays_worked,
+                     line.ot_rate, line.basic_pay, line.advance, line.loan)
+            if before != after:
+                changed.append(emp.emp_no)
+            line.save()
+        changed += [e for e in apply_fines(run) if e not in changed]
+    if changed:
+        reset_to_draft(run, actor, "figures refreshed from attendance")
+    summary = {"changed": changed, "added": [], "no_longer_eligible": [],
+               "removed": [], "moved_to_other_site": [], "settlement": True}
+    audit("payroll_run", run.id, "PAYROLL_RUN_REFRESHED", actor=actor,
+          detail={"period": f"{run.year}-{run.month:02d}",
+                  "site": run.site.code if run.site else "ALL",
+                  "settlement": True, "changed": len(changed), "added": 0})
+    return summary, None
+
+
 def generate_settlement(*, site, employees, last_working_day, reason, actor,
                         working_days=None, currency="MVR"):
     """Create a DRAFT settlement run for a demobilised batch.
@@ -198,20 +255,7 @@ def generate_settlement(*, site, employees, last_working_day, reason, actor,
         issue_run_ref(run)
         made = 0
         for emp in sorted(people, key=lambda e: e.emp_no or ""):
-            days = Decimal(0)
-            ot = Decimal("0")
-            fridays = 0
-            for (y, m) in unpaid_months(emp, site, last_working_day):
-                wd = run.working_days
-                start, end = settlement_window(emp, site, y, m,
-                                               last_working_day)
-                if start > end:
-                    continue
-                d, o, f, _rest = _attendance_prefill(emp, site, y, m, wd,
-                                                     cap=last_working_day)
-                days += d
-                ot += o
-                fridays += f
+            days, ot, fridays = settlement_figures(run, emp)
             bal = outstanding_balance(emp)
             # A line is written even at zero: a man who is owed nothing is a
             # fact worth showing the PM, and a silently missing man is how

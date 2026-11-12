@@ -1065,6 +1065,37 @@ def set_run_status(run, action, actor, reason=""):
     return run, None
 
 
+def discard_run(run, actor):
+    """Throw away a run that is still HR's: a settlement generated for the
+    wrong batch, a month run raised by mistake. Nothing has been posted or
+    paid from a draft, so there is nothing to reverse; the lines go with it
+    and a fine on one of them is released back to the man (owner
+    2026-11-12 — PRL-SFR-005 could not be undone by anyone)."""
+    from django.db import transaction
+
+    from .models import CostPosting, Payable
+    if actor.role not in ("HO_HR", "FINANCE", "ADMIN", "PA"):
+        return "HR or Finance discards a run."
+    if run.status not in ("DRAFT", "RETURNED"):
+        return ("Only a draft or returned run can be discarded — this one is "
+                f"{run.status.replace('_', ' ').lower()}.")
+    if run.payment_request_id:
+        return "A payment request was raised on this run; void that first."
+    if CostPosting.objects.filter(payroll_run=run).exists() \
+            or Payable.objects.filter(payroll_line__run=run).exists():
+        return "This run has postings or payables against it and cannot be discarded."
+    ref, kind, n = run.ref, run.kind, run.lines.count()
+    detail = {"ref": ref, "kind": kind, "site": run.site.code if run.site else "ALL",
+              "period": f"{run.year}-{run.month:02d}", "lines": n,
+              "last_working_day": (run.last_working_day.isoformat()
+                                   if run.last_working_day else None)}
+    with transaction.atomic():
+        run.lines.all().delete()
+        run.delete()
+    audit("payroll_run", 0, "PAYROLL_RUN_DISCARDED", actor=actor, detail=detail)
+    return None
+
+
 def reset_to_draft(run, actor, why):
     """Any change to the figures voids the sign-offs (owner 2026-08-12) — an
     approval must never outlive the numbers it was given."""
@@ -1122,6 +1153,11 @@ def refresh_run(run, actor):
 
     if run.status == "LOCKED":
         return None, ("This run is locked — reopen it before refreshing.")
+    if run.kind == "SETTLEMENT":
+        # A settlement is a batch, not a month: nobody joins it on a refresh
+        # (owner 2026-11-12).
+        from .payroll_settlement import refresh_settlement
+        return refresh_settlement(run, actor)
     site, currency = run.site, run.currency
     eligible = {}
     workers = list(eligible_workers(site, currency, run.year,

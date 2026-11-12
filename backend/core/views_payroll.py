@@ -494,6 +494,11 @@ def payroll_run_detail(request, pk):
         if err:
             return Response({"detail": err}, status=400)
         return Response({**_run_info(run), "refresh": summary})
+    if request.method == "POST" and request.data.get("action") == "discard":
+        err = payroll.discard_run(run, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response({"discarded": True})
     if request.method == "POST" and request.data.get("action") in (
             "submit", "verify", "approve", "return"):
         # Draft salary verification: HR submits → site PM verifies → PD

@@ -524,11 +524,14 @@ function RunDetail({ runId, onBack, me, backLabel }) {
   }
 
   async function refresh() {
+    const settlement = run?.kind === "SETTLEMENT";
     if (!window.confirm(
       "Re-pull attendance, rates and pay policy into this run?\n\n"
       + "Days, OT hours, Fridays, OT rate and basic are recalculated from "
-      + "current data; your allowance entries are kept; fines are re-read. Newly "
-      + "eligible workers are added.")) return;
+      + "current data; your allowance entries are kept; fines are re-read. "
+      + (settlement
+          ? "The batch stays as it was generated — nobody is added or dropped."
+          : "Newly eligible workers are added."))) return;
     try {
       const d = await api(`/payroll/runs/${runId}`,
                           { method: "POST", body: { action: "refresh" } });
@@ -548,6 +551,22 @@ function RunDetail({ runId, onBack, me, backLabel }) {
                   + `(${r.moved_to_other_site.join(", ")})`);
       setError(null);
       window.alert("Refreshed — " + bits.join(", ") + ".");
+    } catch (e) { setError(e.message); }
+  }
+
+  // A run still with HR can be thrown away: a settlement generated for the
+  // wrong batch, a month raised by mistake (owner 2026-11-12). Nothing has
+  // been posted or paid from a draft, so nothing is reversed.
+  async function discard() {
+    if (!window.confirm(
+      `Discard ${run.ref}?\n\nThe run and its ${run.lines?.length ?? ""} line(s) are `
+      + "deleted. Nothing has been paid or posted from a draft, so there is "
+      + "nothing to reverse; a fine on a line goes back to the man. This "
+      + "cannot be undone.")) return;
+    try {
+      await api(`/payroll/runs/${runId}`, { method: "POST", body: { action: "discard" } });
+      window.alert(`${run.ref} discarded.`);
+      onBack();
     } catch (e) { setError(e.message); }
   }
 
@@ -652,6 +671,11 @@ function RunDetail({ runId, onBack, me, backLabel }) {
             <button onClick={() => act("submit")} style={buttonStyle}
               title="Send to the site PM to verify">
               Submit for verification</button>
+          )}
+          {!locked && isHR && ["DRAFT", "RETURNED"].includes(run.status) && (
+            <button onClick={discard} style={{ ...ghostButton, color: "#a3271b" }}
+              title="Delete this run and its lines — for a run raised by mistake">
+              🗑 Discard run</button>
           )}
           {run.status === "PM_REVIEW" && isPM && (
             <button onClick={() => act("verify")} style={buttonStyle}>
