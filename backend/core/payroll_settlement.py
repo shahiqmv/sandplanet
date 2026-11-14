@@ -37,7 +37,8 @@ from .models import (Attendance, EmployeeSiteAllocation, PayrollLine,
                      PayrollRun, SalaryAdvance)
 from .payroll import (RECOVERABLE_ADVANCE_STATUSES, _attendance_prefill,
                       compute_line, issue_run_ref, month_days, paid_window,
-                      q)
+                      q,
+                      run_rounding)
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +199,10 @@ def refresh_settlement(run, actor):
         return None, "This run is locked — reopen it before refreshing."
     changed = []
     with transaction.atomic():
+        # Pay policy is re-read on a refresh, and the rounding is policy.
+        if run.round_to != run_rounding(run):
+            run.round_to = run_rounding(run)
+            run.save(update_fields=["round_to"])
         for line in run.lines.select_related("employee"):
             emp = line.employee
             days, ot, fridays = settlement_figures(run, emp)
@@ -252,6 +257,7 @@ def generate_settlement(*, site, employees, last_working_day, reason, actor,
                                                     last_working_day.month),
             last_working_day=last_working_day,
             settlement_reason=(reason or "").strip(), created_by=actor)
+        run.round_to = run_rounding(run)      # cash packets round like the month's
         issue_run_ref(run)
         made = 0
         for emp in sorted(people, key=lambda e: e.emp_no or ""):

@@ -3448,14 +3448,18 @@ class NetRoundingTests(CashDenominationTests):
             key="payroll_round_to", defaults={"value": "0"})
         self.assertEqual(self._run().round_to, 0)
 
-    def test_usd_and_settlements_are_not_rounded(self):
+    def test_usd_is_not_rounded_but_a_rufiyaa_settlement_is(self):
         from . import payroll
         from .models import PayrollRun
         self.assertEqual(payroll.run_rounding(
             PayrollRun(currency="USD", year=2026, month=5)), 0)
         self.assertEqual(payroll.run_rounding(
-            PayrollRun(currency="MVR", kind="SETTLEMENT", year=2026,
+            PayrollRun(currency="USD", kind="SETTLEMENT", year=2026,
                        month=5)), 0)
+        # a demobilised man gets a cash packet too (owner 2026-11-14)
+        self.assertEqual(payroll.run_rounding(
+            PayrollRun(currency="MVR", kind="SETTLEMENT", year=2026,
+                       month=5)), 5)
 
     def test_the_rounding_is_labour_cost_when_the_run_is_locked(self):
         run = self._run()

@@ -80,10 +80,11 @@ def net_rounding():
 
 
 def run_rounding(run):
-    """The rounding a run takes when it is drawn up or refreshed: rufiyaa
-    monthly runs only. USD is transferred to the cent, and a settlement pays
-    exactly what its sheet says."""
-    if run.currency != "MVR" or getattr(run, "kind", "") == "SETTLEMENT":
+    """The rounding a run takes when it is drawn up or refreshed: every
+    rufiyaa run, settlements included — a demobilised man is handed a cash
+    packet like anyone else, and 0.83 cannot be made up in notes (owner
+    2026-11-14, PRL-SFR-005). USD is transferred to the cent."""
+    if run.currency != "MVR":
         return 0
     return net_rounding()
 

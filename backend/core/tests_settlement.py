@@ -272,6 +272,36 @@ class SettlementRefreshTests(SettlementTests):
         self.assertIn("draft", payroll.discard_run(run, self.hr))
 
 
+class SettlementRoundingTests(SettlementTests):
+    """A rufiyaa settlement rounds its nets up to the nearest 5 like the
+    monthly run: the man is handed a cash packet (owner 2026-11-14)."""
+
+    def test_a_settlement_rounds_up_to_five(self):
+        from core import payroll
+        self._mark(self.emp, range(1, 8))
+        run, msg = generate_settlement(
+            site=self.site, employees=[self.emp], last_working_day=date(2026, 8, 20),
+            reason="demob", actor=self.hr)
+        self.assertIsNone(msg)
+        self.assertEqual(run.round_to, 5)
+        m = payroll.compute_line(run.lines.get())
+        self.assertEqual(m["net"] % 5, 0)
+        self.assertTrue(0 <= m["rounding"] < 5)
+
+    def test_refresh_brings_an_older_settlement_onto_the_policy(self):
+        from core import payroll
+        self._mark(self.emp, range(1, 8))
+        run, _ = generate_settlement(
+            site=self.site, employees=[self.emp], last_working_day=date(2026, 8, 20),
+            reason="demob", actor=self.hr)
+        run.round_to = 0                          # drawn up before the rule
+        run.save(update_fields=["round_to"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err)
+        run.refresh_from_db()
+        self.assertEqual(run.round_to, 5)
+
+
 class SettlementApiTests(TestCase):
     """The endpoints the screen drives."""
 
