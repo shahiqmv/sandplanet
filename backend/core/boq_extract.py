@@ -372,9 +372,22 @@ def _owner_key(owner):
     return owner_key(owner)
 
 
-def run_import(owner, upload, actor):
-    """Read + extract an uploaded BOQ file into a draft BoqImport. Returns
-    (boq_import, error)."""
+STALE_MINUTES = 30      # a read still "running" after this long died with its worker
+
+
+def run_import(owner, upload, actor, background=True):
+    """Read an uploaded BOQ file into a BoqImport and extract it.
+
+    The file is read here (seconds); the model extraction runs in a
+    background thread and the row is RUNNING until it lands as DRAFT or
+    FAILED. It used to run inside the request: a large bill took longer
+    than the web worker's 120 seconds, the worker was killed and the QS saw
+    "Request failed (502)" with nothing to show for it (2026-11-15). Under
+    test, or when asked, it runs inline. Returns (boq_import, error)."""
+    import threading
+
+    from django.conf import settings
+
     from .models import BoqImport
     name = (getattr(upload, "name", "") or "").lower()
     if name.endswith(".pdf"):
@@ -383,20 +396,73 @@ def run_import(owner, upload, actor):
         source, pages = "XLSX", excel_pages(upload)
     else:
         return None, "Upload a BOQ as a PDF or an Excel (.xlsx) file."
-    result = structure(pages)
-    rows = normalise_rows(result["rows"])
-    if not rows:
-        return None, ("No BOQ lines were found in that document — check it's "
-                      "the priced schedule and try again.")
-    rec = reconcile(rows, result["printed_totals"])
     imp = BoqImport.objects.create(
-        **_owner_key(owner), source=source,
+        **_owner_key(owner), source=source, status=BoqImport.Status.RUNNING,
         filename=getattr(upload, "name", "") or "",
-        rate_mode=result.get("rate_mode") or "", rows=rows,
-        meta={"page_count": len(pages), "model": result.get("model"),
-              **rec},
-        created_by=actor)
+        meta={"page_count": len(pages)}, created_by=actor)
+    if background and not getattr(settings, "TESTING", False):
+        threading.Thread(target=_extract_into, args=(imp.id, pages, True),
+                         daemon=True).start()
+        return imp, None
+    _extract_into(imp.id, pages, False)
+    imp.refresh_from_db()
+    if imp.status == BoqImport.Status.FAILED:
+        err = imp.error
+        imp.delete()                       # inline: the caller gets the reason
+        return None, err
     return imp, None
+
+
+def _extract_into(import_id, pages, own_thread):
+    """The slow half: model extraction, normalisation, reconciliation. Lands
+    the row as DRAFT, or FAILED with the reason."""
+    import logging
+
+    from django.db import close_old_connections
+
+    from .models import BoqImport
+    if own_thread:
+        close_old_connections()
+    imp = BoqImport.objects.get(pk=import_id)
+    try:
+        result = structure(pages)
+        rows = normalise_rows(result["rows"])
+        if not rows:
+            raise ExtractionError("No BOQ lines were found in that document — "
+                                  "check it's the priced schedule and try again.")
+        rec = reconcile(rows, result["printed_totals"])
+        imp.rows = rows
+        imp.rate_mode = result.get("rate_mode") or ""
+        imp.meta = {**imp.meta, "model": result.get("model"), **rec}
+        imp.status = BoqImport.Status.DRAFT
+        imp.error = ""
+    except ExtractionError as e:
+        imp.status, imp.error = BoqImport.Status.FAILED, str(e)
+    except Exception as e:                       # never a silent death
+        logging.getLogger("boq").exception("BOQ capture failed")
+        imp.status, imp.error = BoqImport.Status.FAILED, f"Capture failed: {e}"
+    imp.save()
+    if own_thread:
+        close_old_connections()
+
+
+def latest_import(**owner):
+    """The import the screen should show: a read in progress, one that
+    failed and is waiting to be dismissed, or a draft awaiting review. A
+    RUNNING row older than STALE_MINUTES is marked FAILED — its thread died
+    with the worker and will not come back."""
+    from django.utils import timezone
+
+    from .models import BoqImport
+    imp = (BoqImport.objects.filter(status__in=("RUNNING", "FAILED", "DRAFT"),
+                                    **owner).order_by("-created_at").first())
+    if imp is not None and imp.status == BoqImport.Status.RUNNING and \
+            imp.updated_at < timezone.now() - timezone.timedelta(minutes=STALE_MINUTES):
+        imp.status = BoqImport.Status.FAILED
+        imp.error = ("The read did not finish — the server restarted while the "
+                     "bill was being read. Capture it again.")
+        imp.save(update_fields=["status", "error", "updated_at"])
+    return imp
 
 
 def commit(boq_import, actor):
@@ -429,4 +495,5 @@ def import_payload(boq_import):
         "source": boq_import.source, "filename": boq_import.filename,
         "rate_mode": boq_import.rate_mode, "rows": rows,
         "warning_count": warn_count, "meta": boq_import.meta,
+        "error": boq_import.error,
     }

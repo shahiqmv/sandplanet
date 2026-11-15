@@ -448,7 +448,9 @@ def tender_boq_capture(request, pk):
         return Response({"detail": f"Capture failed: {e}"}, status=400)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(boq_extract.import_payload(imp))
+    # 202 while the model is still reading; the page polls capture/draft
+    return Response(boq_extract.import_payload(imp),
+                    status=202 if imp.status == "RUNNING" else 200)
 
 
 @api_view(["GET"])
@@ -456,14 +458,12 @@ def tender_boq_capture(request, pk):
 def tender_boq_draft(request, pk):
     """The capture still waiting to be reviewed, if there is one."""
     from . import boq_extract
-    from .models import BoqImport
     if not svc.can_view(request.user):
         return Response({"detail": "Not permitted."}, status=403)
     t, err = _boq_target(request, pk, writing=False)
     if err:
         return err
-    imp = (BoqImport.objects.filter(tender=t, status="DRAFT")
-           .order_by("-created_at").first())
+    imp = boq_extract.latest_import(tender=t)
     return Response(boq_extract.import_payload(imp) if imp else None)
 
 

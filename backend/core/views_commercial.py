@@ -293,7 +293,9 @@ def boq_import_extract(request, pid):
         return Response({"detail": f"Capture failed: {e}"}, status=400)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(boq_extract.import_payload(imp), status=201)
+    # 202 while the model is still reading; the page polls capture/draft
+    return Response(boq_extract.import_payload(imp),
+                    status=202 if imp.status == "RUNNING" else 201)
 
 
 @api_view(["POST"])
@@ -367,12 +369,10 @@ def boq_category_items(request, pid, cat_id):
 def boq_import_latest(request, pid):
     """The most recent open (un-committed) import draft for the project."""
     from . import boq_extract
-    from .models import BoqImport
     p, err = _get_project(request, pid)
     if err:
         return err
-    imp = (BoqImport.objects.filter(project=p, status="DRAFT")
-           .order_by("-created_at").first())
+    imp = boq_extract.latest_import(project=p)
     return Response(boq_extract.import_payload(imp) if imp else None)
 
 

@@ -4835,6 +4835,11 @@ class BoqImport(models.Model):
     until confirmed (owner 2026-07-25)."""
 
     class Status(models.TextChoices):
+        # The model is still reading the file. The read runs in the
+        # background: a large bill took longer than the web worker's 120 s
+        # and came back as a 502 (QS 2026-11-15).
+        RUNNING = "RUNNING", "Reading the bill"
+        FAILED = "FAILED", "Could not be read"
         DRAFT = "DRAFT", "Under review"
         COMMITTED = "COMMITTED", "Loaded into BOQ"
 
@@ -4858,6 +4863,7 @@ class BoqImport(models.Model):
     rows = models.JSONField(default=list, blank=True)
     # {page_count, model, printed_total, extracted_total, reconciled, note}
     meta = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True)          # why a FAILED read failed
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

@@ -185,3 +185,84 @@ class BoqCaptureFlowTests(TestCase):
                              {"file": up}, format="multipart")
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(r.data["source"], "PDF")
+
+
+class BoqCaptureBackgroundTests(TestCase):
+    """The model read runs off the request (QS 2026-11-15: a big bill took
+    longer than the worker's 120 s and the page got a 502)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.project = Project.objects.create(
+            site=self.site, code="POOLS", title="Pools", contract_value="50000")
+        self.qs = make_user("qs1", User.Role.QS)
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+
+    def _upload(self):
+        return SimpleUploadedFile(
+            "client-boq.xlsx", _xlsx([["Section", "Code", "Description"],
+                                      ["Bill 1", "", "Excavation"]]),
+            content_type="application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet")
+
+    def test_the_row_is_running_until_the_read_lands(self):
+        from .models import BoqImport
+        imp = BoqImport.objects.create(project=self.project, source="XLSX",
+                                       status="RUNNING", filename="x.xlsx",
+                                       meta={"page_count": 1})
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/boq/capture/draft")
+        self.assertEqual(r.data["status"], "RUNNING")
+        with patch("core.boq_extract._call_claude", return_value=MODEL_OUT):
+            boq_extract._extract_into(imp.id, ["page text"], False)
+        imp.refresh_from_db()
+        self.assertEqual(imp.status, "DRAFT")
+        self.assertEqual(len(imp.rows), 3)
+        self.assertTrue(imp.meta["reconciled"])
+        self.assertEqual(imp.meta["page_count"], 1)
+
+    def test_a_failed_read_keeps_the_reason_for_the_screen(self):
+        from .models import BoqImport
+        imp = BoqImport.objects.create(project=self.project, source="PDF",
+                                       status="RUNNING", filename="x.pdf")
+        with patch("core.boq_extract._call_claude",
+                   side_effect=boq_extract.ExtractionError("The extraction model failed: boom")):
+            boq_extract._extract_into(imp.id, ["page text"], False)
+        imp.refresh_from_db()
+        self.assertEqual(imp.status, "FAILED")
+        self.assertIn("boom", imp.error)
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/boq/capture/draft")
+        self.assertEqual(r.data["status"], "FAILED")
+        self.assertIn("boom", r.data["error"])
+        # dismissed like any draft
+        r = self.client.delete(f"/api/v1/boq-imports/{imp.id}")
+        self.assertEqual(r.status_code, 204)
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/boq/capture/draft")
+        self.assertIsNone(r.data)
+
+    def test_a_read_that_died_with_the_worker_is_reported_not_spun_forever(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .models import BoqImport
+        imp = BoqImport.objects.create(project=self.project, source="PDF",
+                                       status="RUNNING", filename="x.pdf")
+        BoqImport.objects.filter(pk=imp.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=boq_extract.STALE_MINUTES + 1))
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/boq/capture/draft")
+        self.assertEqual(r.data["status"], "FAILED")
+        self.assertIn("did not finish", r.data["error"])
+
+    @patch("core.boq_extract._call_claude", return_value=MODEL_OUT)
+    def test_in_the_background_the_request_answers_at_once(self, _mock):
+        from unittest.mock import patch as _p
+        with _p("threading.Thread") as thread:
+            with self.settings(TESTING=False):
+                r = self.client.post(f"/api/v1/projects/{self.project.id}/boq/capture",
+                                     {"file": self._upload()}, format="multipart")
+        self.assertEqual(r.status_code, 202, r.data)
+        self.assertEqual(r.data["status"], "RUNNING")
+        self.assertTrue(thread.return_value.start.called)
+

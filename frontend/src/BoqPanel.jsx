@@ -75,6 +75,29 @@ export default function BoqPanel({ projectId, project, me, base }) {
   }
   useEffect(load, [root]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The model reads the bill in the background (a large one takes minutes,
+  // longer than a web request may live — QS 2026-11-15). While the import is
+  // RUNNING the page asks every few seconds; when it lands the review opens
+  // by itself, and a failed read shows its reason.
+  const reading = pending?.status === "RUNNING";
+  useEffect(() => {
+    if (!reading) return undefined;
+    const t = setInterval(async () => {
+      try {
+        const d = await api(`${root}/boq/capture/draft`);
+        setPending(d);
+        if (d?.status === "DRAFT") setDraft(d);
+        if (d?.status === "FAILED") setError(d.error || "The bill could not be read.");
+      } catch { /* try again next tick */ }
+    }, 4000);
+    return () => clearInterval(t);
+  }, [reading, root]);
+
+  async function dismissFailed() {
+    try { await api(`/boq-imports/${pending.id}`, { method: "DELETE" }); } catch { /* */ }
+    setPending(null); setError(null);
+  }
+
   async function importFile(file) {
     if (!file) return;
     setError(null); setBusy(true);
@@ -92,7 +115,11 @@ export default function BoqPanel({ projectId, project, me, base }) {
     const fd = new FormData();
     fd.append("file", file);
     try {
-      setDraft(await apiUpload(`${root}/boq/capture`, fd));
+      const d = await apiUpload(`${root}/boq/capture`, fd);
+      // RUNNING: the poll above takes over; DRAFT (small bill, read at once):
+      // straight to review
+      setPending(d);
+      if (d?.status === "DRAFT") setDraft(d);
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
@@ -238,11 +265,11 @@ export default function BoqPanel({ projectId, project, me, base }) {
                 {!isUnit && (
                   <>
                     <button style={{ ...buttonStyle, padding: "4px 12px" }}
-                            disabled={busy}
+                            disabled={busy || reading}
                             onClick={() => captureRef.current?.click()}
                             title={"Extract a client BOQ PDF or Excel into a "
                               + "reviewable draft"}>
-                      {busy ? "Reading…" : "✦ Capture from PDF/Excel"}</button>
+                      {reading ? "Reading…" : "✦ Capture from PDF/Excel"}</button>
                     <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
                            style={{ display: "none" }}
                            onChange={(e) => captureFile(e.target.files[0])} />
@@ -283,11 +310,29 @@ export default function BoqPanel({ projectId, project, me, base }) {
         )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-      {busy && <p style={{ color: "#5a6b78", fontSize: 12.5 }}>
-        Reading the bill… a large BOQ can take a minute or two — please keep
-        this tab open.</p>}
+      {busy && <p style={{ color: "#5a6b78", fontSize: 12.5 }}>Uploading…</p>}
+      {reading && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 10px", borderRadius: 8, background: "#fff8e6",
+          fontSize: 13, marginBottom: 8 }}>
+          <span>⏳ Reading <strong>{pending.filename || "the bill"}</strong>
+            {pending.meta?.page_count ? ` (${pending.meta.page_count} pages)` : ""}…
+            a large BOQ takes a few minutes. The review opens here when it is
+            ready; you can leave this page and come back.</span>
+        </div>
+      )}
+      {pending?.status === "FAILED" && editable && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 10px", borderRadius: 8, background: "#fdeceb",
+          fontSize: 13, marginBottom: 8 }}>
+          <span><strong>{pending.filename || "The bill"}</strong> could not be
+            read: {pending.error}</span>
+          <button style={{ ...ghostButton, padding: "3px 12px",
+            marginLeft: "auto" }} onClick={dismissFailed}>Dismiss</button>
+        </div>
+      )}
 
-      {pending && editable && !draft && (
+      {pending?.status === "DRAFT" && editable && !draft && (
         <div style={{ display: "flex", alignItems: "center", gap: 10,
           padding: "8px 10px", borderRadius: 8, background: "#eef6f0",
           fontSize: 13, marginBottom: 8 }}>
