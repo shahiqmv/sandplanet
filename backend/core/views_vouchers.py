@@ -696,16 +696,38 @@ def _pv_pdf_bytes(pv):
     return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
 
 
+FOOTER_PT = 24 * 72 / 25.4   # the letterhead's bottom margin, where the footer sits
+
+
+def _content_clip(page, fitz):
+    """The part of the page worth a picture: full width, from the top down to
+    the last line of content — the empty rest of the sheet and the page
+    footer are left out (owner 2026-11-16: "just the relevant part")."""
+    limit = page.rect.height - FOOTER_PT
+    bottom = 0
+    boxes = [fitz.Rect(b[:4]) for b in page.get_text("blocks")]
+    boxes += [d["rect"] for d in page.get_drawings()]
+    boxes += [fitz.Rect(i["bbox"]) for i in page.get_image_info()]
+    for r in boxes:
+        if r.y0 < limit:
+            bottom = max(bottom, min(r.y1, limit))
+    if bottom <= 0:
+        bottom = limit
+    return fitz.Rect(0, 0, page.rect.width, min(bottom + 10, limit))
+
+
 def _pdf_to_png(pdf_bytes, zoom=2.0):
-    """Rasterise a PDF into one PNG: page one, with any further pages
-    stacked beneath it so a long voucher is still a single picture."""
+    """Rasterise a PDF into one PNG, cropped to its content: page one down
+    to its last line, with any further pages stacked beneath it so a long
+    voucher is still a single picture."""
     import io
     try:
         import pymupdf as fitz
     except ImportError:  # the older import name
         import fitz
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = [page.get_pixmap(matrix=fitz.Matrix(zoom, zoom)) for page in doc]
+    pages = [page.get_pixmap(matrix=fitz.Matrix(zoom, zoom),
+                             clip=_content_clip(page, fitz)) for page in doc]
     if len(pages) == 1:
         return pages[0].tobytes("png")
     from PIL import Image
