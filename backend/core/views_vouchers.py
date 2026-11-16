@@ -676,21 +676,72 @@ def payment_voucher_pdf(request, ref):
         return Response({"detail": "Not found."}, status=404)
     if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
         return Response({"detail": "Finance / signatory only."}, status=403)
-    from django.conf import settings
     from django.http import HttpResponse
-    from django.template.loader import render_to_string
-
-    html = render_to_string("pdf/payment_voucher.html", _pv_pdf_context(pv))
     try:
-        from weasyprint import HTML
-
-        pdf_bytes = HTML(string=html,
-                         base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        pdf_bytes = _pv_pdf_bytes(pv)
     except Exception:
         return Response({"detail": "PDF engine unavailable on this "
                                    "server."}, status=503)
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     resp["Content-Disposition"] = f'inline; filename="{pv.ref}.pdf"'
+    return resp
+
+
+def _pv_pdf_bytes(pv):
+    from django.conf import settings
+    from django.template.loader import render_to_string
+    from weasyprint import HTML
+
+    html = render_to_string("pdf/payment_voucher.html", _pv_pdf_context(pv))
+    return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+
+
+def _pdf_to_png(pdf_bytes, zoom=2.0):
+    """Rasterise a PDF into one PNG: page one, with any further pages
+    stacked beneath it so a long voucher is still a single picture."""
+    import io
+    try:
+        import pymupdf as fitz
+    except ImportError:  # the older import name
+        import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = [page.get_pixmap(matrix=fitz.Matrix(zoom, zoom)) for page in doc]
+    if len(pages) == 1:
+        return pages[0].tobytes("png")
+    from PIL import Image
+    images = [Image.open(io.BytesIO(p.tobytes("png"))) for p in pages]
+    width = max(i.width for i in images)
+    sheet = Image.new("RGB", (width, sum(i.height for i in images)), "white")
+    y = 0
+    for im in images:
+        sheet.paste(im, (0, y))
+        y += im.height
+    out = io.BytesIO()
+    sheet.save(out, format="PNG")
+    return out.getvalue()
+
+
+@api_view(["GET"])
+def payment_voucher_png(request, ref):
+    """The voucher PDF as a picture. Finance shares a voucher in the payments
+    group as a screenshot of the page header, which shows the IPR number and
+    the amount and not who is being paid; this is the letterhead voucher
+    itself, which the Copy button puts on the clipboard (owner 2026-11-16)."""
+    try:
+        pv = Document.objects.get(ref=ref, doc_type="PV")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
+        return Response({"detail": "Finance / signatory only."}, status=403)
+    from django.http import HttpResponse
+    try:
+        png = _pdf_to_png(_pv_pdf_bytes(pv))
+    except Exception:
+        return Response({"detail": "PDF engine unavailable on this "
+                                   "server."}, status=503)
+    resp = HttpResponse(png, content_type="image/png")
+    resp["Content-Disposition"] = f'inline; filename="{pv.ref}.png"'
+    resp["Cache-Control"] = "no-store"
     return resp
 
 

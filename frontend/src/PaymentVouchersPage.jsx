@@ -18,86 +18,53 @@ const money = (v) => v == null ? "—"
 const cur = (v, c) => `${c || "MVR"} ${money(v)}`;
 
 // Finance shares a voucher in the payments group as a screenshot of this
-// page, which shows the IPR number and the amount and not who is being paid
-// (owner 2026-11-16). The copy button puts a plain-text voucher on the
-// clipboard — payee, purpose, PI, amounts, who prepared and who signed —
-// ready to paste. Bank details stay off it: a group chat is not the place.
-const ACTION_WORD = { SUBMIT: "Submitted", APPROVE: "Approved",
-  RETURN: "Returned", VOID: "Voided", NOTE: "Note" };
-function voucherText(pv) {
-  const out = [];
-  out.push(`*${pv.ref}* · ${pv.status} · ${shortDate(pv.doc_date)}`);
-  if (pv.prepared_by) out.push(`Prepared by ${pv.prepared_by}`);
-  if (pv.debit_account) out.push(`Debit account: ${pv.debit_account.label}`);
-  out.push("");
-  pv.lines.forEach((ln, i) => {
-    const who = ln.payee || "—";
-    out.push(`${i + 1}. ${ln.ref} · ${who}`);
-    const bits = [ln.purpose];
-    if (ln.pi_ref) bits.push(`PI ${ln.pi_ref}`);
-    if (ln.site_code && ln.site_code !== "HO") bits.push(ln.site_code);
-    out.push(`   ${bits.filter(Boolean).join(" · ")}`);
-    (ln.vendor_rows || []).forEach((r) => {
-      out.push(`   – ${r.vendor || r.supplier || "vendor"}: `
-        + cur(r.amount, ln.currency));
-    });
-    let amt = `   ${cur(ln.amount, ln.currency)}`;
-    if (ln.is_part && ln.full_amount != null) {
-      amt += ` (part of ${cur(ln.full_amount, ln.currency)})`;
-    }
-    if (ln.status === "QUERIED") amt += " · QUERIED";
-    if (ln.paid) amt += ` · paid${ln.payment_ref ? ` ${ln.payment_ref}` : ""}`;
-    out.push(amt);
-  });
-  out.push("");
-  out.push(`*Total ${cur(pv.total, pv.currency)}*`);
-  const trail = (pv.approvals || []).filter((a) => ACTION_WORD[a.action]);
-  if (trail.length) {
-    out.push("");
-    trail.forEach((a) => {
-      out.push(`${ACTION_WORD[a.action]} by ${a.by} (${a.role}), `
-        + shortDate(a.at) + (a.comment ? ` — ${a.comment}` : ""));
-    });
+// page, which shows the IPR number and the amount and not who is being paid;
+// the PDF is there but nobody opens it to screenshot it (owner 2026-11-16).
+// The Copy button fetches the letterhead voucher as a picture and puts it on
+// the clipboard, ready to paste into the chat. Where the browser can't take
+// an image on the clipboard, the picture is downloaded instead.
+async function copyVoucherImage(ref) {
+  const fetchBlob = () =>
+    fetch(`/api/v1/payment-vouchers/${ref}/png`, { credentials: "include" })
+      .then((r) => {
+        if (!r.ok) throw new Error(`Couldn't build the picture (${r.status})`);
+        return r.blob();
+      });
+  if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {
+    try {
+      // a promise, not a blob: Safari only allows the write when the item is
+      // created inside the click, before anything has been awaited
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": fetchBlob() })]);
+      return "Copied";
+    } catch { /* no image clipboard here — hand over the file instead */ }
   }
-  if (pv.is_void) out.push(`VOID — ${pv.void_reason || ""}`);
-  else if (pv.status === "SUBMITTED") out.push("Awaiting signatory approval");
-  else if (pv.status === "APPROVED") {
-    out.push(pv.settled ? "Paid in full"
-      : `Authorised · ${pv.paid_count} of ${pv.approved_count} paid`);
-  }
-  return out.join("\n");
-}
-
-async function copyText(text) {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through to the textarea route */ }
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.setAttribute("readonly", "");
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch { ok = false; }
-  document.body.removeChild(ta);
-  return ok;
+  const blob = await fetchBlob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${ref}.png`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return "Downloaded";
 }
 
 function CopyVoucherButton({ pv }) {
   const [state, setState] = useState("");
   async function go(e) {
     e.stopPropagation();
-    const ok = await copyText(voucherText(pv));
-    setState(ok ? "Copied" : "Couldn't copy");
-    setTimeout(() => setState(""), 2000);
+    setState("…");
+    try {
+      setState(await copyVoucherImage(pv.ref));
+    } catch (err) {
+      setState(err.message || "Couldn't copy");
+    }
+    setTimeout(() => setState(""), 2500);
   }
   return (
-    <button type="button" onClick={go} title="Copy the voucher as text to paste in a chat"
+    <button type="button" onClick={go} disabled={state === "…"}
+      title="Copy the voucher as a picture to paste in a chat"
       style={{ ...ghostButton, fontSize: 13, padding: "3px 10px" }}>
       {state || "📋 Copy"}</button>
   );

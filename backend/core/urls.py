@@ -328,6 +328,8 @@ urlpatterns = [
          vouchers.voucher_transfer_schedule, name="voucher-transfers"),
     path("payment-vouchers/<str:ref>/pdf", vouchers.payment_voucher_pdf,
          name="payment-voucher-pdf"),
+    path("payment-vouchers/<str:ref>/png", vouchers.payment_voucher_png,
+         name="payment-voucher-png"),
     path("payment-vouchers/<str:ref>", vouchers.payment_voucher_detail,
          name="payment-voucher-detail"),
     path("payment-vouchers/<str:ref>/actions/<str:action>",

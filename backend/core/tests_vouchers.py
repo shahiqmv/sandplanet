@@ -135,6 +135,26 @@ class VoucherHappyPathTests(VoucherBase):
         if r.status_code == 200:
             self.assertEqual(r["Content-Type"], "application/pdf")
 
+    def test_voucher_picture(self):
+        """The voucher as a picture for the payments group (owner
+        2026-11-16): Finance/signatory only; a PNG, or a 503 where the PDF
+        engine is missing — never a 500."""
+        a = self.director_approved_pyr(amount=3000, payee="A")
+        pv = self.create_voucher([a]).data["ref"]
+        self.client.force_authenticate(self.sa)
+        self.assertEqual(
+            self.client.get(f"/api/v1/payment-vouchers/{pv}/png").status_code,
+            403)
+        self.client.force_authenticate(self.finance)
+        r = self.client.get(f"/api/v1/payment-vouchers/{pv}/png")
+        self.assertIn(r.status_code, (200, 503))
+        if r.status_code == 200:
+            self.assertEqual(r["Content-Type"], "image/png")
+            self.assertTrue(r.content.startswith(b"\x89PNG"))
+        self.assertEqual(
+            self.client.get("/api/v1/payment-vouchers/PV-NOPE/png").status_code,
+            404)
+
 
 class VoucherQueryTests(VoucherBase):
     def test_queried_line_returns_source_others_commit(self):
