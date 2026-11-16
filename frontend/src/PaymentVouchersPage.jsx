@@ -123,8 +123,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
   const isSignatory = ["SIGNATORY", "ADMIN"].includes(me.role);
   // the accountant: a Finance user with the access added (owner 2026-11-16)
-  const isAccountant = me.role === "ADMIN"
-    || (me.extra_roles || []).includes("ACCOUNTANT");
+  const holdsAccountant = (me.extra_roles || []).includes("ACCOUNTANT");
+  const isAccountant = me.role === "ADMIN" || holdsAccountant;
 
   const [awaiting, setAwaiting] = useState([]);
   const [vouchers, setVouchers] = useState([]);
@@ -514,7 +514,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
                         <Btn variant="primary" disabled={busy}
                              onClick={() => voucherAction(pv.ref, "submit")}>
-                          {checkRequired ? "Submit to accountant"
+                          {/* the accountant's own vouchers are checked as
+                              they are submitted (owner 2026-11-16) */}
+                          {checkRequired && !holdsAccountant
+                            ? "Submit to accountant"
                             : "Submit to signatory"}</Btn>
                         <Btn variant="secondary" disabled={busy}
                              onClick={() => voucherAction(pv.ref, "cancel")}>

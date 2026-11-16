@@ -783,13 +783,25 @@ def submit_voucher(pv, actor):
         return "The voucher has no requisitions."
     # The accounts officer submits to the accountant, who checks it on to the
     # signatory (owner 2026-11-16). No accountant: straight to the signatory.
-    pv.status = "SUBMITTED" if check_required() else "CHECKED"
+    # A voucher the accountant submits is checked as it is submitted — they
+    # would only be checking their own work, and it would sit in their own
+    # queue (owner 2026-11-16: "vouchers he prepares need to be auto checked").
+    from .models import User
+    auto_check = check_required() and actor.has_role(User.ACCOUNTANT)
+    pv.status = ("SUBMITTED" if check_required() and not auto_check
+                 else "CHECKED")
     pv.save(update_fields=["status", "updated_at"])
     Approval.objects.create(document=pv, revision=pv.current_revision,
                             action="SUBMIT", actor=actor,
                             actor_role=actor.role)
+    if auto_check:
+        Approval.objects.create(
+            document=pv, revision=pv.current_revision, action="CHECK",
+            actor=actor, actor_role=actor.role,
+            comment="Submitted by the accountant — checked on submission")
     audit("document", pv.id, "PV_SUBMITTED", actor=actor,
-          from_state="DRAFT", to_state=pv.status, detail={"ref": pv.ref})
+          from_state="DRAFT", to_state=pv.status,
+          detail={"ref": pv.ref, "auto_checked": auto_check})
     from .notify import notify_document
     notify_document(pv, actor)  # the accountant, or a signatory, is next
     return None

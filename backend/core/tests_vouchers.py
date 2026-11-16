@@ -649,13 +649,31 @@ class AccountantCheckTests(VoucherBase):
             self.voucher_action(pv, "check", self.finance).status_code, 400)
         self.assertEqual(
             self.voucher_action(pv, "check", self.signatory).status_code, 400)
-        # four eyes: a voucher the accountant prepared is checked by someone else
+        # four eyes on a manual check: a voucher the accountant built but a
+        # colleague submitted is not theirs to check
         a = self.director_approved_pyr(amount=500, payee="B")
         own = self.create_voucher([a], user=self.accountant).data["ref"]
-        self.voucher_action(own, "submit", self.accountant)
+        self.voucher_action(own, "submit", self.finance)
+        self.assertEqual(self.status(own), "SUBMITTED")
         r = self.voucher_action(own, "check", self.accountant)
         self.assertEqual(r.status_code, 400)
         self.assertIn("someone other", r.data["detail"])
+
+    def test_the_accountants_own_submission_is_checked_on_submission(self):
+        a = self.director_approved_pyr(amount=700, payee="C")
+        pv = self.create_voucher([a], user=self.accountant).data["ref"]
+        r = self.voucher_action(pv, "submit", self.accountant)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.status(pv), "CHECKED")
+        doc = Document.objects.get(ref=pv)
+        self.assertEqual(
+            list(doc.approvals.order_by("id").values_list("action", flat=True)),
+            ["SUBMIT", "CHECK"])
+        self.assertTrue(doc.approvals.filter(action="CHECK",
+                                             actor=self.accountant).exists())
+        # straight into the signatory's hands
+        r = self.voucher_action(pv, "approve", self.signatory)
+        self.assertEqual(r.status_code, 200, r.data)
 
     def test_return_to_preparer_needs_a_note(self):
         pv = self.submitted()
