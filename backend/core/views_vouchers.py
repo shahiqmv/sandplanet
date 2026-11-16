@@ -104,6 +104,7 @@ def _line_info(line):
                 "source_status": m.status,
                 "payee": order.supplier.name, "cost_head": "Imports",
                 "purpose": m.label, "milestone_label": m.label,
+                "pi_ref": order.pi_ref,
                 "payment_ref": line.paid_ref or m.tt_ref,
                 "mvr_paid": line.paid_local or m.mvr_paid,
                 # the TT itself is executed on the Import Payments page
