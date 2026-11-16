@@ -1140,6 +1140,15 @@ def pending_groups(user):
     if user.role in ("SIGNATORY", "ADMIN"):
         add("To authorise — import order charge corrections",
             correction_rows("PENDING_SIGNATORY"))
+    if user.has_role("ACCOUNTANT") or user.role == "ADMIN":
+        # The accountant checks a submitted voucher before the signatory
+        # sees it (owner 2026-11-16)
+        add("To check — payment vouchers",
+            [{"ref": pv.ref, "doc_type": "PV", "site_code": "—",
+              "project_code": None, "doc_date": pv.doc_date,
+              "status": pv.status,
+              "hint": "Check the voucher on to the signatory, or return it"}
+             for pv in base.filter(doc_type="PV", status="SUBMITTED")[:50]])
     if user.role in ("SIGNATORY", "ADMIN"):
         # The appointment sign-off had a queue of its own inside the
         # onboarding module, so it reached neither My Tasks nor the phone and
@@ -1152,13 +1161,19 @@ def pending_groups(user):
               "hint": f"{c['candidate_name']} — {c['position'] or 'appointment'}"
                       " · signing stamps the letters"}
              for c in cases_to_sign_off(user)[:50]])
-        # Signatory approves whole Payment Vouchers (M6d), not each doc
+        # Signatory approves whole Payment Vouchers (M6d), not each doc —
+        # the ones the accountant has checked, or, while the company has no
+        # accountant, the ones submitted (owner 2026-11-16)
+        from .vouchers import check_required
+        sig_states = ("CHECKED",) if check_required() else ("CHECKED",
+                                                              "SUBMITTED")
         add("To approve — payment vouchers",
             [{"ref": pv.ref, "doc_type": "PV", "site_code": "—",
               "project_code": None, "doc_date": pv.doc_date,
               "status": pv.status,
               "hint": "Approve the batch or query lines"}
-             for pv in base.filter(doc_type="PV", status="SUBMITTED")[:50]])
+             for pv in base.filter(doc_type="PV",
+                                   status__in=sig_states)[:50]])
         # …and authorises Director-approved import orders (the commitment;
         # placing the order is not a payment, so it carries no voucher)
         add("To authorise — approved import orders (IPR)",

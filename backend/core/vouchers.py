@@ -247,7 +247,7 @@ def close_balance(actor, reason, doc=None, payable=None, milestone=None):
           else {"source_milestone": milestone})
     if PaymentVoucherLine.objects.filter(
             voucher__is_void=False,
-            voucher__status__in=("DRAFT", "SUBMITTED"), **kw).exists():
+            voucher__status__in=IN_FLIGHT, **kw).exists():
         return "It is on a voucher still being processed — finish that first."
     if _live(status="APPROVED", paid_amount__isnull=True, **kw).exists():
         return "An approved part is still to be paid — pay or void it first."
@@ -362,7 +362,7 @@ def payable_currency(p):
 def _on_live_payable():
     """Payables sitting on a voucher still being processed (DRAFT/SUBMITTED)."""
     return PaymentVoucherLine.objects.filter(
-        voucher__status__in=("DRAFT", "SUBMITTED"),
+        voucher__status__in=IN_FLIGHT,
         voucher__is_void=False,
         source_payable__isnull=False).values_list(
         "source_payable_id", flat=True)
@@ -486,7 +486,7 @@ def _on_live_voucher():
     withdrawn authorisation frees the source to be vouchered again — the
     source's own status is what gates re-eligibility."""
     return PaymentVoucherLine.objects.filter(
-        voucher__status__in=("DRAFT", "SUBMITTED"),
+        voucher__status__in=IN_FLIGHT,
         voucher__is_void=False,
         source_document__isnull=False).values_list(
         "source_document_id", flat=True)
@@ -538,7 +538,7 @@ def awaiting_voucher():
 def _on_live_milestone():
     """Milestones sitting on a voucher still being processed."""
     return PaymentVoucherLine.objects.filter(
-        voucher__status__in=("DRAFT", "SUBMITTED"),
+        voucher__status__in=IN_FLIGHT,
         voucher__is_void=False,
         source_milestone__isnull=False).values_list(
         "source_milestone_id", flat=True)
@@ -620,7 +620,7 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                           "awaiting payment.")
         if PaymentVoucherLine.objects.filter(
                 source_document=doc,
-                voucher__status__in=("DRAFT", "SUBMITTED")).exists():
+                voucher__status__in=IN_FLIGHT).exists():
             return None, f"{doc.ref} is already on a voucher."
         if doc.doc_type == "PR":
             open_rows = {r.id: r for r in pr_open_rows(doc)}
@@ -652,7 +652,7 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                           "overseas payment awaiting authorisation.")
         if PaymentVoucherLine.objects.filter(
                 source_milestone=m,
-                voucher__status__in=("DRAFT", "SUBMITTED")).exists():
+                voucher__status__in=IN_FLIGHT).exists():
             return None, f"{m.order.document.ref} · {m.label} is already on a " \
                          "voucher."
         label = f"{m.order.document.ref} · {m.label}"
@@ -677,7 +677,7 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
             return None, f"The payable to {p.vendor} is no longer outstanding."
         if PaymentVoucherLine.objects.filter(
                 source_payable=p,
-                voucher__status__in=("DRAFT", "SUBMITTED")).exists():
+                voucher__status__in=IN_FLIGHT).exists():
             return None, f"The payable to {p.vendor} is already on a voucher."
         amount, err = _part(amounts, f"P:{p.id}", balance(payable=p)["balance"],
                             paid_whole(payable=p), f"The payable to {p.vendor}")
@@ -749,20 +749,97 @@ def set_voucher_debit_account(pv, bank_account_id, actor):
     return pv, None
 
 
+# A voucher still being processed: built, with the accountant, or with the
+# signatory. Approved and cancelled ones are history.
+IN_FLIGHT = ("DRAFT", "SUBMITTED", "CHECKED")
+
+
+def accountants():
+    """Active users holding the Accountant access (an added role on a
+    Finance user, owner 2026-11-16)."""
+    from .models import User
+    return [u for u in User.objects.filter(is_active=True)
+            .exclude(extra_roles=[]).only("id", "extra_roles", "role")
+            if User.ACCOUNTANT in (u.extra_roles or [])]
+
+
+def check_required():
+    """Whether a submitted voucher waits on the accountant: it does while
+    the company has one. With nobody holding the access the voucher goes
+    straight to the signatory, as it did before the layer existed, so a
+    leaver never leaves payments stuck."""
+    return bool(accountants())
+
+
+def can_check(user):
+    from .models import User
+    return user.has_role(User.ACCOUNTANT) or user.role == "ADMIN"
+
+
 def submit_voucher(pv, actor):
     if pv.status != "DRAFT":
         return "Only a draft voucher can be submitted."
     if not pv.voucher_lines.filter(status="INCLUDED").exists():
         return "The voucher has no requisitions."
-    pv.status = "SUBMITTED"
+    # The accounts officer submits to the accountant, who checks it on to the
+    # signatory (owner 2026-11-16). No accountant: straight to the signatory.
+    pv.status = "SUBMITTED" if check_required() else "CHECKED"
     pv.save(update_fields=["status", "updated_at"])
     Approval.objects.create(document=pv, revision=pv.current_revision,
                             action="SUBMIT", actor=actor,
                             actor_role=actor.role)
     audit("document", pv.id, "PV_SUBMITTED", actor=actor,
-          from_state="DRAFT", to_state="SUBMITTED", detail={"ref": pv.ref})
+          from_state="DRAFT", to_state=pv.status, detail={"ref": pv.ref})
+    from .notify import notify_document
+    notify_document(pv, actor)  # the accountant, or a signatory, is next
+    return None
+
+
+def check_voucher(pv, actor, note=""):
+    """The accountant has checked the voucher: it goes on to the signatory.
+    Four eyes — the person who prepared it cannot be the one to check it."""
+    if pv.is_void:
+        return "This voucher has been voided."
+    if pv.status != "SUBMITTED":
+        return "Only a submitted voucher is checked."
+    if not can_check(actor):
+        return "Only the accountant checks a voucher."
+    if pv.created_by_id == actor.id and actor.role != "ADMIN":
+        return ("A voucher is checked by someone other than the person who "
+                "prepared it.")
+    pv.status = "CHECKED"
+    pv.save(update_fields=["status", "updated_at"])
+    Approval.objects.create(document=pv, revision=pv.current_revision,
+                            action="CHECK", actor=actor,
+                            actor_role=actor.role, comment=note or "")
+    audit("document", pv.id, "PV_CHECKED", actor=actor,
+          from_state="SUBMITTED", to_state="CHECKED", detail={"ref": pv.ref})
     from .notify import notify_document
     notify_document(pv, actor)  # a signatory must approve the voucher
+    return None
+
+
+def return_voucher(pv, actor, note):
+    """The accountant sends a submitted voucher back to the accounts officer
+    as a draft, with the reason; nothing on it has been committed yet."""
+    if pv.is_void:
+        return "This voucher has been voided."
+    if pv.status != "SUBMITTED":
+        return "Only a submitted voucher can be returned."
+    if not can_check(actor):
+        return "Only the accountant returns a voucher."
+    if not (note or "").strip():
+        return "Say what needs changing before returning the voucher."
+    pv.status = "DRAFT"
+    pv.save(update_fields=["status", "updated_at"])
+    Approval.objects.create(document=pv, revision=pv.current_revision,
+                            action="RETURN", actor=actor,
+                            actor_role=actor.role, comment=note.strip())
+    audit("document", pv.id, "PV_RETURNED", actor=actor,
+          from_state="SUBMITTED", to_state="DRAFT",
+          detail={"ref": pv.ref, "note": note.strip()[:300]})
+    from .notify import notify_document
+    notify_document(pv, actor)  # the preparer hears why
     return None
 
 
@@ -1248,13 +1325,20 @@ def void_voucher(pv, actor, reason):
 def approve_voucher(pv, actor, queried_ids=None, note=""):
     """Signatory approves the voucher. Queried lines return to their
     raiser; the rest commit their source requisition."""
-    if pv.status != "SUBMITTED":
-        return "Only a submitted voucher can be approved."
+    # A checked voucher is the signatory's. A submitted one is still the
+    # accountant's — unless the company has no accountant any more, in which
+    # case it is not left stranded (owner 2026-11-16).
+    if pv.status == "SUBMITTED" and check_required():
+        return ("This voucher is with the accountant — it reaches you once "
+                "it has been checked.")
+    if pv.status not in ("SUBMITTED", "CHECKED"):
+        return "Only a checked voucher can be approved."
     # Voiding leaves `status` where it stood and raises is_void, so a voided
     # voucher still reads SUBMITTED. It is out of the approval queue, but
     # nothing here said no (owner 2026-09-01).
     if pv.is_void:
         return "This voucher has been voided."
+    was = pv.status
     queried_ids = set(queried_ids or [])
     with transaction.atomic():
         for line in pv.voucher_lines.filter(status="INCLUDED") \
@@ -1308,6 +1392,6 @@ def approve_voucher(pv, actor, queried_ids=None, note=""):
                                 action="APPROVE", actor=actor,
                                 actor_role=actor.role, comment=note)
     audit("document", pv.id, "PV_APPROVED", actor=actor,
-          from_state="SUBMITTED", to_state="APPROVED",
+          from_state=was, to_state="APPROVED",
           detail={"ref": pv.ref, "queried": len(queried_ids)})
     return None

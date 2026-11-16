@@ -46,9 +46,11 @@
 
 <table class="sig">
   <tr><td class="t">Prepared / Submitted By — Finance</td>
+      {% if check_stamp %}<td class="t">Checked By — Accountant</td>{% endif %}
       <td class="t">Authorised By — Signatory (Executive Director)</td></tr>
   <tr>
     <td>{% if submit_stamp %}<span class="stamp">{{ submit_stamp }}</span>{% endif %}</td>
+    {% if check_stamp %}<td><span class="stamp">{{ check_stamp }}</span></td>{% endif %}
     <td>{% if approve_stamp %}<span class="stamp">{{ approve_stamp }}</span>{% endif %}</td>
   </tr>
 </table>

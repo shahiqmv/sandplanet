@@ -83,7 +83,8 @@ APPROVABLE = {
     ("MR", "SUBMITTED"), ("IR", "SUBMITTED"), ("MAR", "SUBMITTED"),
     ("SD", "SUBMITTED"), ("MS", "SUBMITTED"),
     ("PR", "SUBMITTED"), ("PYR", "SUBMITTED"), ("PYR", "PM_APPROVED"),
-    ("PV", "SUBMITTED"),
+    ("PV", "SUBMITTED"),    # the accountant's check
+    ("PV", "CHECKED"),      # the signatory's authorisation
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
     ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
     # A local credit purchase order is signed by the signatory on the order
@@ -598,6 +599,19 @@ def _act(request, ref, kind):
 
     if doc.doc_type == "PV":
         from . import vouchers
+        if doc.status == "SUBMITTED" and vouchers.check_required():
+            # the accountant's step (owner 2026-11-16): check it on to the
+            # signatory, or send the whole voucher back as a draft
+            if not vouchers.can_check(request.user):
+                return Response({"detail": "This voucher is with the "
+                                           "accountant."}, status=403)
+            err = (vouchers.return_voucher(doc, request.user, comment)
+                   if kind == "return"
+                   else vouchers.check_voucher(doc, request.user, comment))
+            if err:
+                return Response({"detail": err}, status=400)
+            return Response({"ref": doc.ref, "doc_type": "PV",
+                             "status": doc.status})
         if request.user.role not in ("SIGNATORY", "ADMIN"):
             return Response({"detail": "Only a signatory approves a voucher."},
                             status=403)

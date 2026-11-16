@@ -140,9 +140,10 @@ def _money_block(po):
         return pr, row, (f"This order has already been settled "
                          f"({payable.status.lower()}) — a change now needs a "
                          f"credit note, not an amendment.")
+    from .vouchers import IN_FLIGHT
     if PaymentVoucherLine.objects.filter(
             source_payable=payable,
-            voucher__status__in=("DRAFT", "SUBMITTED")).exists():
+            voucher__status__in=IN_FLIGHT).exists():
         return pr, row, ("Finance has this payable on a voucher — take it off "
                          "the voucher before amending the order.")
     return pr, row, None

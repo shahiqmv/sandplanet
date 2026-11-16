@@ -78,8 +78,12 @@ const shortDate = (d) => (d
   ? new Date(d).toLocaleDateString(undefined,
       { day: "2-digit", month: "short", year: "numeric" })
   : "—");
+// A submitted voucher waits on the accountant, a checked one on the
+// signatory (owner 2026-11-16). While the company has no accountant, a
+// submission lands as checked, so the accountant tab simply stays empty.
 const TABS = [["all", "All"], ["DRAFT", "Draft"],
-              ["SUBMITTED", "Awaiting signatory"], ["APPROVED", "Approved"]];
+              ["SUBMITTED", "Awaiting accountant"],
+              ["CHECKED", "Awaiting signatory"], ["APPROVED", "Approved"]];
 
 // A voucher line's human description varies by source document type
 function lineDetail(l) {
@@ -118,6 +122,9 @@ const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}`
 export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
   const isSignatory = ["SIGNATORY", "ADMIN"].includes(me.role);
+  // the accountant: a Finance user with the access added (owner 2026-11-16)
+  const isAccountant = me.role === "ADMIN"
+    || (me.extra_roles || []).includes("ACCOUNTANT");
 
   const [awaiting, setAwaiting] = useState([]);
   const [vouchers, setVouchers] = useState([]);
@@ -139,8 +146,11 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   // 2026-09-17). Approving a voucher drops it off the Awaiting tab; it is
   // found again under Approved.
   const [tab, setTab] = useState(
-    me.role === "SIGNATORY" ? "SUBMITTED" : isFinance ? "DRAFT" : "all");
+    me.role === "SIGNATORY" ? "CHECKED"
+      : isAccountant && me.role !== "ADMIN" ? "SUBMITTED"
+        : isFinance ? "DRAFT" : "all");
   const [counts, setCounts] = useState({});
+  const [checkRequired, setCheckRequired] = useState(true);
   const [queries, setQueries] = useState({});    // line_id -> bool
   // Batch approval (owner 2026-09-30): the signatory ticks vouchers on the
   // "Awaiting signatory" tab and approves them together.
@@ -164,7 +174,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
 
   // The signatory's queue loads a full batch at a time, so "select all"
   // covers what is waiting rather than the first screenful.
-  const VPAGE = isSignatory && tab === "SUBMITTED" ? 100 : 25;
+  const VPAGE = isSignatory && tab === "CHECKED" ? 100 : 25;
   // Load a page of vouchers, filtered server-side by the status tab, or a
   // search (PV, PR, PYR, IPR, supplier, transfer ref) across every status —
   // a search for PR-028 from the Submitted tab must still find its approved
@@ -180,6 +190,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
       setVTotal(r.total);
       setVHasMore(r.has_more);
       setCounts(r.counts || {});
+      if (r.check_required != null) setCheckRequired(r.check_required);
     }).catch((e) => setError(e.message));
   };
   const reload = () => {
@@ -239,7 +250,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const reqAwaiting = awaiting.filter((d) => d.kind !== "PAYABLE");
   const payables = awaiting.filter((d) => d.kind === "PAYABLE");
   const shown = vouchers;               // already filtered server-side
-  const batchMode = isSignatory && tab === "SUBMITTED";
+  const batchMode = isSignatory && tab === "CHECKED";
   const approvable = batchMode
     ? shown.filter((pv) => pv.status === "SUBMITTED" && !pv.is_void) : [];
   const tickedPvs = approvable.filter((pv) => ticked[pv.ref]);
@@ -362,12 +373,16 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     const live = !pv.is_void;   // paid ones too: the void reverses the payments
     return {
       canSubmit: isFinance && pv.status === "DRAFT",
-      canApprove: isSignatory && pv.status === "SUBMITTED",
+      // the accountant's check sits between submission and the signatory;
+      // the preparer may not check their own voucher (the server refuses)
+      canCheck: isAccountant && pv.status === "SUBMITTED",
+      canApprove: isSignatory && (pv.status === "CHECKED"
+        || (pv.status === "SUBMITTED" && !checkRequired)),
       canPay: isFinance && pv.status === "APPROVED",
       // Void (owner 2026-07-16). A submitted-but-unauthorised voucher
       // Finance voids directly with a reason. An authorised one is a
       // two-step: Finance requests the void, a signatory authorises it.
-      canVoid: live && pv.status === "SUBMITTED"
+      canVoid: live && ["SUBMITTED", "CHECKED"].includes(pv.status)
         && (isFinance || isSignatory),
       canRequestVoid: live && pv.status === "APPROVED" && isFinance
         && !pv.void_requested,
@@ -380,8 +395,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   };
 
   const renderVoucherBody = (pv) => {
-    const { canSubmit, canApprove, canPay, canVoid, canRequestVoid,
-            canAuthoriseVoid, payable } = perms(pv);
+    const { canSubmit, canCheck, canApprove, canPay, canVoid,
+            canRequestVoid, canAuthoriseVoid, payable } = perms(pv);
     return (
                   <div style={{ padding: "4px 16px 16px" }}>
                     <div style={{ overflowX: "auto" }}>
@@ -464,11 +479,43 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                       </div>
                     )}
 
+                    {canCheck && (
+                      <div style={{ marginTop: 12, background: "#fff",
+                        border: "1px solid var(--line)", borderRadius: 8,
+                        padding: 12 }}>
+                        <textarea rows={2} value={note}
+                          onChange={(e) => setNote(e.target.value)}
+                          placeholder="Note (required to return the voucher to the preparer)"
+                          style={{ ...inputStyle, width: "100%" }} />
+                        <div style={{ display: "flex", gap: 10, marginTop: 10,
+                                      alignItems: "center", flexWrap: "wrap" }}>
+                          <Btn variant="primary" disabled={busy}
+                               onClick={() => voucherAction(pv.ref, "check",
+                                                            { note })}>
+                            Check — send to signatory</Btn>
+                          <Btn variant="secondary" disabled={busy}
+                               onClick={() => {
+                                 if (!note.trim()) {
+                                   setError("Say what needs changing before "
+                                            + "returning the voucher.");
+                                   return;
+                                 }
+                                 voucherAction(pv.ref, "return", { note });
+                               }}>
+                            Return to preparer</Btn>
+                          <span style={{ fontSize: 12.5,
+                                         color: "var(--muted)" }}>
+                            Checked by someone other than the preparer.</span>
+                        </div>
+                      </div>
+                    )}
+
                     {canSubmit && (
                       <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
                         <Btn variant="primary" disabled={busy}
                              onClick={() => voucherAction(pv.ref, "submit")}>
-                          Submit to signatory</Btn>
+                          {checkRequired ? "Submit to accountant"
+                            : "Submit to signatory"}</Btn>
                         <Btn variant="secondary" disabled={busy}
                              onClick={() => voucherAction(pv.ref, "cancel")}>
                           Cancel</Btn>
@@ -1118,7 +1165,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
           })}
           {shown.length === 0 && (
             <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
-              {tab === "SUBMITTED" && !vq.trim()
+              {tab === "CHECKED" && !vq.trim()
                 ? "Nothing awaiting a signatory — every submitted voucher has been approved."
                 : <>No vouchers{tab === "all" ? "" : ` (${tab.toLowerCase()})`}
                     {vq.trim() ? ` matching “${vq.trim()}”` : ""} yet.</>}

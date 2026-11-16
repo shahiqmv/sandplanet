@@ -19,6 +19,11 @@ def _role_users(*roles):
     return list(User.objects.filter(role__in=roles, is_active=True))
 
 
+def _accountants():
+    from .vouchers import accountants
+    return accountants()
+
+
 def _pm_for(doc):
     """Who to alert as 'the PM' for a document: the project's PM if it belongs to
     a project that has one, otherwise EVERY current site PM (a busy site may have
@@ -106,6 +111,14 @@ def targets_for(doc):
     if t == "PYR" and s == "AUTHORISED":
         return [(u, "to pay") for u in _role_users("FINANCE")]
     if t == "PV" and s == "SUBMITTED":
+        # with the accountant; with nobody holding that access the voucher
+        # would have gone to CHECKED on submission, but an accountant who has
+        # since left must not leave it unheard — the signatory gets it then
+        acc = _accountants()
+        if acc:
+            return [(u, "to check") for u in acc]
+        return [(u, "to approve") for u in _role_users("SIGNATORY")]
+    if t == "PV" and s == "CHECKED":
         return [(u, "to approve") for u in _role_users("SIGNATORY")]
     # Onboarding case (OBR): PD (Director) approves; HR processes once approved;
     # a returned case goes back to whoever raised it.

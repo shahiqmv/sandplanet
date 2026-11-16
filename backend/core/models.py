@@ -109,7 +109,13 @@ class User(AbstractUser):
     # sales, or who also runs the fleet, holds those roles as extras (owner
     # 2026-09-26). Only the trading and fleet roles may be extras — the
     # project workflow keeps one role per user.
-    EXTRA_ROLES = TRADING_ROLES | FLEET_ROLES
+    # The accountant checks payment vouchers before they reach a signatory
+    # (owner 2026-11-16): a Finance user with this added, not a role of its
+    # own, so everything Finance does stays theirs. While any active user
+    # holds it, a submitted voucher waits on the accountant; with nobody
+    # holding it, submission goes straight to the signatory as before.
+    ACCOUNTANT = "ACCOUNTANT"
+    EXTRA_ROLES = TRADING_ROLES | FLEET_ROLES | {ACCOUNTANT}
 
     @property
     def roles(self) -> set:

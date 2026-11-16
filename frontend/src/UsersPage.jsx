@@ -94,7 +94,9 @@ export default function UsersPage({ me, sites }) {
   // Access beyond the primary role — Sales / Sales Manager / Rental /
   // Rental Manager — for people who wear two hats (owner 2026-09-26).
   const EXTRA = [["SALES", "Sales"], ["SALES_MANAGER", "Sales Manager"],
-                 ["RENTAL", "Rental"], ["RENTAL_MANAGER", "Rental Manager"]];
+                 ["RENTAL", "Rental"], ["RENTAL_MANAGER", "Rental Manager"],
+                 // checks payment vouchers before the signatory (2026-11-16)
+                 ["ACCOUNTANT", "Accountant"]];
   const [extraEdit, setExtraEdit] = useState(null);   // {id, roles}
   async function saveExtra(user) {
     setError(null); setNotice(null);

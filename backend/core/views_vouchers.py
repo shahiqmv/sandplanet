@@ -510,7 +510,10 @@ def payment_vouchers(request):
         "total": total, "offset": offset, "limit": limit,
         "has_more": offset + limit < total,
         "counts": {k: counts.get(k, 0)
-                   for k in ("DRAFT", "SUBMITTED", "APPROVED")}})
+                   for k in ("DRAFT", "SUBMITTED", "CHECKED", "APPROVED")},
+        # whether a submitted voucher waits on the accountant (the tabs and
+        # the buttons read differently when the company has none)
+        "check_required": vouchers.check_required()})
 
 
 @api_view(["GET"])
@@ -521,7 +524,8 @@ def payment_voucher_detail(request, ref):
         return Response({"detail": "Not found."}, status=404)
     if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
         return Response({"detail": "Finance / signatory only."}, status=403)
-    return Response(_voucher_info(pv))
+    return Response({**_voucher_info(pv),
+                     "check_required": vouchers.check_required()})
 
 
 def _pay_str(li):
@@ -559,6 +563,7 @@ def _pv_pdf_context(pv):
         "currency": info["currency"], "debit_account": pv.debit_account,
         "prepared_by": pv.created_by.full_name if pv.created_by else "",
         "submit_stamp": _stamp_for(approvals, "SUBMIT"),
+        "check_stamp": _stamp_for(approvals, "CHECK"),
         "approve_stamp": _stamp_for(approvals, "APPROVE"),
         "generated": date.today().strftime("%d.%m.%Y"),
     }
@@ -613,7 +618,7 @@ def finance_dashboard(request):
     # so surfacing these keeps a PR/PYR from silently disappearing into an
     # unfinished voucher (owner 2026-07-31).
     in_flight = []
-    for pv in pvs.filter(status__in=("DRAFT", "SUBMITTED")).order_by(
+    for pv in pvs.filter(status__in=vouchers.IN_FLIGHT).order_by(
             "doc_date", "ref"):
         plines = list(pv.voucher_lines.select_related(
             "source_document", "source_payable__document",
@@ -657,6 +662,8 @@ def finance_dashboard(request):
         "awaiting_voucher": {"count": aw_count, "total": aw_total},
         "vouchers": {"draft": pvs.filter(status="DRAFT").count(),
                      "submitted": pvs.filter(status="SUBMITTED").count(),
+                     "checked": pvs.filter(status="CHECKED").count(),
+                     "check_required": vouchers.check_required(),
                      "in_flight": in_flight,
                      "to_pay": to_pay[:10],          # preview only
                      "to_pay_count": len(to_pay),
@@ -870,6 +877,14 @@ def payment_voucher_action(request, ref, action):
             return Response({"detail": "Finance submits vouchers."},
                             status=403)
         err = vouchers.submit_voucher(pv, user)
+    elif action == "check":
+        # the accountant's step (owner 2026-11-16); the service holds the
+        # four-eyes rule and the access check
+        err = vouchers.check_voucher(pv, user,
+                                     note=request.data.get("note", ""))
+    elif action == "return":
+        err = vouchers.return_voucher(pv, user,
+                                      note=request.data.get("note", ""))
     elif action == "approve":
         if user.role not in ("SIGNATORY", "ADMIN"):
             return Response({"detail": "Only a signatory approves a "

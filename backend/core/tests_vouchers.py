@@ -436,7 +436,7 @@ class VoucherListPerfTests(VoucherBase):
         # ref search narrows to one
         # every page carries the per-state counts the tabs wear
         self.assertEqual(set(r.data["counts"]), {"DRAFT", "SUBMITTED",
-                                                 "APPROVED"})
+                                                 "CHECKED", "APPROVED"})
         self.assertEqual(sum(r.data["counts"].values()), r.data["total"])
         r3 = self.client.get(f"/api/v1/payment-vouchers?q={a['ref']}")
         self.assertEqual(r3.data["total"], 1)
@@ -518,7 +518,7 @@ class VoucherBatchApproveTests(VoucherBase):
         a, _ = self._submitted(3000, "A")
         r = self._batch(self.finance, [{"ref": a, "total": "3000", "lines": 1}])
         self.assertEqual(r.status_code, 403)
-        self.assertEqual(Document.objects.get(ref=a).status, "SUBMITTED")
+        self.assertEqual(Document.objects.get(ref=a).status, "CHECKED")
 
     def test_one_that_cannot_go_does_not_hold_the_rest(self):
         (a, _), (b, _) = self._submitted(3000, "A"), self._submitted(1500, "B")
@@ -535,7 +535,7 @@ class VoucherBatchApproveTests(VoucherBase):
         r = self._batch(self.signatory, [{"ref": a, "total": "2500", "lines": 1}])
         self.assertEqual(r.data["approved"], [])
         self.assertIn("Changed since", r.data["failed"][0]["detail"])
-        self.assertEqual(Document.objects.get(ref=a).status, "SUBMITTED")
+        self.assertEqual(Document.objects.get(ref=a).status, "CHECKED")
 
     def test_empty_and_oversized_batches(self):
         self.assertEqual(self._batch(self.signatory, []).status_code, 400)
@@ -600,3 +600,114 @@ class VoidReversesOtherPaymentsTests(VoucherBase):
                          ("OUTSTANDING", "", "AUTHORISED"))
         self.assertEqual(costing.document_net(svc, "PAID"), Decimal("0"))
         self.assertIn(p, list(vouchers.awaiting_payables()))
+
+
+class AccountantCheckTests(VoucherBase):
+    """The accountant's check between the accounts officer and the signatory
+    (owner 2026-11-16). The layer is on while someone holds the access."""
+
+    def setUp(self):
+        super().setUp()
+        self.accountant = make_user("acct", User.Role.FINANCE)
+        self.accountant.extra_roles = ["ACCOUNTANT"]
+        self.accountant.save()
+
+    def submitted(self):
+        a = self.director_approved_pyr(amount=3000, payee="A")
+        pv = self.create_voucher([a]).data["ref"]
+        self.voucher_action(pv, "submit", self.finance)
+        return pv
+
+    def status(self, ref):
+        return Document.objects.get(ref=ref).status
+
+    def test_submission_waits_on_the_accountant(self):
+        pv = self.submitted()
+        self.assertEqual(self.status(pv), "SUBMITTED")
+        # the signatory cannot jump the queue
+        r = self.voucher_action(pv, "approve", self.signatory)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("accountant", r.data["detail"])
+        # the accountant checks it on, with a stamp of their own
+        r = self.voucher_action(pv, "check", self.accountant, note="ok")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.status(pv), "CHECKED")
+        doc = Document.objects.get(ref=pv)
+        self.assertTrue(doc.approvals.filter(action="CHECK",
+                                             actor=self.accountant).exists())
+        # a second check is refused; the signatory now approves
+        self.assertEqual(
+            self.voucher_action(pv, "check", self.accountant).status_code, 400)
+        r = self.voucher_action(pv, "approve", self.signatory)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.status(pv), "APPROVED")
+
+    def test_only_the_accountant_checks_and_never_their_own(self):
+        pv = self.submitted()
+        # plain Finance and the signatory may not check
+        self.assertEqual(
+            self.voucher_action(pv, "check", self.finance).status_code, 400)
+        self.assertEqual(
+            self.voucher_action(pv, "check", self.signatory).status_code, 400)
+        # four eyes: a voucher the accountant prepared is checked by someone else
+        a = self.director_approved_pyr(amount=500, payee="B")
+        own = self.create_voucher([a], user=self.accountant).data["ref"]
+        self.voucher_action(own, "submit", self.accountant)
+        r = self.voucher_action(own, "check", self.accountant)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("someone other", r.data["detail"])
+
+    def test_return_to_preparer_needs_a_note(self):
+        pv = self.submitted()
+        r = self.voucher_action(pv, "return", self.accountant, note="  ")
+        self.assertEqual(r.status_code, 400)
+        r = self.voucher_action(pv, "return", self.accountant,
+                                note="Wrong payee on line 1")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self.status(pv), "DRAFT")
+        doc = Document.objects.get(ref=pv)
+        self.assertEqual(doc.approvals.filter(action="RETURN").count(), 1)
+        # the preparer hears why
+        from .models import Notification
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.finance, doc_ref=pv,
+            title__contains="returned").exists())
+        # and can submit again
+        self.assertEqual(
+            self.voucher_action(pv, "submit", self.finance).status_code, 200)
+        self.assertEqual(self.status(pv), "SUBMITTED")
+
+    def test_queue_and_counts_follow_the_layer(self):
+        pv = self.submitted()
+        self.client.force_authenticate(self.accountant)
+        r = self.client.get("/api/v1/payment-vouchers?limit=5")
+        self.assertTrue(r.data["check_required"])
+        self.assertEqual(r.data["counts"]["SUBMITTED"], 1)
+        self.client.force_authenticate(self.signatory)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        titles = {g["title"]: [i["ref"] for i in g["items"]] for g in groups}
+        self.assertNotIn(pv, titles.get("To approve — payment vouchers", []))
+        self.client.force_authenticate(self.accountant)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        titles = {g["title"]: [i["ref"] for i in g["items"]] for g in groups}
+        self.assertIn(pv, titles.get("To check — payment vouchers", []))
+
+    def test_without_an_accountant_submission_reaches_the_signatory(self):
+        self.accountant.is_active = False
+        self.accountant.save()
+        pv = self.submitted()
+        self.assertEqual(self.status(pv), "CHECKED")
+        self.client.force_authenticate(self.finance)
+        self.assertFalse(
+            self.client.get("/api/v1/payment-vouchers?limit=5")
+            .data["check_required"])
+        r = self.voucher_action(pv, "approve", self.signatory)
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_accountant_leaving_does_not_strand_a_submitted_voucher(self):
+        pv = self.submitted()
+        self.assertEqual(self.status(pv), "SUBMITTED")
+        self.accountant.is_active = False
+        self.accountant.save()
+        r = self.voucher_action(pv, "approve", self.signatory)
+        self.assertEqual(r.status_code, 200, r.data)

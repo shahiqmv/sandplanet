@@ -225,7 +225,7 @@ const STATUS_TONES = {
   COMPLETE: "ok", APPROVED: "ok", ACKNOWLEDGED: "ok",
   PAID_PO_ISSUED: "ok", CLOSED: "ok",
   AWARDED: "info", TENDERING: "info",
-  ISSUED: "info", SUBMITTED: "info", PM_APPROVED: "info",
+  ISSUED: "info", SUBMITTED: "info", CHECKED: "info", PM_APPROVED: "info",
   SENT_TO_HO: "info", PR_RAISED: "info", LOADING_PLANNED: "info",
   DEPARTED: "info", COUNTED: "info", DIRECTOR_APPROVED: "info",
   AUTHORISED: "ok", PAID: "ok",

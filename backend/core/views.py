@@ -476,8 +476,9 @@ class UserViewSet(viewsets.ModelViewSet):
         roles = sorted({r for r in wanted if isinstance(r, str)})
         bad = sorted(set(roles) - User.EXTRA_ROLES)
         if bad:
-            return Response({"detail": "Only Sales, Sales Manager, Rental and Rental "
-                                       f"Manager can be added — not {', '.join(bad)}."},
+            return Response({"detail": "Only Sales, Sales Manager, Rental, Rental "
+                                       "Manager and Accountant can be added — not "
+                                       f"{', '.join(bad)}."},
                             status=400)
         roles = [r for r in roles if r != user.role]      # already theirs
         before = sorted(user.extra_roles or [])

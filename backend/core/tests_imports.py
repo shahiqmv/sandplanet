@@ -718,7 +718,7 @@ class MilestonePaymentTests(IprBase):
         self.client.post(f"/api/v1/payment-vouchers/{pv.ref}/actions/void",
                          {"reason": "amount wrong"}, format="json")
         pv.refresh_from_db()
-        self.assertEqual(pv.status, "SUBMITTED")   # the drift itself
+        self.assertEqual(pv.status, "CHECKED")     # the drift itself
         self.assertTrue(pv.is_void)
         self.assertEqual(approve_voucher(pv, self.signatory),
                          "This voucher has been voided.")

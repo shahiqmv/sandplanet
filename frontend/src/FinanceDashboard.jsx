@@ -62,8 +62,16 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
               value={d.awaiting_voucher.count}
               sub={`MVR ${money(d.awaiting_voucher.total)} to batch`}
               tone="var(--sky)" onClick={onVouchers} />
+        {d.vouchers.check_required && (
+          <Tile label="Vouchers with the accountant"
+                value={d.vouchers.submitted}
+                sub="submitted, to be checked"
+                onClick={onVouchers} />
+        )}
         <Tile label="Vouchers with the signatory"
-              value={d.vouchers.submitted}
+              value={d.vouchers.check_required
+                ? d.vouchers.checked
+                : (d.vouchers.checked || 0) + d.vouchers.submitted}
               sub={`${d.vouchers.draft} draft in preparation`}
               onClick={onVouchers} />
         <Tile label="Vouchers to pay"
@@ -134,8 +142,12 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
               <a href="#" onClick={(e) => { e.preventDefault(); onVouchers(); }}
                  style={{ textDecoration: "none" }}>
                 <RefStamp small>{v.ref}</RefStamp></a>
-              <Chip tone={v.status === "SUBMITTED" ? "info" : "warn"}>
-                {v.status === "SUBMITTED" ? "with signatory" : "draft"}</Chip>
+              <Chip tone={v.status === "DRAFT" ? "warn" : "info"}>
+                {v.status === "CHECKED" ? "with signatory"
+                  : v.status === "SUBMITTED"
+                    ? (d.vouchers.check_required ? "with accountant"
+                       : "with signatory")
+                    : "draft"}</Chip>
               <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
                 holds {v.holds.join(", ") || "—"}
                 {v.prepared_by ? ` · ${v.prepared_by}` : ""}</span>

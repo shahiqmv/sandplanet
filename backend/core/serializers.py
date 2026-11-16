@@ -104,8 +104,8 @@ class UserSerializer(serializers.ModelSerializer):
         bad = sorted(set(roles) - User.EXTRA_ROLES)
         if bad:
             raise serializers.ValidationError(
-                f"Only Sales, Sales Manager, Rental and Rental Manager can be added "
-                f"as extra access — not {', '.join(bad)}.")
+                f"Only Sales, Sales Manager, Rental, Rental Manager and Accountant "
+                f"can be added as extra access — not {', '.join(bad)}.")
         return sorted(set(roles))
 
     def get_employee_detail(self, user):

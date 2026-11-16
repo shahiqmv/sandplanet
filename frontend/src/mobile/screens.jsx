@@ -128,18 +128,22 @@ export function DocumentDetail({ docRef, online, onActioned, onToast, onOpen }) 
   if (error) return <ErrLine error={error} />;
   const d = data || {};
   const iprAuthorise = d.doc_type === "IPR" && d.status === "APPROVED";
-  const actionable = new Set(["SUBMITTED", "PM_APPROVED"]).has(d.status)
-    || iprAuthorise;
+  const actionable = new Set(["SUBMITTED", "PM_APPROVED", "CHECKED"])
+    .has(d.status) || iprAuthorise;
   // the signatory step reads "Authorise": a Payment Voucher, or a
-  // Director-approved import order (IPR) the signatory now commits.
-  const verb = (AUTHORISE_TYPES.has(d.doc_type) || iprAuthorise)
-    ? "Authorise" : "Approve";
+  // Director-approved import order (IPR) the signatory now commits. A
+  // submitted voucher is the accountant's check (owner 2026-11-16).
+  const pvCheck = d.doc_type === "PV" && d.status === "SUBMITTED";
+  const verb = pvCheck ? "Check"
+    : (AUTHORISE_TYPES.has(d.doc_type) || iprAuthorise)
+      ? "Authorise" : "Approve";
 
   async function doApprove() {
     setBusy(true);
     try {
       await api.approve(docRef);
-      onActioned({ text: verb === "Authorise" ? "Authorised" : "Approved", tone: "" });
+      onActioned({ text: verb === "Authorise" ? "Authorised"
+                     : verb === "Check" ? "Checked" : "Approved", tone: "" });
     } catch (e) {
       onToast({ msg: e.message, tone: "alert" });
       setBusy(false);
