@@ -119,6 +119,26 @@ const partNote = (l) => (l.is_part ? (
 const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}`
   : d.kind === "PAYABLE" ? `P:${d.payable_id}` : d.ref;
 
+// Finding a requisition among the ones awaiting a voucher (owner 2026-11-17:
+// Finance scrolled the list for a PR or PYR number). Every word typed must
+// appear somewhere on the row: its number (with or without the dashes), the
+// payee, the suppliers on a PR, the purpose, the site or the cost head.
+const AW_TYPE_LABEL = { PR: "PR", PYR: "PYR", IPR: "IPR", MILESTONE: "TT" };
+function awHaystack(d) {
+  const ref = String(d.ref || "");
+  return [ref, ref.replace(/[-\s]/g, ""), d.payee, d.purpose, d.site_code,
+          d.cost_head, d.doc_type,
+          ...(d.pr_rows || []).map((r) => r.vendor)]
+    .filter(Boolean).join(" ").toLowerCase();
+}
+function awMatches(d, q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = awHaystack(d);
+  return words.every((w) => hay.includes(w)
+    || hay.includes(w.replace(/[-\s]/g, "")));
+}
+
 export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
   const isSignatory = ["SIGNATORY", "ADMIN"].includes(me.role);
@@ -127,6 +147,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const isAccountant = me.role === "ADMIN" || holdsAccountant;
 
   const [awaiting, setAwaiting] = useState([]);
+  const [awQ, setAwQ] = useState("");            // search the awaiting list
+  const [awType, setAwType] = useState("all");   // PR / PYR / … filter
   const [vouchers, setVouchers] = useState([]);
   const [vTotal, setVTotal] = useState(0);       // matches on the server
   const [vHasMore, setVHasMore] = useState(false);
@@ -249,6 +271,13 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   // invoice to pay rather than seeing them all queued as pending (owner 07-15).
   const reqAwaiting = awaiting.filter((d) => d.kind !== "PAYABLE");
   const payables = awaiting.filter((d) => d.kind === "PAYABLE");
+  const awTypeOf = (d) => (d.kind === "MILESTONE" ? "MILESTONE" : d.doc_type);
+  const awTypes = [...new Set(reqAwaiting.map(awTypeOf))].sort();
+  const awShown = reqAwaiting.filter((d) =>
+    (awType === "all" || awTypeOf(d) === awType) && awMatches(d, awQ));
+  // a ticked row the search has hidden is still on the voucher — say so
+  const pickedHidden = pickedRows.filter((d) => d.kind !== "PAYABLE"
+    && !awShown.includes(d)).length;
   const shown = vouchers;               // already filtered server-side
   const batchMode = isSignatory && tab === "CHECKED";
   const approvable = batchMode
@@ -907,19 +936,66 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                         flexWrap: "wrap", marginBottom: 4 }}>
             <h3 style={heading}>Awaiting a voucher</h3>
             <span style={{ fontSize: 13, color: "var(--muted)" }}>
-              {reqAwaiting.length} requisition
-              {reqAwaiting.length === 1 ? "" : "s"}
+              {awShown.length !== reqAwaiting.length
+                ? `${awShown.length} of ${reqAwaiting.length} requisitions`
+                : `${reqAwaiting.length} requisition`
+                  + (reqAwaiting.length === 1 ? "" : "s")}
             </span>
             {pickedBar}
           </div>
+          {reqAwaiting.length > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center",
+                          flexWrap: "wrap", margin: "8px 0 10px" }}>
+              <input type="search" value={awQ}
+                onChange={(e) => setAwQ(e.target.value)}
+                placeholder="Search PR / PYR number, payee, supplier, purpose…"
+                aria-label="Search requisitions awaiting a voucher"
+                style={{ ...inputStyle, flex: "1 1 260px", maxWidth: 420,
+                         padding: "6px 10px", fontSize: 13.5 }} />
+              {awTypes.length > 1 && [["all", "All"],
+                ...awTypes.map((t) => [t, AW_TYPE_LABEL[t] || t])]
+                .map(([key, label]) => {
+                  const n = key === "all" ? reqAwaiting.length
+                    : reqAwaiting.filter((d) => awTypeOf(d) === key).length;
+                  const on = awType === key;
+                  return (
+                    <button key={key} type="button"
+                      onClick={() => setAwType(key)}
+                      style={{ ...ghostButton, padding: "4px 12px",
+                               fontSize: 13,
+                               background: on ? "var(--navy)" : "#fff",
+                               color: on ? "#fff" : "var(--navy)",
+                               borderColor: on ? "var(--navy)"
+                                 : "var(--line)" }}>
+                      {label} {n}</button>
+                  );
+                })}
+              {(awQ || awType !== "all") && (
+                <button type="button" style={{ ...ghostButton,
+                  padding: "4px 10px", fontSize: 13 }}
+                  onClick={() => { setAwQ(""); setAwType("all"); }}>
+                  Clear</button>
+              )}
+              {pickedHidden > 0 && (
+                <span style={{ fontSize: 12.5, color: "#8a6d00" }}>
+                  {pickedHidden} ticked row{pickedHidden === 1 ? "" : "s"}
+                  {" "}hidden by the search — still on the voucher</span>
+              )}
+            </div>
+          )}
           {reqAwaiting.length === 0 ? (
             <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
               Nothing awaiting a voucher right now.</p>
+          ) : awShown.length === 0 ? (
+            <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
+              Nothing matches{awQ ? ` “${awQ}”` : ""}
+              {awType !== "all" ? ` among ${AW_TYPE_LABEL[awType] || awType}s`
+                : ""}.</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 {pickerHead}
-                <tbody>{reqAwaiting.map(pickerRow)}</tbody>
+                <tbody>{awShown.map(pickerRow)}</tbody>
               </table>
             </div>
           )}
