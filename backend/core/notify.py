@@ -349,6 +349,37 @@ def notify_subcontractor(sub, actor=None):
                         body=body, category="alert")
 
 
+def notify_pr_paid(pr, vendor, payment_ref, actor, slip=False, amount=None,
+                   currency=""):
+    """A supplier on a PR has been paid: Procurement hears at once, so the
+    collection and the loading can be arranged (owner 2026-11-17 — the team
+    found out only by asking Finance). Every HO Purchasing user is told, and
+    whoever raised the PR. Says what is still unpaid on the PR, if anything.
+    Never raises."""
+    try:
+        lines = list(pr.current_revision.lines.all()) \
+            if pr.current_revision_id else []
+        unpaid = [ln.vendor for ln in lines
+                  if (ln.amount_cash or 0) > 0 and not ln.action_taken.strip()]
+        what = f"{currency} {amount:,.2f} " if amount is not None else ""
+        title = f"{pr.ref} paid — {vendor}"
+        bits = [f"{what}paid, ref {payment_ref}".strip(),
+                "slip attached" if slip else "no slip yet"]
+        bits.append("still to pay: " + ", ".join(unpaid[:3])
+                    + (f" +{len(unpaid) - 3}" if len(unpaid) > 3 else "")
+                    if unpaid else "every supplier on this PR is paid")
+        body = " · ".join(bits) + " · arrange collection / loading"
+        who = {u.id: u for u in _role_users("HO_PURCHASING")}
+        if pr.created_by_id and pr.created_by.is_active:
+            who.setdefault(pr.created_by_id, pr.created_by)
+        for u in who.values():
+            if actor is not None and u.id == actor.id:
+                continue
+            notify_user(u, title, body=body, doc=pr, category="alert")
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("notify_pr_paid failed")
+
+
 def notify_user(user, title, body="", doc=None, category="alert"):
     """Ad-hoc notification (e.g. an import payment falling due).
 

@@ -6,6 +6,42 @@ import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
 const money = (v) => Number(v || 0).toLocaleString("en-US",
   { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// A paid PR stands out on the register (owner 2026-11-17): Procurement
+// arranges the collection and the loading once its suppliers are paid.
+const prPaidState = (row) => {
+  const cash = Number(row.pay_cash_rows || 0);
+  const paid = Number(row.pay_paid_rows || 0);
+  if (!cash || row.status === "VOID") return null;
+  return paid >= cash ? "PAID" : paid > 0 ? "PART" : "UNPAID";
+};
+const prPaidStyle = (row) => ({
+  PAID: { background: "#e8f5ec", boxShadow: "inset 3px 0 0 #2e9e57" },
+  PART: { background: "#fff6e0", boxShadow: "inset 3px 0 0 #d9a520" },
+}[prPaidState(row)] || {});
+const shortDay = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB",
+  { day: "numeric", month: "short" }) : "");
+
+function PrPaid({ row }) {
+  const state = prPaidState(row);
+  if (!state) return <span style={{ color: "var(--faint)" }}>—</span>;
+  if (state === "UNPAID") {
+    return <span style={{ fontSize: 12, color: "var(--muted)" }}>
+      not paid</span>;
+  }
+  const paid = state === "PAID";
+  return (
+    <span style={{ display: "inline-flex", flexDirection: "column", gap: 1 }}>
+      <span style={{ fontSize: 11.5, fontWeight: 700, padding: "1px 8px",
+        borderRadius: 10, alignSelf: "flex-start",
+        background: paid ? "#2e9e57" : "#d9a520", color: "#fff" }}>
+        {paid ? "Paid" : `${row.pay_paid_rows} of ${row.pay_cash_rows} paid`}
+      </span>
+      {row.pay_last_at && <span style={{ fontSize: 10.5,
+        color: "var(--muted)" }}>{shortDay(row.pay_last_at)}</span>}
+    </span>
+  );
+}
+
 export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
                                      onNewPayment,
                                       onPmrRegister, onVessels, refresh }) {
@@ -16,6 +52,7 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
   // (owner 2026-09-01).
   const setTab = onTab;
   const isPo = tab === "PO";
+  const isPr = tab === "PR";
   const [rows, setRows] = useState([]);
   const [pending, setPending] = useState([]);
   // Lengthy registers need finding, not scrolling: one box matches the
@@ -28,6 +65,9 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
     row.supplier, row.supplier_contact, row.source_ref, row.payment_terms,
     ...Object.values(row.links || {}).flat(),
     ...Object.values(row.payload_summary || {}),
+    // "paid" finds PRs with a payment, "part" the half-paid ones
+    // (owner 2026-11-17)
+    { PAID: "paid", PART: "part-paid" }[prPaidState(row)],
   ].filter(Boolean).join(" ").toLowerCase().replace(/_/g, " ");
   const shown = words.length
     ? rows.filter((row) => { const h = hay(row);
@@ -169,7 +209,10 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
               {isPo && <th style={th}>Supplier</th>}
               {isPo && <th style={{ ...th, textAlign: "right" }}>Value</th>}
               {isPo && <th style={th}>Terms</th>}
-              <th style={th}>Status</th><th style={th}>Refs</th>
+              <th style={th}>Status</th>
+              {/* how far the suppliers are paid (owner 2026-11-17) */}
+              {isPr && <th style={th}>Payment</th>}
+              <th style={th}>Refs</th>
               {/* Nothing in a PO payload reaches the summary whitelist, so
                   on this tab the column is only width (owner 2026-09-01). */}
               {!isPo && <th style={th}>Details</th>}
@@ -178,7 +221,8 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
             <tbody>
               {shown.map((row, i) => (
                 <tr key={`${row.ref}-${row.rev}-${i}`}
-                    style={row.is_current_rev ? {} : { opacity: 0.55 }}>
+                    style={{ ...(row.is_current_rev ? {} : { opacity: 0.55 }),
+                             ...(isPr ? prPaidStyle(row) : {}) }}>
                   <td style={td}>
                     <a href="#" onClick={(e) => { e.preventDefault();
                                                   onOpenDoc(row.ref); }}
@@ -236,6 +280,8 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
                     </td>
                   )}
                   <td style={td}><StatusChip status={row.status} /></td>
+                  {isPr && <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    <PrPaid row={row} /></td>}
                   <td style={{ ...td, fontSize: 12 }}>
                     {Object.values(row.links).flat().join(" · ")}
                   </td>
@@ -250,11 +296,11 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td style={td} colSpan={isPo ? 10 : 8}>
+                <tr><td style={td} colSpan={isPo ? 10 : isPr ? 9 : 8}>
                   No {DOC_LABELS[tab]}s yet.</td></tr>
               )}
               {rows.length > 0 && shown.length === 0 && (
-                <tr><td style={td} colSpan={isPo ? 10 : 8}>
+                <tr><td style={td} colSpan={isPo ? 10 : isPr ? 9 : 8}>
                   Nothing matches “{q.trim()}” in the last {rows.length}{" "}
                   {DOC_LABELS[tab]} rows.</td></tr>
               )}

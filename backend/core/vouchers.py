@@ -385,7 +385,18 @@ def settle_payable(payable, actor, ref, voucher=None):
     """Finance pays a voucher-approved credit payable: posts the PAID leg for
     the source and marks the payable SETTLED (owner 2026-07-15) — or, for one
     part of a payable paid in parts, that part's share, the payable settling
-    with the last (owner 2026-10-27)."""
+    with the last (owner 2026-10-27). A PR supplier's payable paid tells
+    Procurement, as a cash payment does (owner 2026-11-17)."""
+    err = _settle_payable(payable, actor, ref, voucher)
+    if not err and payable.document_id \
+            and payable.document.doc_type == "PR":
+        from .notify import notify_pr_paid
+        notify_pr_paid(payable.document, payable.vendor, ref, actor,
+                       slip=False, currency=payable_currency(payable))
+    return err
+
+
+def _settle_payable(payable, actor, ref, voucher=None):
     if payable.status != "OUTSTANDING":
         return "This payable is already settled or cancelled."
     line = unpaid_line(payable=payable, voucher=voucher)

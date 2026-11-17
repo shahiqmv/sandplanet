@@ -623,6 +623,12 @@ def pr_vendor_payment(request, ref):
     audit("document", pr.id, "VENDOR_PAYMENT_RECORDED", actor=request.user,
           from_state=old, to_state=pr.status,
           detail={"ref": pr.ref, "vendor": line.vendor})
+    # Procurement arranges the collection and the loading once a supplier is
+    # paid, and heard nothing (owner 2026-11-17)
+    from .notify import notify_pr_paid
+    notify_pr_paid(pr, line.vendor, payment_ref, request.user,
+                   slip=upload is not None, amount=line.amount_cash,
+                   currency=vouchers.source_currency(pr))
     from .serializers_documents import DocumentSerializer
 
     data = DocumentSerializer(pr, context={"request": request}).data

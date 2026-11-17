@@ -9,6 +9,39 @@ import { VesselPicker, VesselTrack } from "./Vessels.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
 
+// A paid supplier stands out on the PR, and a banner says how far the PR is
+// paid — Procurement arranges the collection and the loading from it (owner
+// 2026-11-17: "highlight when paid ... when pr opened too").
+const PAID_TINT = "#e8f5ec";
+
+function PrPaymentBanner({ doc }) {
+  const cash = (doc.lines || []).filter((l) => Number(l.amount_cash) > 0);
+  if (!cash.length) return null;
+  const paid = cash.filter((l) => (l.action_taken || "").trim());
+  if (!paid.length) return null;
+  const all = paid.length === cash.length;
+  const last = (doc.approvals || [])
+    .filter((a) => a.action === "PAYMENT_RECORDED")
+    .map((a) => a.acted_at).sort().pop();
+  const when = last ? new Date(last).toLocaleDateString("en-GB",
+    { day: "numeric", month: "short", year: "numeric" }) : null;
+  const unpaid = cash.filter((l) => !(l.action_taken || "").trim())
+    .map((l) => l.vendor);
+  return (
+    <div role="status" style={{ margin: "10px 0 0", padding: "10px 14px",
+      borderRadius: 8, fontSize: 13.5, lineHeight: 1.45,
+      background: all ? PAID_TINT : "#fff6e0",
+      border: `1px solid ${all ? "#9fd3ae" : "#ecd08a"}`,
+      color: all ? "#14532d" : "#6b4e00" }}>
+      <strong>{all ? "Paid" : `Part paid — ${paid.length} of ${cash.length} suppliers`}</strong>
+      {when && ` · last payment ${when}`}
+      {all
+        ? " · every supplier on this PR is paid — ready to collect and load."
+        : ` · still to pay: ${unpaid.join(", ")}.`}
+    </div>
+  );
+}
+
 export const DOC_LABELS = {
   MR: "Material Requisition",
   PR: "Procurement Requisition",
@@ -1471,6 +1504,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         prepared by {doc.created_by_name}
         {doc.is_void && ` · VOID: ${doc.void_reason}`}
       </p>
+      {isPR && !doc.is_void && <PrPaymentBanner doc={doc} />}
       {doc.links?.length > 0 && (
         <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 0" }}>
           References: {(doc.links || []).map((l) => l.ref).join(" · ")}
@@ -1733,7 +1767,10 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
           <tbody>
             {(doc.lines || []).map((line) => (
               <tr key={line.id}
-                  style={line.is_changed ? { background: "#fff8e6" } : {}}>
+                  style={line.is_changed ? { background: "#fff8e6" }
+                    : isPR && Number(line.amount_cash) > 0
+                      && (line.action_taken || "").trim()
+                      ? { background: PAID_TINT } : {}}>
                 {isPR ? (<>
                   <td style={td}>{line.vendor}
                     {/withdrawn/.test(line.remarks || "") && (

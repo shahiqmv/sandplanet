@@ -2300,6 +2300,17 @@ def _po_summary(revision, payload):
     }
 
 
+def _pr_payment_summary(revision, last_paid_at):
+    """How far a PR's suppliers are paid in cash: rows with cash to pay, how
+    many have a payment recorded, and when the last one went."""
+    lines = list(revision.lines.all()) if revision else []
+    cash = [ln for ln in lines if (ln.amount_cash or 0) > 0]
+    paid = [ln for ln in cash if (ln.action_taken or "").strip()]
+    return {"pay_cash_rows": len(cash), "pay_paid_rows": len(paid),
+            "pay_last_at": (last_paid_at.date().isoformat()
+                            if last_paid_at else None)}
+
+
 @api_view(["GET"])
 def register_generic(request, doc_type):
     """Registers are views over document data (spec §6) — one row per
@@ -2311,10 +2322,11 @@ def register_generic(request, doc_type):
     qs = Document.objects.filter(doc_type=doc_type).select_related(
         "site", "current_revision", "created_by"
     ).prefetch_related("revisions").order_by("-id")
-    if doc_type == "PO":
+    if doc_type in ("PO", "PR"):
         # The order value is summed from the lines, so fetch them with the
         # revisions rather than one query per order — 105 orders would
-        # otherwise be 105 extra round trips to draw one column.
+        # otherwise be 105 extra round trips to draw one column. A PR's
+        # suppliers say how far it is paid.
         qs = qs.prefetch_related("revisions__lines")
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None:
@@ -2331,6 +2343,18 @@ def register_generic(request, doc_type):
     # status, so finding one supplier's orders meant opening them one by one
     # (owner 2026-09-01).
     wants_supplier = doc_type == "PO"
+    # A PR shows how far its suppliers are paid, and when the last payment
+    # went, so Procurement sees at a glance what can be collected (owner
+    # 2026-11-17).
+    paid_on = {}
+    if doc_type == "PR":
+        from django.db.models import Max
+
+        from .models import Approval
+        paid_on = dict(Approval.objects.filter(
+            document__in=[d.id for d in qs[:300]],
+            action="PAYMENT_RECORDED").values("document_id")
+            .annotate(last=Max("acted_at")).values_list("document_id", "last"))
     for doc in qs[:300]:
         # the current revision (prefer the is_current flag; fall back to the FK)
         current = next((r for r in doc.revisions.all() if r.is_current),
@@ -2364,6 +2388,8 @@ def register_generic(request, doc_type):
                 "prev_ir": doc.previous_ir.ref if doc.previous_ir else None,
                 "result": (payload.get("client_result") or {}).get("result"),
                 **(_po_summary(revision, payload) if wants_supplier else {}),
+                **(_pr_payment_summary(revision, paid_on.get(doc.id))
+                   if doc_type == "PR" else {}),
             })
     return Response({"doc_type": doc_type, "rows": rows})
 
