@@ -32,10 +32,11 @@ class SupplierSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "category", "country", "default_currency",
                   "default_incoterm", "credit_days", "contact_person", "phone",
                   "email", "address", "bank_details", "notes", "is_active",
-                  "is_clearing_agent"]
+                  "is_clearing_agent", "is_trading"]
         # only the swap action moves the clearing-agent flag — the company
-        # has exactly ONE agent (owner 2026-08-24)
-        read_only_fields = ["is_clearing_agent"]
+        # has exactly ONE agent (owner 2026-08-24); the trading tag follows
+        # use in the trading app
+        read_only_fields = ["is_clearing_agent", "is_trading"]
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -61,6 +62,21 @@ class SupplierViewSet(viewsets.ModelViewSet):
         if self.request.GET.get("active") != "all":
             qs = qs.filter(is_active=True)
         return qs
+
+    def create(self, request, *args, **kwargs):
+        # The same near-duplicate check the trading app makes: one directory,
+        # so neither side should type in a copy (owner 2026-11-18).
+        from . import suppliers
+        confirm = request.data.get("confirm_new") in (True, "true", "1", 1)
+        if not confirm:
+            found = suppliers.similar(request.data.get("name") or "")
+            if found:
+                return Response({
+                    "detail": "A supplier with a very similar name is "
+                              "already on file. Use it, or confirm this is a "
+                              "different company.",
+                    "similar": suppliers.similar_payload(found)}, status=409)
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         supplier = serializer.save()

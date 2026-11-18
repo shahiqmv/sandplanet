@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import SimilarSuppliers from "./SimilarSuppliers.jsx";
 import { api } from "./api.js";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
@@ -35,13 +36,17 @@ export default function SuppliersPage({ me }) {
   }
   useEffect(load, [search]);
 
-  async function add() {
+  const [similar, setSimilar] = useState(null);   // near-duplicate names
+  async function add(confirmNew = false) {
     setError(null);
     try {
-      await api("/suppliers", { method: "POST", body: draft });
+      await api("/suppliers", { method: "POST",
+        body: confirmNew ? { ...draft, confirm_new: true } : draft });
       setDraft(EMPTY);
+      setSimilar(null);
       load();
     } catch (e) {
+      if (e.status === 409 && e.data?.similar) { setSimilar(e.data.similar); return; }
       setError(e.message);
     }
   }
@@ -114,9 +119,16 @@ export default function SuppliersPage({ me }) {
                  onChange={(e) => setDraft({ ...draft,
                                              address: e.target.value })}
                  style={{ ...inputStyle, width: 200 }} />
-          <button onClick={add} disabled={!draft.name} style={buttonStyle}>
+          <button onClick={() => add()} disabled={!draft.name}
+                  style={buttonStyle}>
             Add supplier</button>
         </div>
+      )}
+      {similar && (
+        <SimilarSuppliers similar={similar} useLabel="Open it"
+          onUse={(s) => { setSimilar(null); setSearch(s.name); }}
+          onCreateAnyway={() => add(true)}
+          onCancel={() => setSimilar(null)} />
       )}
       {canEdit && (
         <p style={{ color: "#5a6b78", fontSize: 12, margin: "0 0 8px" }}>
@@ -158,6 +170,15 @@ export default function SuppliersPage({ me }) {
                                  verticalAlign: "middle",
                                  whiteSpace: "nowrap" }}>
                     CLEARING AGENT</span>)}
+                {/* one directory with Trading (owner 2026-11-18) */}
+                {s.is_trading && (
+                  <span title="Also used by the trading app"
+                        style={{ marginLeft: 6, fontSize: 10, fontWeight: 600,
+                                 color: "#0b5d4b", background: "#dff3ec",
+                                 borderRadius: 4, padding: "1px 6px",
+                                 verticalAlign: "middle",
+                                 whiteSpace: "nowrap" }}>
+                    TRADING</span>)}
                 {s.credit_days != null && s.credit_days !== "" && (
                   <div style={{ fontSize: 11, color: "#5a6b78",
                                 fontWeight: 400 }}>

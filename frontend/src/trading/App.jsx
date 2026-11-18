@@ -140,7 +140,7 @@ function Home({ me, canWrite, go, open }) {
         </button>
         <button className="t-tile" onClick={() => go("suppliers")}>
           <span className="t-tile-n">{info ? info.suppliers ?? "—" : "…"}</span>
-          <span className="t-tile-l">Trading suppliers</span>
+          <span className="t-tile-l">Suppliers used in trading</span>
         </button>
       </div>
 

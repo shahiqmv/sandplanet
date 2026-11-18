@@ -7,7 +7,7 @@ under /api/trading ever takes a site.
 """
 from django.db.models import Q
 from rest_framework import serializers, viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 
@@ -116,14 +116,25 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
 class TradingSupplierSerializer(serializers.ModelSerializer):
     """The supplier as Sales see it. Bank details stay with Finance on the
-    purchasing side; the trading app never shows or edits them."""
+    purchasing side; the trading app never shows or edits them.
+
+    `shared` says Purchasing relies on the record too (an import order, a
+    quotation, a PR…): then its name, type and status are Purchasing's to
+    change, and Sales keep to the contact and trading terms (owner
+    2026-11-18)."""
     is_active = serializers.BooleanField(default=True)
+    shared = serializers.SerializerMethodField()
 
     class Meta:
         model = Supplier
         fields = ["id", "name", "category", "country", "default_currency",
                   "default_incoterm", "contact_person", "phone", "email",
-                  "address", "notes", "is_active"]
+                  "address", "notes", "is_active", "is_trading", "shared"]
+        read_only_fields = ["is_trading"]
+
+    def get_shared(self, obj):
+        from .suppliers import used_outside_trading
+        return used_outside_trading(obj)
 
     def validate_name(self, v):
         v = (v or "").strip()
@@ -138,38 +149,89 @@ class TradingSupplierSerializer(serializers.ModelSerializer):
         return v
 
 
+# What Sales may change on a supplier Purchasing also relies on.
+SHARED_EDITABLE = {"country", "default_currency", "default_incoterm",
+                   "contact_person", "phone", "email", "address", "notes"}
+PURCHASING_OWNS = {"name", "category", "is_active"}
+
+
 class TradingSupplierViewSet(viewsets.ModelViewSet):
-    """Suppliers flagged for trading. Creating one here flags it; a supplier
-    already on the purchasing directory can be brought in with the `adopt`
-    action rather than duplicated."""
+    """The one supplier directory, as the trading app sees it (owner
+    2026-11-18). Every active local and international supplier is listed —
+    forwarders and clearing agents are not sources of goods — with the ones
+    already used in trading first; `?trading=1` narrows to those. Creating a
+    supplier checks the name against the whole directory first, so a copy
+    of one Purchasing already has is offered back instead of made."""
     serializer_class = TradingSupplierSerializer
     permission_classes = [IsTradingReader]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
-        qs = Supplier.objects.filter(is_trading=True).order_by("name")
+        qs = Supplier.objects.filter(category__in=(
+            Supplier.Category.LOCAL, Supplier.Category.INTERNATIONAL)
+        ).order_by("-is_trading", "name")
         search = (self.request.GET.get("search") or "").strip()
         if search:
             qs = qs.filter(Q(name__icontains=search)
                            | Q(country__icontains=search))
+        if self.request.GET.get("trading") in ("1", "true"):
+            qs = qs.filter(is_trading=True)
         if self.request.GET.get("active") != "all":
             qs = qs.filter(is_active=True)
         return qs
 
+    def _adopt(self, supplier, request):
+        if not supplier.is_trading:
+            supplier.is_trading = True
+            supplier.save(update_fields=["is_trading", "updated_at"])
+            audit("supplier", supplier.id, "SUPPLIER_TRADING_ADOPTED",
+                  actor=request.user, detail={"name": supplier.name})
+        return supplier
+
     def create(self, request, *args, **kwargs):
+        from . import suppliers
         name = (request.data.get("name") or "").strip()
-        existing = Supplier.objects.filter(name__iexact=name).first()
+        existing = Supplier.objects.filter(name__iexact=name,
+                                           is_active=True).first()
         if existing is not None:
-            if existing.is_trading:
-                return Response({"detail": "This supplier is already on the "
-                                           "trading directory."}, status=400)
-            # Same company, already known to Purchasing — one record.
-            existing.is_trading = True
-            existing.save(update_fields=["is_trading", "updated_at"])
-            audit("supplier", existing.id, "SUPPLIER_TRADING_ADOPTED",
-                  actor=request.user, detail={"name": existing.name})
+            # Same company, already on file — one record.
+            self._adopt(existing, request)
             return Response(self.get_serializer(existing).data, status=201)
+        confirm = request.data.get("confirm_new") in (True, "true", "1", 1)
+        if not confirm:
+            found = suppliers.similar(name)
+            if found:
+                return Response({
+                    "detail": "A supplier with a very similar name is "
+                              "already on file. Use it, or confirm this is a "
+                              "different company.",
+                    "similar": suppliers.similar_payload(found)}, status=409)
         return super().create(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        s = self.get_object()
+        from .suppliers import used_outside_trading
+        if used_outside_trading(s) \
+                and request.user.role != "ADMIN":
+            touched = {k for k in request.data.keys()
+                       if k in PURCHASING_OWNS
+                       and str(request.data.get(k)) != str(getattr(s, k))}
+            if touched:
+                return Response({"detail": "Purchasing also uses this "
+                                 "supplier, so its name, type and status are "
+                                 "changed on Purchasing's Suppliers page. You "
+                                 "can update the contact and trading terms."},
+                                status=403)
+        return super().partial_update(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"])
+    def adopt(self, request, pk=None):
+        """Use a supplier already on file for trading."""
+        s = Supplier.objects.filter(pk=pk, is_active=True).first()
+        if s is None:
+            return Response({"detail": "Not found."}, status=404)
+        self._adopt(s, request)
+        return Response(self.get_serializer(s).data)
 
     def perform_create(self, serializer):
         s = serializer.save(is_trading=True)

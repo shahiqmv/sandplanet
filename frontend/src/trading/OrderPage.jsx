@@ -200,7 +200,16 @@ function PricingSheet({ o, onSaved }) {
                                        cost_currency: s?.default_currency || r.cost_currency });
                             }}>
                       <option value="">—</option>
-                      {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      {/* one directory (owner 2026-11-18): the suppliers
+                          already used in trading first, then the rest */}
+                      <optgroup label="Used in trading">
+                        {suppliers.filter((s) => s.is_trading).map((s) =>
+                          <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </optgroup>
+                      <optgroup label="All other suppliers">
+                        {suppliers.filter((s) => !s.is_trading).map((s) =>
+                          <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </optgroup>
                     </select>
                   </td>
                   <td style={td}><Num value={r.cost} step="0.0001" width={80} disabled={!costOpen} onChange={(v) => upd(i, { cost: v })} /></td>

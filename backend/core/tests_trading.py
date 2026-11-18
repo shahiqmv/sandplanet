@@ -113,10 +113,15 @@ class TradingSupplierTests(BaseCase):
         names = [x["name"] for x in self.client.get("/api/v1/suppliers").data]
         self.assertIn("Guangzhou Tiles Co", names)
 
-    def test_only_trading_suppliers_are_listed_here(self):
+    def test_the_whole_directory_is_listed_trading_ones_first(self):
+        # one directory with Purchasing (owner 2026-11-18): every supplier is
+        # listed, the ones used in trading first; ?trading=1 narrows to them
         Supplier.objects.create(name="Purchasing Only", category="LOCAL")
         Supplier.objects.create(name="Both", category="LOCAL", is_trading=True)
         names = [x["name"] for x in self.client.get("/api/v1/trading/suppliers").data]
+        self.assertEqual(names[:2], ["Both", "Purchasing Only"])
+        names = [x["name"] for x in
+                 self.client.get("/api/v1/trading/suppliers?trading=1").data]
         self.assertEqual(names, ["Both"])
 
     def test_a_known_supplier_is_adopted_not_duplicated(self):
@@ -127,9 +132,12 @@ class TradingSupplierTests(BaseCase):
         self.assertEqual(r.data["id"], known.id)
         self.assertEqual(Supplier.objects.filter(name__iexact="alia store").count(), 1)
         self.assertTrue(Supplier.objects.get(id=known.id).is_trading)
+        # adding it again hands back the same record, still never a copy
         r = self.client.post("/api/v1/trading/suppliers",
                              {"name": "Alia Store", "category": "LOCAL"})
-        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["id"], known.id)
+        self.assertEqual(Supplier.objects.filter(name__iexact="alia store").count(), 1)
 
     def test_forwarders_are_not_trading_suppliers(self):
         r = self.client.post("/api/v1/trading/suppliers",

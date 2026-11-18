@@ -1,9 +1,11 @@
-// Trading suppliers — the sources Sales price against. One directory
-// underneath Planet (a trading import order rides the same IPR chain);
-// this page shows only the suppliers flagged for trading, and Sales
-// maintain it themselves (owner 2026-09-24).
+// Suppliers — the one directory Purchasing and Trading share (owner
+// 2026-11-18). Every local and international supplier is listed, the ones
+// already used in trading first. Sales add sources themselves; a name that
+// resembles one on file is offered back rather than copied, and a supplier
+// Purchasing also relies on keeps its name, type and status with Purchasing.
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import SimilarSuppliers from "../SimilarSuppliers.jsx";
 import { Btn, Chip, card, inputStyle, td, th } from "../ui.jsx";
 
 const EMPTY = {
@@ -27,18 +29,40 @@ export function SupplierForm({ initial, onSaved, onCancel }) {
   const [d, setD] = useState({ ...EMPTY, ...(initial || {}) });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [similar, setSimilar] = useState(null);
   const set = (k) => (e) =>
     setD({ ...d, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  // Purchasing relies on this record too: its name, type and status are
+  // theirs to change (owner 2026-11-18)
+  const shared = !!initial?.shared;
 
-  async function save(e) {
-    e.preventDefault();
+  async function save(e, confirmNew = false) {
+    e?.preventDefault();
     setBusy(true);
     setError(null);
     try {
+      let body = confirmNew ? { ...d, confirm_new: true } : d;
+      if (initial?.id && shared) {
+        body = { ...d };
+        delete body.name; delete body.category; delete body.is_active;
+      }
       const saved = initial?.id
-        ? await api(`/trading/suppliers/${initial.id}`, { method: "PATCH", body: d })
-        : await api("/trading/suppliers", { method: "POST", body: d });
+        ? await api(`/trading/suppliers/${initial.id}`, { method: "PATCH", body })
+        : await api("/trading/suppliers", { method: "POST", body });
       onSaved(saved);
+    } catch (err) {
+      if (err.status === 409 && err.data?.similar) setSimilar(err.data.similar);
+      else setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function useExisting(s) {
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await api(`/trading/suppliers/${s.id}/adopt`, { method: "POST" }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -51,17 +75,25 @@ export function SupplierForm({ initial, onSaved, onCancel }) {
       <h3 style={{ marginTop: 0 }}>{initial?.id ? "Edit supplier" : "New supplier"}</h3>
       {!initial?.id && (
         <p className="t-note">
-          A supplier Purchasing already has on file is brought onto this list
-          under its existing record — type the same name and it is adopted,
-          not duplicated.
+          One supplier list is shared with Purchasing. Search above before
+          adding — a name close to one already on file is offered back to you
+          rather than copied.
+        </p>
+      )}
+      {shared && (
+        <p className="t-note">
+          Purchasing also uses this supplier, so its name, type and status are
+          changed on Purchasing's Suppliers page. You can update the contact
+          and trading terms here.
         </p>
       )}
       <div className="t-grid">
         <Field label="Supplier name" wide>
-          <input style={inputStyle} value={d.name} onChange={set("name")} autoFocus required />
+          <input style={inputStyle} value={d.name} onChange={set("name")} autoFocus required
+                 disabled={shared} />
         </Field>
         <Field label="Type">
-          <select style={inputStyle} value={d.category} onChange={set("category")}>
+          <select style={inputStyle} value={d.category} onChange={set("category")} disabled={shared}>
             <option value="INTERNATIONAL">International</option>
             <option value="LOCAL">Local</option>
           </select>
@@ -103,11 +135,19 @@ export function SupplierForm({ initial, onSaved, onCancel }) {
         </Field>
         {initial?.id && (
           <label className="t-check">
-            <input type="checkbox" checked={!!d.is_active} onChange={set("is_active")} />
+            <input type="checkbox" checked={!!d.is_active} onChange={set("is_active")}
+                   disabled={shared} />
             Active
           </label>
         )}
       </div>
+      {similar && (
+        <SimilarSuppliers similar={similar} busy={busy}
+          useLabel="Use this one for trading"
+          onUse={useExisting}
+          onCreateAnyway={() => { setSimilar(null); save(null, true); }}
+          onCancel={() => setSimilar(null)} />
+      )}
       {error && <p className="t-note t-note-red">{error}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <Btn type="submit" disabled={busy || !d.name.trim()}>
@@ -123,23 +163,29 @@ export default function SuppliersPage({ canWrite }) {
   const [rows, setRows] = useState(null);
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [tradingOnly, setTradingOnly] = useState(false);
   const [editing, setEditing] = useState(null);
 
   function load() {
     const q = new URLSearchParams();
     if (search.trim()) q.set("search", search.trim());
     if (showAll) q.set("active", "all");
+    if (tradingOnly) q.set("trading", "1");
     return api(`/trading/suppliers?${q}`).then(setRows).catch(() => setRows([]));
   }
-  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [search, showAll]);
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [search, showAll, tradingOnly]);
 
   return (
     <div className="t-page">
       <div className="t-page-head">
-        <h1 className="t-h1">Trading suppliers</h1>
+        <h1 className="t-h1">Suppliers</h1>
         <div className="t-tools">
           <input style={{ ...inputStyle, width: 240 }} placeholder="Search name, country…"
                  value={search} onChange={(e) => setSearch(e.target.value)} />
+          <label className="t-check">
+            <input type="checkbox" checked={tradingOnly} onChange={(e) => setTradingOnly(e.target.checked)} />
+            used in trading only
+          </label>
           <label className="t-check">
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
             include inactive
@@ -158,8 +204,9 @@ export default function SuppliersPage({ canWrite }) {
 
       {rows === null ? <p>Loading…</p> : rows.length === 0 ? (
         <p className="t-empty">
-          {search ? "No supplier matches that." :
-            "No trading suppliers yet. Add the sources you price against; each pricing-sheet line will pick from this list."}
+          {search ? "No supplier matches that." : tradingOnly
+            ? "No supplier has been used in trading yet. Pick one on a pricing-sheet line and it is tagged here."
+            : "No suppliers on file yet."}
         </p>
       ) : (
         <table className="t-table">
@@ -177,7 +224,8 @@ export default function SuppliersPage({ canWrite }) {
           <tbody>
             {rows.map((s) => (
               <tr key={s.id} className={s.is_active ? "" : "is-inactive"}>
-                <td style={td}><b>{s.name}</b></td>
+                <td style={td}><b>{s.name}</b>
+                  {s.is_trading && <> <Chip tone="ok">trading</Chip></>}</td>
                 <td style={td}><Chip tone="info">{CATEGORY[s.category] || s.category}</Chip>
                   {!s.is_active && <> <Chip tone="alert">inactive</Chip></>}</td>
                 <td style={td}>{s.country}</td>

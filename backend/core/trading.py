@@ -366,6 +366,14 @@ def update_order(order, data, actor):
     return None
 
 
+def _tag_trading(ids):
+    """A supplier picked on a trading line is one Trading uses: it sorts to
+    the top of the trading list from then on (owner 2026-11-18)."""
+    if ids:
+        Supplier.objects.filter(id__in=ids, is_trading=False).update(
+            is_trading=True)
+
+
 COST_FIELDS = ("supplier_id", "cost", "cost_currency", "fx")
 
 
@@ -394,6 +402,7 @@ def update_costs(order, rows, actor):
                    "fx": fxv if fxv and fxv > 0 else None}
             if new["supplier_id"] and not Supplier.objects.filter(id=new["supplier_id"]).exists():
                 return "A line names a supplier that is not on file."
+            _tag_trading({new["supplier_id"]} if new["supplier_id"] else set())
             if any(getattr(ln, k) != v for k, v in new.items()):
                 changed += 1
             for k, v in new.items():
@@ -450,6 +459,7 @@ def write_lines(order, rows, actor):
     sup_ids = {c["supplier_id"] for c in clean if c["supplier_id"]}
     if sup_ids and Supplier.objects.filter(id__in=sup_ids).count() != len(sup_ids):
         return "A line names a supplier that is not on file."
+    _tag_trading(sup_ids)
     item_ids = {c["item_id"] for c in clean if c["item_id"]}
     if item_ids and Item.objects.filter(id__in=item_ids).count() != len(item_ids):
         return "A line names a catalogue item that is not on file."
