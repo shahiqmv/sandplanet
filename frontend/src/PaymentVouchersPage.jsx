@@ -280,8 +280,14 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     && !awShown.includes(d)).length;
   const shown = vouchers;               // already filtered server-side
   const batchMode = isSignatory && tab === "CHECKED";
+  // What the signatory can approve: a voucher the accountant has checked,
+  // or, while the company has no accountant, a submitted one. This still
+  // looked only for SUBMITTED after the accountant step came in, so the
+  // batch band found nothing on the "Awaiting signatory" tab and vanished
+  // (owner 2026-11-19).
   const approvable = batchMode
-    ? shown.filter((pv) => pv.status === "SUBMITTED" && !pv.is_void) : [];
+    ? shown.filter((pv) => !pv.is_void && (pv.status === "CHECKED"
+        || (pv.status === "SUBMITTED" && !checkRequired))) : [];
   const tickedPvs = approvable.filter((pv) => ticked[pv.ref]);
   const tickedTotals = tickedPvs.reduce((acc, pv) => {
     acc[pv.currency] = (acc[pv.currency] || 0) + Number(pv.total || 0);
