@@ -78,6 +78,25 @@ def _released_line(line):
             "paid": False}
 
 
+def _payable_head(p):
+    """The cost head a payable is booked to when it is paid — the rent
+    contract's, the bill account's, the subcontract head, the PR row's — so
+    the voucher says what the books will (owner 2026-11-19: a phone bill
+    printed as "Materials")."""
+    if p.payroll_line_id:
+        return "Salary"
+    if p.rent_due_id and p.rent_due.contract.cost_head_id:
+        return p.rent_due.contract.cost_head.name
+    if p.bill_charge_id and p.bill_charge.account.cost_head_id:
+        return p.bill_charge.account.cost_head.name
+    if p.document_id and p.document.doc_type == "SVC":
+        from .subcontract import _subcontract_head
+        return _subcontract_head().name
+    if p.document_line_id and p.document_line.cost_head_id:
+        return p.document_line.cost_head.name
+    return "Materials"
+
+
 def _part_info(line):
     """Whether a line pays only part of what is owed, and of how much."""
     from decimal import Decimal as _D
@@ -131,7 +150,7 @@ def _line_info(line):
                 "source_status": p.status, "payable_id": p.id,
                 "is_salary": pay is not None,
                 "payee": p.vendor,
-                "cost_head": "Salary" if pay is not None else "Materials",
+                "cost_head": _payable_head(p),
                 "purpose": purpose,
                 "payment_ref": line.paid_ref or p.settled_ref,
                 "slip_url": _payable_slip_url(line),
@@ -550,49 +569,154 @@ def _pay_str(li):
     return ""
 
 
+_ONES = ("Zero One Two Three Four Five Six Seven Eight Nine Ten Eleven "
+         "Twelve Thirteen Fourteen Fifteen Sixteen Seventeen Eighteen "
+         "Nineteen").split()
+_TENS = "_ _ Twenty Thirty Forty Fifty Sixty Seventy Eighty Ninety".split()
+_WORD_CCY = {"MVR": ("Rufiyaa", "Laari"), "USD": ("US Dollars", "Cents"),
+             "EUR": ("Euro", "Cents")}
+
+
+def _words(n):
+    n = int(n)
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("-" + _ONES[n % 10] if n % 10 else "")
+    if n < 1000:
+        return (_ONES[n // 100] + " Hundred"
+                + (" " + _words(n % 100) if n % 100 else ""))
+    for size, name in ((10 ** 9, "Billion"), (10 ** 6, "Million"),
+                       (1000, "Thousand")):
+        if n >= size:
+            return (_words(n // size) + " " + name
+                    + (" " + _words(n % size) if n % size else ""))
+    return str(n)
+
+
+def amount_in_words(amount, currency):
+    """"Rufiyaa Twenty-Four Thousand Four Hundred Eight and Laari 38 only" —
+    the sum in words, as a payment voucher carries it."""
+    amount = Decimal(str(amount or 0)).quantize(Decimal("0.01"))
+    whole, cents = divmod(int(amount * 100), 100)
+    major, minor = _WORD_CCY.get(currency, (currency, "cents"))
+    out = f"{major} {_words(whole)}"
+    if cents:
+        out += f" and {minor} {cents:02d}"
+    return out + " only"
+
+
+def _goods_summary(pr, vendor_line):
+    """(quotation no., what was bought) for one supplier on a PR: the
+    supplier's quotation reference and the items awarded to them on it."""
+    from .models import DocumentLine, Quotation
+    from .suppliers import norm
+    ln = DocumentLine.objects.filter(pk=vendor_line).first()
+    if ln is None:
+        return "", ""
+    qref = (ln.quotation_ref or "").strip()
+    quotes = list(Quotation.objects.filter(document=pr)
+                  .select_related("supplier").prefetch_related("lines"))
+    want = norm(ln.vendor)
+    quote = (next((q for q in quotes if qref and q.quote_ref.strip() == qref),
+                  None)
+             or next((q for q in quotes if norm(q.supplier.name) == want),
+                     None))
+    items = []
+    if quote is not None:
+        for q in quote.lines.all():
+            if not q.awarded:
+                continue
+            qty = (f"{q.qty.normalize():f}" if q.qty is not None else "")
+            items.append(f"{q.supplier_desc.strip()}"
+                         + (f" × {qty} {q.unit}".rstrip() if qty else ""))
+        qref = qref or quote.quote_ref.strip()
+    if not items:
+        items = [(ln.free_text_desc or "").strip()] if (
+            ln.free_text_desc or "").strip() else []
+    if len(items) > 4:
+        items = items[:4] + [f"+{len(items) - 4} more"]
+    return qref, " · ".join(items)
+
+
 def _pv_pdf_context(pv):
+    """The voucher as it prints (owner 2026-11-19): one payee per voucher, so
+    the payee is in the header beside the number and the date, with the sum
+    in figures and in words; each line says what is being paid for — the
+    supplier's quotation and the goods awarded, the PI and milestone, the
+    purpose of a request. Who prepared it is in the signature block, not
+    the header."""
     from .pdf import _money, _stamp_for, company_info, logo_src
 
     approvals = list(pv.approvals.select_related("actor"))
     rows, total = [], Decimal("0")
     info = _voucher_info(pv)
+    docs = {d.ref: d for d in Document.objects.filter(
+        ref__in=[li["ref"] for li in info["lines"]])}
     for li in info["lines"]:
         queried = li["status"] == "QUERIED"
         if not queried:
             total += Decimal(str(li["amount"] or 0))
         base = {"ref": li["ref"], "site": li["site_code"],
                 "cost_head": li.get("cost_head", ""), "queried": queried}
-        # A PR paying several suppliers is one line per supplier, each with
-        # its own amount and payment reference — never "A, B, C" in one
-        # payee cell (owner 2026-11-19). Only when the suppliers' amounts
-        # make up the line exactly; otherwise the line stands as it is.
         vrows = li.get("vendor_rows") or []
-        split = (len(vrows) > 1 and abs(
-            sum(Decimal(str(r["gross"] or 0)) for r in vrows)
-            - Decimal(str(li["amount"] or 0))) <= Decimal("0.01"))
-        if split:
-            for r in vrows:
+        if li["doc_type"] == "PR" and vrows:
+            split = abs(sum(Decimal(str(r["gross"] or 0)) for r in vrows)
+                        - Decimal(str(li["amount"] or 0))) <= Decimal("0.01")
+            for r in (vrows if split else vrows[:1]):
+                qref, goods = _goods_summary(docs.get(li["ref"]), r["line_id"])
                 gst = Decimal(str(r.get("gst_amount") or 0))
-                purpose = "Procurement" + (" · advance" if r["is_advance"]
-                                           else "")
+                notes = []
+                if r["is_advance"]:
+                    notes.append("advance")
                 if gst:
-                    purpose += f" · incl. GST {_money(gst)}"
+                    notes.append(f"incl. GST {_money(gst)}")
                 rows.append({**base, "payee": r["vendor"],
-                             "purpose": purpose,
-                             "amount": _money(r["gross"] or 0),
+                             "reference": qref,
+                             "description": goods or "Procurement",
+                             "note": " · ".join(notes),
+                             "amount": _money((r["gross"] if split
+                                               else li["amount"]) or 0),
                              "payment": r.get("payment_ref") or ""})
             continue
+        if li["doc_type"] == "MILESTONE":
+            reference = li.get("pi_ref") or ""
+            description = f"Overseas TT · {li.get('milestone_label') or ''}"
+        elif li["doc_type"] == "PAYABLE":
+            reference = ""
+            description = li.get("purpose", "")
+        else:
+            reference = ""
+            description = li.get("purpose", "")
         rows.append({**base, "payee": li.get("payee", ""),
-                     "purpose": li.get("purpose", ""),
-                     "amount": _money(li["amount"] or 0),
+                     "reference": reference, "description": description,
+                     "note": "", "amount": _money(li["amount"] or 0),
                      "payment": _pay_str(li)})
     for i, r in enumerate(rows, 1):
         r["no"] = i
+    payees = []
+    for r in rows:
+        if r["payee"] and r["payee"] not in payees:
+            payees.append(r["payee"])
+    salaries = info.get("has_salaries")
+    if salaries:
+        payee = f"Salaries — {len(rows)} employee{'s' if len(rows) != 1 else ''}"
+        for r in rows:
+            r["description"] = f"{r['payee']} · {r['description']}"
+    elif len(payees) == 1:
+        payee = payees[0]
+    else:
+        # a voucher raised before one payee per voucher: say so, and name
+        # the payee on each line
+        payee = f"{len(payees)} payees — see each line"
+        for r in rows:
+            r["description"] = f"{r['payee']} — {r['description']}"
     return {
         "doc": pv, "logo_src": logo_src(), "co": company_info(),
         "lines": rows, "total": _money(total), "settled": info["settled"],
         "currency": info["currency"], "debit_account": pv.debit_account,
-        "prepared_by": pv.created_by.full_name if pv.created_by else "",
+        "payee": payee,
+        "total_words": amount_in_words(total, info["currency"]),
         "submit_stamp": _stamp_for(approvals, "SUBMIT"),
         "check_stamp": _stamp_for(approvals, "CHECK"),
         "approve_stamp": _stamp_for(approvals, "APPROVE"),

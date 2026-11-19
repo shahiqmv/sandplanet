@@ -6,6 +6,8 @@
 <style>
   .queried { color: #b35900; }
   .muted { color: #5a6b78; font-size: 8pt; }
+  td.payee { font-size: 11pt; font-weight: 700; color: #0E3A5C; }
+  td.words { font-style: italic; }
 </style>
 </head>
 <body>
@@ -14,26 +16,33 @@
 {% include "pdf/_letterhead.html" with title="PAYMENT VOUCHER" subline="Form No: FRM-FIN-01" %}
 
 <table class="kv">
-  <tr><td class="k">Voucher No.</td><td><strong>{{ doc.ref }}</strong></td>
-      <td class="k">Date</td><td>{{ doc.doc_date|date:"d.m.Y" }}</td></tr>
-  <tr><td class="k">Prepared By</td><td>{{ prepared_by }}</td>
+  <tr><td class="k" style="width:17%">Voucher No.</td><td><strong>{{ doc.ref }}</strong></td>
+      <td class="k" style="width:14%">Date</td><td style="width:22%">{{ doc.doc_date|date:"d.m.Y" }}</td></tr>
+  <tr><td class="k">Payee</td>
+      <td colspan="3" class="payee">{{ payee }}</td></tr>
+  <tr><td class="k">Amount</td><td><strong>{{ currency }} {{ total }}</strong></td>
       <td class="k">Status</td><td>{{ doc.status }}{% if settled %} · fully paid{% endif %}</td></tr>
-  <tr><td class="k">Debit Account</td>
+  <tr><td class="k">In words</td><td colspan="3" class="words">{{ total_words }}</td></tr>
+  <tr><td class="k">Pay from</td>
       <td colspan="3">{% if debit_account %}{{ debit_account.label }}{% if debit_account.bank_name %} — {{ debit_account.bank_name }}{% endif %}{% if debit_account.account_no %} · A/C {{ debit_account.account_no }}{% endif %}{% if debit_account.currency %} ({{ debit_account.currency }}){% endif %}{% else %}—{% endif %}</td></tr>
 </table>
 
 <table>
   <thead><tr>
     <th style="width:4%">No.</th>
-    <th>Requisition</th><th>Site</th><th>Payee</th>
-    <th>Purpose</th><th>Cost Head</th>
-    <th class="num">Amount ({{ currency }})</th><th>Payment Ref</th>
+    <th style="width:10%">Requisition</th><th style="width:6%">Site</th>
+    <th style="width:14%">Reference</th><th>Description</th>
+    <th style="width:10%">Cost Head</th>
+    <th class="num" style="width:13%">Amount ({{ currency }})</th>
+    <th style="width:11%">Payment Ref</th>
   </tr></thead>
   {% for l in lines %}
   <tr{% if l.queried %} class="queried"{% endif %}>
     <td>{{ l.no }}</td>
-    <td>{{ l.ref }}</td><td>{{ l.site }}</td><td>{{ l.payee }}</td>
-    <td>{{ l.purpose }}</td><td>{{ l.cost_head }}</td>
+    <td>{{ l.ref }}</td><td>{{ l.site }}</td>
+    <td>{{ l.reference|default:"—" }}</td>
+    <td>{{ l.description }}{% if l.note %}<div class="muted">{{ l.note }}</div>{% endif %}</td>
+    <td>{{ l.cost_head }}</td>
     <td class="num">{{ l.amount }}</td>
     <td>{% if l.queried %}QUERIED — returned to raiser{% else %}{{ l.payment }}{% endif %}</td>
   </tr>
@@ -45,20 +54,18 @@
 </table>
 
 <table class="sig">
-  <tr><td class="t">Prepared / Submitted By — Finance</td>
-      {% if check_stamp %}<td class="t">Checked By — Accountant</td>{% endif %}
+  {% comment %}Three signatures on every voucher (owner 2026-11-19): the
+  Checked By box stands empty until the accountant signs.{% endcomment %}
+  <tr><td class="t" style="width:33%">Prepared / Submitted By — Finance</td>
+      <td class="t" style="width:33%">Checked By — Accountant</td>
       <td class="t">Authorised By — Signatory (Executive Director)</td></tr>
   <tr>
     <td>{% if submit_stamp %}<span class="stamp">{{ submit_stamp }}</span>{% endif %}</td>
-    {% if check_stamp %}<td><span class="stamp">{{ check_stamp }}</span></td>{% endif %}
+    <td>{% if check_stamp %}<span class="stamp">{{ check_stamp }}</span>{% endif %}</td>
     <td>{% if approve_stamp %}<span class="stamp">{{ approve_stamp }}</span>{% endif %}</td>
   </tr>
 </table>
 
-<p class="muted">
-  A queried line is returned to its raiser and is not authorised on this
-  voucher. Disbursement is made against each requisition; the Payment Ref is
-  the transfer / cheque number recorded by Finance on release. Bank release
-  requires the two authorised signatories per the company mandate.</p>
+
 </body>
 </html>

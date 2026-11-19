@@ -734,45 +734,60 @@ class AccountantCheckTests(VoucherBase):
 
 
 class VoucherPdfLinesTests(TestCase):
-    """A PR paying several suppliers prints one voucher line per supplier
-    (owner 2026-11-19)."""
+    """The voucher as it prints (owner 2026-11-19): one line per PR supplier,
+    the payee in the header, the sum in words."""
 
-    def test_vendor_rows_become_their_own_lines(self):
+    def context(self, info):
         from unittest import mock
 
         from .views_vouchers import _pv_pdf_context
         pv = mock.Mock(approvals=mock.Mock(select_related=lambda *a: []),
                        debit_account=None, created_by=None)
-        info = {"settled": False, "currency": "MVR", "lines": [{
-            "ref": "PR-457", "site_code": "SFR", "status": "APPROVED",
-            "amount": Decimal("1100.00"), "payee": "A, B",
-            "purpose": "Procurement", "cost_head": "Materials",
-            "doc_type": "PR", "paid": False,
-            "vendor_rows": [
-                {"vendor": "A", "gross": Decimal("1000.00"),
-                 "gst_amount": Decimal("0"), "is_advance": False,
-                 "payment_ref": "TT-1"},
-                {"vendor": "B", "gross": Decimal("100.00"),
-                 "gst_amount": Decimal("6.00"), "is_advance": True,
-                 "payment_ref": ""}]}]}
         with mock.patch("core.views_vouchers._voucher_info",
                         return_value=info):
-            c = _pv_pdf_context(pv)
-        self.assertEqual([(r["no"], r["payee"], r["amount"], r["payment"])
+            return _pv_pdf_context(pv)
+
+    def info(self, amount, rows):
+        return {"settled": False, "currency": "MVR", "lines": [{
+            "ref": "PR-457", "site_code": "SFR", "status": "APPROVED",
+            "amount": Decimal(amount), "payee": "A, B",
+            "purpose": "Procurement", "cost_head": "Materials",
+            "doc_type": "PR", "paid": False, "vendor_rows": rows}]}
+
+    def row(self, vendor, gross, gst="0", advance=False, ref=""):
+        return {"line_id": None, "vendor": vendor, "gross": Decimal(gross),
+                "gst_amount": Decimal(gst), "is_advance": advance,
+                "payment_ref": ref}
+
+    def test_one_payee_in_the_header_with_the_sum_in_words(self):
+        c = self.context(self.info("24408.00",
+                                   [self.row("MANAS HARDWARE", "24408.00")]))
+        self.assertEqual(c["payee"], "MANAS HARDWARE")
+        self.assertEqual(c["total_words"],
+                         "Rufiyaa Twenty-Four Thousand Four Hundred Eight "
+                         "only")
+        self.assertNotIn("prepared_by", c)
+
+    def test_an_older_voucher_with_two_payees_names_them_per_line(self):
+        c = self.context(self.info("1100.00", [
+            self.row("A", "1000.00", ref="TT-1"),
+            self.row("B", "100.00", gst="6.00", advance=True)]))
+        self.assertEqual([(r["no"], r["amount"], r["payment"])
                           for r in c["lines"]],
-                         [(1, "A", "1,000.00", "TT-1"),
-                          (2, "B", "100.00", "")])
-        self.assertIn("advance", c["lines"][1]["purpose"])
-        self.assertIn("GST 6.00", c["lines"][1]["purpose"])
+                         [(1, "1,000.00", "TT-1"), (2, "100.00", "")])
+        self.assertEqual(c["payee"], "2 payees — see each line")
+        self.assertTrue(c["lines"][0]["description"].startswith("A — "))
+        self.assertIn("advance", c["lines"][1]["note"])
+        self.assertIn("GST 6.00", c["lines"][1]["note"])
         self.assertEqual(c["total"], "1,100.00")
 
-        # amounts that do not make up the line leave it as one line
-        info["lines"][0]["amount"] = Decimal("500.00")
-        with mock.patch("core.views_vouchers._voucher_info",
-                        return_value=info):
-            c = _pv_pdf_context(pv)
-        self.assertEqual(len(c["lines"]), 1)
-        self.assertEqual(c["lines"][0]["payee"], "A, B")
+    def test_amount_in_words(self):
+        from .views_vouchers import amount_in_words
+        self.assertEqual(amount_in_words(Decimal("28470.38"), "MVR"),
+                         "Rufiyaa Twenty-Eight Thousand Four Hundred Seventy "
+                         "and Laari 38 only")
+        self.assertEqual(amount_in_words(Decimal("920.59"), "USD"),
+                         "US Dollars Nine Hundred Twenty and Cents 59 only")
 
 
 class OnePayeePerVoucherTests(VoucherBase):
