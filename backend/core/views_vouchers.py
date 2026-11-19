@@ -547,16 +547,38 @@ def _pv_pdf_context(pv):
     approvals = list(pv.approvals.select_related("actor"))
     rows, total = [], Decimal("0")
     info = _voucher_info(pv)
-    for i, li in enumerate(info["lines"], 1):
+    for li in info["lines"]:
         queried = li["status"] == "QUERIED"
         if not queried:
             total += Decimal(str(li["amount"] or 0))
-        rows.append({
-            "no": i, "ref": li["ref"], "site": li["site_code"],
-            "payee": li.get("payee", ""), "purpose": li.get("purpose", ""),
-            "cost_head": li.get("cost_head", ""),
-            "amount": _money(li["amount"] or 0),
-            "payment": _pay_str(li), "queried": queried})
+        base = {"ref": li["ref"], "site": li["site_code"],
+                "cost_head": li.get("cost_head", ""), "queried": queried}
+        # A PR paying several suppliers is one line per supplier, each with
+        # its own amount and payment reference — never "A, B, C" in one
+        # payee cell (owner 2026-11-19). Only when the suppliers' amounts
+        # make up the line exactly; otherwise the line stands as it is.
+        vrows = li.get("vendor_rows") or []
+        split = (len(vrows) > 1 and abs(
+            sum(Decimal(str(r["gross"] or 0)) for r in vrows)
+            - Decimal(str(li["amount"] or 0))) <= Decimal("0.01"))
+        if split:
+            for r in vrows:
+                gst = Decimal(str(r.get("gst_amount") or 0))
+                purpose = "Procurement" + (" · advance" if r["is_advance"]
+                                           else "")
+                if gst:
+                    purpose += f" · incl. GST {_money(gst)}"
+                rows.append({**base, "payee": r["vendor"],
+                             "purpose": purpose,
+                             "amount": _money(r["gross"] or 0),
+                             "payment": r.get("payment_ref") or ""})
+            continue
+        rows.append({**base, "payee": li.get("payee", ""),
+                     "purpose": li.get("purpose", ""),
+                     "amount": _money(li["amount"] or 0),
+                     "payment": _pay_str(li)})
+    for i, r in enumerate(rows, 1):
+        r["no"] = i
     return {
         "doc": pv, "logo_src": logo_src(), "co": company_info(),
         "lines": rows, "total": _money(total), "settled": info["settled"],

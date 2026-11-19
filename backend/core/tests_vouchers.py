@@ -729,3 +729,45 @@ class AccountantCheckTests(VoucherBase):
         self.accountant.save()
         r = self.voucher_action(pv, "approve", self.signatory)
         self.assertEqual(r.status_code, 200, r.data)
+
+
+class VoucherPdfLinesTests(TestCase):
+    """A PR paying several suppliers prints one voucher line per supplier
+    (owner 2026-11-19)."""
+
+    def test_vendor_rows_become_their_own_lines(self):
+        from unittest import mock
+
+        from .views_vouchers import _pv_pdf_context
+        pv = mock.Mock(approvals=mock.Mock(select_related=lambda *a: []),
+                       debit_account=None, created_by=None)
+        info = {"settled": False, "currency": "MVR", "lines": [{
+            "ref": "PR-457", "site_code": "SFR", "status": "APPROVED",
+            "amount": Decimal("1100.00"), "payee": "A, B",
+            "purpose": "Procurement", "cost_head": "Materials",
+            "doc_type": "PR", "paid": False,
+            "vendor_rows": [
+                {"vendor": "A", "gross": Decimal("1000.00"),
+                 "gst_amount": Decimal("0"), "is_advance": False,
+                 "payment_ref": "TT-1"},
+                {"vendor": "B", "gross": Decimal("100.00"),
+                 "gst_amount": Decimal("6.00"), "is_advance": True,
+                 "payment_ref": ""}]}]}
+        with mock.patch("core.views_vouchers._voucher_info",
+                        return_value=info):
+            c = _pv_pdf_context(pv)
+        self.assertEqual([(r["no"], r["payee"], r["amount"], r["payment"])
+                          for r in c["lines"]],
+                         [(1, "A", "1,000.00", "TT-1"),
+                          (2, "B", "100.00", "")])
+        self.assertIn("advance", c["lines"][1]["purpose"])
+        self.assertIn("GST 6.00", c["lines"][1]["purpose"])
+        self.assertEqual(c["total"], "1,100.00")
+
+        # amounts that do not make up the line leave it as one line
+        info["lines"][0]["amount"] = Decimal("500.00")
+        with mock.patch("core.views_vouchers._voucher_info",
+                        return_value=info):
+            c = _pv_pdf_context(pv)
+        self.assertEqual(len(c["lines"]), 1)
+        self.assertEqual(c["lines"][0]["payee"], "A, B")
