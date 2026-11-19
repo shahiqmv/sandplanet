@@ -84,8 +84,10 @@ class VoucherHappyPathTests(VoucherBase):
         self.assertEqual(line["ref"], a)
 
     def test_create_submit_approve_commits_each_line(self):
+        # two requests to the same payee share one voucher (one payee per
+        # voucher, owner 2026-11-19)
         a = self.director_approved_pyr(amount=3000, payee="A")
-        b = self.director_approved_pyr(amount=1500, payee="B")
+        b = self.director_approved_pyr(amount=1500, payee="A")
         r = self.create_voucher([a, b])
         self.assertEqual(r.status_code, 201, r.data)
         pv = r.data["ref"]
@@ -159,7 +161,7 @@ class VoucherHappyPathTests(VoucherBase):
 class VoucherQueryTests(VoucherBase):
     def test_queried_line_returns_source_others_commit(self):
         a = self.director_approved_pyr(amount=3000, payee="A")
-        b = self.director_approved_pyr(amount=1500, payee="B")
+        b = self.director_approved_pyr(amount=1500, payee="A")
         pv = self.create_voucher([a, b]).data["ref"]
         self.voucher_action(pv, "submit", self.finance)
         # find the line id for source a
@@ -771,3 +773,64 @@ class VoucherPdfLinesTests(TestCase):
             c = _pv_pdf_context(pv)
         self.assertEqual(len(c["lines"]), 1)
         self.assertEqual(c["lines"][0]["payee"], "A, B")
+
+
+class OnePayeePerVoucherTests(VoucherBase):
+    """Finance ticks what to pay; a voucher is raised for each payee (owner
+    2026-11-19)."""
+
+    def pr_with_suppliers(self, *vendors):
+        """A PR at the stage Finance vouchers it, one cash row per vendor."""
+        from .models import DocumentLine, DocumentRevision
+        pr = Document.objects.create(
+            doc_type="PR", ref=f"PR-T{Document.objects.count() + 1}",
+            site=self.site, doc_date=date.today(), status="APPROVED",
+            created_by=self.director)
+        rev = DocumentRevision.objects.create(document=pr, rev_label="R0",
+                                              payload={}, is_current=True,
+                                              created_by=self.director)
+        pr.current_revision = rev
+        pr.save(update_fields=["current_revision"])
+        for i, (vendor, amount) in enumerate(vendors, 1):
+            DocumentLine.objects.create(revision=rev, line_no=i,
+                                        vendor=vendor, amount_cash=amount,
+                                        free_text_desc=f"goods {i}")
+        return pr.ref
+
+    def test_two_payees_get_two_vouchers(self):
+        a = self.director_approved_pyr(amount=3000, payee="Boat Co")
+        b = self.director_approved_pyr(amount=1500, payee="Fuel Co")
+        c = self.director_approved_pyr(amount=500, payee="BOAT CO PVT LTD")
+        r = self.create_voucher([a, b, c])
+        self.assertEqual(r.status_code, 201, r.data)
+        made = {x["payee"]: x for x in r.data["created"]}
+        self.assertEqual(len(r.data["created"]), 2)
+        boat = Document.objects.get(ref=next(
+            x["ref"] for x in r.data["created"] if x["payee"] == "Boat Co"))
+        self.assertEqual(sorted(ln.source_document.ref
+                                for ln in boat.voucher_lines.all()),
+                         sorted([a, c]))
+        self.assertIn("Fuel Co", made)
+
+    def test_a_pr_with_three_suppliers_makes_three_vouchers(self):
+        pr = self.pr_with_suppliers(("STO", 191.94), ("Sonee Hardware", 3870.44),
+                                    ("Manas Hardware", 24408))
+        r = self.create_voucher([pr])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(len(r.data["created"]), 3)
+        totals = sorted(Decimal(str(x["total"])) for x in r.data["created"])
+        self.assertEqual(totals, [Decimal("191.94"), Decimal("3870.44"),
+                                  Decimal("24408.00")])
+        # every supplier is now on a voucher: the PR cannot be vouchered again
+        again = self.create_voucher([pr])
+        self.assertEqual(again.status_code, 400)
+
+    def test_all_or_nothing(self):
+        a = self.director_approved_pyr(amount=3000, payee="Boat Co")
+        b = self.director_approved_pyr(amount=1500, payee="Fuel Co")
+        self.create_voucher([b])                  # b is now on a voucher
+        before = Document.objects.filter(doc_type="PV").count()
+        r = self.create_voucher([a, b])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already on a voucher", r.data["detail"])
+        self.assertEqual(Document.objects.filter(doc_type="PV").count(), before)

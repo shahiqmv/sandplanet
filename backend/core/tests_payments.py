@@ -481,6 +481,10 @@ class CentralPaymentTests(PyrBase):
         # an Accounts USD request, cleared to voucher
         usd = self.raise_by(self.finance, currency="USD").data["ref"]
         self.act(usd, "submit", self.finance)
+        # one payee in two currencies: still one voucher, so refused
+        from .models import PaymentRequest
+        PaymentRequest.objects.filter(document__ref__in=[mvr, usd]).update(
+            payee="Same Co")
         self.client.force_authenticate(self.finance)
         r = self.client.post("/api/v1/payment-vouchers",
                              {"source_refs": [mvr, usd]}, format="json")

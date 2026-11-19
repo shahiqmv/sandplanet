@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { raisedVouchers } from "./raisedVouchers.js";
 import { BalanceNote, PartAmount, closeBalance, partBody, pickedAmount } from "./PartPayment.jsx";
 import { api } from "./api.js";
 import { Btn, Chip, RefStamp, card, ghostButton, inputStyle, td, th }
@@ -92,7 +93,7 @@ export default function PayablesPage({ me, onOpenDoc }) {
       const what = onSalaries ? `${pickedRows.length} salaries`
         : `${pickedRows.length} payable(s)`;
       setPicked({}); setPartAmt({}); setDebit("");
-      setMsg(`Voucher ${pv.ref} raised for ${what} — submit it on the Payment `
+      setMsg(`${raisedVouchers(pv)} for ${what} — submit on the Payment `
         + `Vouchers page.${onSalaries ? " The transfer list downloads from "
           + "the voucher once it is approved." : ""}`);
       load();

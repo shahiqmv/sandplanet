@@ -4,6 +4,7 @@
 // voucher. A phone has a person and an allowance; what a bill runs over it
 // comes off that person's salary. (owner 2026-10-03 — core/bills.py)
 import { useCallback, useEffect, useState } from "react";
+import { raisedVouchers } from "../raisedVouchers.js";
 import { api, apiDownload } from "../api.js";
 import { Btn, Chip, card, ghostButton, inputStyle } from "../ui.jsx";
 import { fmtDate, money, today } from "./shared.jsx";
@@ -360,7 +361,7 @@ function ToPay({ go }) {
     setBusy(true); setError(null); setMsg(null);
     try {
       const pv = await api("/payment-vouchers", { method: "POST", body: { payable_ids: ids } });
-      setMsg(`Voucher ${pv.ref} raised for ${ids.length} ${g.provider} bill${ids.length === 1 ? "" : "s"} — submit it under Payment vouchers.`); load();
+      setMsg(`${raisedVouchers(pv)} for ${ids.length} ${g.provider} bill${ids.length === 1 ? "" : "s"} — submit under Payment vouchers.`); load();
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
   if (!d) return <div style={card}>{error || "Loading…"}</div>;

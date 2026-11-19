@@ -606,6 +606,96 @@ def _part(amounts, key, bal, whole_reason, label):
     return amount, None
 
 
+SALARY_BATCH = "__salaries__"
+
+
+def _payee_key(name):
+    """Two spellings of one payee are one payee: "MANAS HARDWARE" and
+    "Manas Hardware Pvt Ltd" go on the same voucher."""
+    from .suppliers import norm
+    name = (name or "").strip()
+    return norm(name) or name.lower() or "?"
+
+
+def create_vouchers(source_refs, actor, milestone_ids=None, payable_ids=None,
+                    bank_account_id=None, amounts=None, pr_rows=None):
+    """One voucher per payee (owner 2026-11-19). What Finance ticked is
+    sorted by who is paid — each supplier on a PR, the payee of a PYR, the
+    supplier of an overseas milestone, the vendor of a payable — and a
+    voucher is raised for each. Salaries are the exception: a month's pay is
+    one batch the bank processes from the transfer list, so every salary
+    payable picked goes on one voucher. All or nothing: if any voucher
+    cannot be raised, none is. Returns ([pv, …], err)."""
+    from .models import ImportPaymentMilestone, Payable
+    source_refs = list(source_refs or [])
+    milestone_ids = [int(m) for m in (milestone_ids or [])]
+    payable_ids = [int(p) for p in (payable_ids or [])]
+    if not source_refs and not milestone_ids and not payable_ids:
+        return [], "Select at least one payment to voucher."
+    groups = {}          # payee key -> {label, refs, rows, ms, pay}
+
+    def group(key, label):
+        return groups.setdefault(key, {"label": label, "refs": [], "rows": {},
+                                       "ms": [], "pay": []})
+
+    docs = {d.ref: d for d in Document.objects.filter(
+        ref__in=source_refs, is_void=False).select_related("payment_request")}
+    for ref in source_refs:
+        doc = docs.get(ref)
+        if doc is None:
+            return [], "One or more references are unknown."
+        if doc.doc_type == "PR":
+            open_rows = {r.id: r for r in pr_open_rows(doc)}
+            want = [int(i) for i in ((pr_rows or {}).get(ref) or [])] \
+                or list(open_rows)
+            if not want or any(i not in open_rows for i in want):
+                return [], (f"{ref}: pick its suppliers still to pay — one "
+                            "is already on a voucher or paid.")
+            for i in want:
+                vendor = open_rows[i].vendor or open_rows[i].free_text_desc
+                g = group(_payee_key(vendor), vendor)
+                g["rows"].setdefault(ref, []).append(i)
+                if ref not in g["refs"]:
+                    g["refs"].append(ref)
+        else:
+            payee = (doc.payment_request.payee
+                     if hasattr(doc, "payment_request") else "") or doc.ref
+            group(_payee_key(payee), payee)["refs"].append(ref)
+    for m in ImportPaymentMilestone.objects.filter(
+            id__in=milestone_ids).select_related("order__supplier"):
+        name = m.order.supplier.name if m.order.supplier_id else "?"
+        group(_payee_key(name), name)["ms"].append(m.id)
+    for p in Payable.objects.filter(id__in=payable_ids):
+        if p.payroll_line_id:
+            group(SALARY_BATCH, "Salaries")["pay"].append(p.id)
+        else:
+            group(_payee_key(p.vendor), p.vendor)["pay"].append(p.id)
+    if len(milestone_ids) != sum(len(g["ms"]) for g in groups.values()):
+        return [], "One or more milestones are unknown."
+    if len(payable_ids) != sum(len(g["pay"]) for g in groups.values()):
+        return [], "One or more payables are unknown."
+
+    created = []
+    try:
+        with transaction.atomic():
+            for key, g in groups.items():
+                pv, err = create_voucher(
+                    g["refs"], actor, milestone_ids=g["ms"],
+                    payable_ids=g["pay"], bank_account_id=bank_account_id,
+                    amounts=amounts, pr_rows=g["rows"])
+                if err:
+                    label = "" if len(groups) == 1 else f"{g['label']}: "
+                    raise _NotRaised(label + err)
+                created.append(pv)
+    except _NotRaised as e:
+        return [], str(e)
+    return created, None
+
+
+class _NotRaised(Exception):
+    pass
+
+
 def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                    bank_account_id=None, amounts=None, pr_rows=None):
     """Finance creates a draft voucher from chosen requisitions, overseas TT
@@ -629,7 +719,11 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
         if doc.status not in ok and not balance_left:
             return None, (f"{doc.ref} is not a Director-approved PR/PYR "
                           "awaiting payment.")
-        if PaymentVoucherLine.objects.filter(
+        # A PR's suppliers each go on their own voucher (one payee per
+        # voucher, owner 2026-11-19), so a PR with another supplier already
+        # on a voucher is still open for the rest; pr_open_rows below is what
+        # stops a supplier being put on two.
+        if doc.doc_type != "PR" and PaymentVoucherLine.objects.filter(
                 source_document=doc,
                 voucher__status__in=IN_FLIGHT).exists():
             return None, f"{doc.ref} is already on a voucher."

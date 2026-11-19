@@ -457,7 +457,7 @@ def payment_vouchers(request):
         if request.user.role not in ("FINANCE", "ADMIN"):
             return Response({"detail": "Finance builds vouchers."},
                             status=403)
-        pv, err = vouchers.create_voucher(
+        pvs, err = vouchers.create_vouchers(
             request.data.get("source_refs") or [], request.user,
             milestone_ids=request.data.get("milestone_ids") or [],
             payable_ids=request.data.get("payable_ids") or [],
@@ -466,7 +466,16 @@ def payment_vouchers(request):
             pr_rows=request.data.get("pr_rows") or {})
         if err:
             return Response({"detail": err}, status=400)
-        return Response(_voucher_info(pv), status=201)
+        # one voucher per payee (owner 2026-11-19): the first is returned as
+        # before, and `created` lists them all for the screen to say so
+        first = _voucher_info(pvs[0])
+        first["created"] = [{"ref": pv.ref, "payee": info["lines"][0]["payee"]
+                             if info["lines"] else "",
+                             "total": info["total"],
+                             "currency": info["currency"]}
+                            for pv, info in ((pv, _voucher_info(pv))
+                                             for pv in pvs)]
+        return Response(first, status=201)
     if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
         return Response({"detail": "Finance / signatory only."}, status=403)
     qs = Document.objects.filter(doc_type="PV").order_by("-id")

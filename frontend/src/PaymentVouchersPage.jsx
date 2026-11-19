@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BalanceNote, PartAmount, PrRowPicker, closeBalance, partBody, pickedAmount } from "./PartPayment.jsx";
 import Discussion from "./Discussion.jsx";
+import { raisedVouchers } from "./raisedVouchers.js";
 import { api, apiUpload } from "./api.js";
 import { Btn, RefStamp, StatusChip, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -148,6 +149,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
 
   const [awaiting, setAwaiting] = useState([]);
   const [awQ, setAwQ] = useState("");            // search the awaiting list
+  const [raised, setRaised] = useState(null);    // "3 vouchers raised, …"
   const [awType, setAwType] = useState("all");   // PR / PYR / … filter
   const [vouchers, setVouchers] = useState([]);
   const [vTotal, setVTotal] = useState(0);       // matches on the server
@@ -313,11 +315,12 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
       .map((d) => d.milestone_id);
     const payable_ids = pickedRows.filter((d) => d.kind === "PAYABLE")
       .map((d) => d.payable_id);
-    await api("/payment-vouchers",
+    const pv = await api("/payment-vouchers",
               { method: "POST", body: { source_refs, milestone_ids,
                                         payable_ids,
                                         ...partBody(pickedRows, partAmt, prPick, awKey),
                                         bank_account_id: debitPick || null } });
+    setRaised(`${raisedVouchers(pv)}. Open each one below to submit it.`);
     setPicked({}); setPartAmt({}); setPrPick({}); setDebitPick(""); reload();
   });
 
@@ -843,6 +846,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
         ))}
       </select>
       <Btn variant="primary" disabled={busy || mixed}
+           title="One voucher is raised for each payee"
            onClick={createVoucher}>Create voucher</Btn>
     </span>
   );
@@ -933,6 +937,18 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
         <p style={{ color: "var(--red-fg)", fontSize: 13.5, margin: 0,
                     background: "var(--red-bg)", padding: "8px 12px",
                     borderRadius: 8 }}>{error}</p>
+      )}
+      {raised && (
+        <p role="status" style={{ fontSize: 13.5, margin: 0,
+                    color: "#14532d", background: "#e8f5ec",
+                    border: "1px solid #9fd3ae", padding: "8px 12px",
+                    borderRadius: 8, display: "flex", gap: 10 }}>
+          <span style={{ flex: 1 }}>{raised}</span>
+          <button type="button" onClick={() => setRaised(null)}
+                  aria-label="Dismiss"
+                  style={{ border: "none", background: "transparent",
+                           cursor: "pointer", color: "#14532d" }}>✕</button>
+        </p>
       )}
 
       {/* Finance: pick requisitions awaiting a voucher */}
