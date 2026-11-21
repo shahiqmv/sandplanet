@@ -780,6 +780,10 @@ class VoucherPdfLinesTests(TestCase):
         self.assertIn("advance", c["lines"][1]["note"])
         self.assertIn("GST 6.00", c["lines"][1]["note"])
         self.assertEqual(c["total"], "1,100.00")
+        # requisition, site and payment ref ride under the description
+        self.assertEqual(c["lines"][0]["source"],
+                         "PR-457 · SFR · Paid — ref TT-1")
+        self.assertEqual(c["lines"][1]["source"], "PR-457 · SFR")
 
     def test_amount_in_words(self):
         from .views_vouchers import amount_in_words

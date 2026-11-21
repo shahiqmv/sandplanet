@@ -673,6 +673,7 @@ def _pv_pdf_context(pv):
                     notes.append(f"incl. GST {_money(gst)}")
                 rows.append({**base, "payee": r["vendor"],
                              "reference": qref,
+                             "ref_label": f"Quotation {qref}" if qref else "",
                              "description": goods or "Procurement",
                              "note": " · ".join(notes),
                              "amount": _money((r["gross"] if split
@@ -690,10 +691,19 @@ def _pv_pdf_context(pv):
             description = li.get("purpose", "")
         rows.append({**base, "payee": li.get("payee", ""),
                      "reference": reference, "description": description,
+                     "ref_label": f"PI {reference}" if reference else "",
                      "note": "", "amount": _money(li["amount"] or 0),
                      "payment": _pay_str(li)})
     for i, r in enumerate(rows, 1):
         r["no"] = i
+        # requisition, site and the supplier's own reference ride under the
+        # description as one quiet line, leaving the width to what is paid
+        # for (owner 2026-11-21)
+        pay = r["payment"]
+        r["source"] = " · ".join(x for x in (
+            r["ref"], r["site"], r["ref_label"],
+            ("Paid" if pay == "paid" else f"Paid — ref {pay}") if pay else "",
+        ) if x)
     payees = []
     for r in rows:
         if r["payee"] and r["payee"] not in payees:

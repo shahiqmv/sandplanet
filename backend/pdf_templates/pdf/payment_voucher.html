@@ -28,28 +28,27 @@
 </table>
 
 <table>
+  {% comment %}Requisition, site, quotation and payment reference sit in a
+  quiet line under each description, so the description has the width
+  (owner 2026-11-21).{% endcomment %}
   <thead><tr>
-    <th style="width:4%">No.</th>
-    <th style="width:10%">Requisition</th><th style="width:6%">Site</th>
-    <th style="width:14%">Reference</th><th>Description</th>
-    <th style="width:10%">Cost Head</th>
-    <th class="num" style="width:13%">Amount ({{ currency }})</th>
-    <th style="width:11%">Payment Ref</th>
+    <th style="width:5%">No.</th>
+    <th>Description</th>
+    <th style="width:15%">Cost Head</th>
+    <th class="num" style="width:17%">Amount ({{ currency }})</th>
   </tr></thead>
   {% for l in lines %}
   <tr{% if l.queried %} class="queried"{% endif %}>
     <td>{{ l.no }}</td>
-    <td>{{ l.ref }}</td><td>{{ l.site }}</td>
-    <td>{{ l.reference|default:"—" }}</td>
-    <td>{{ l.description }}{% if l.note %}<div class="muted">{{ l.note }}</div>{% endif %}</td>
+    <td>{{ l.description|default:"—" }}
+      {% if l.source or l.queried %}<div class="muted">{{ l.source }}{% if l.queried %} · QUERIED — returned to raiser{% endif %}</div>{% endif %}</td>
     <td>{{ l.cost_head }}</td>
-    <td class="num">{{ l.amount }}</td>
-    <td>{% if l.queried %}QUERIED — returned to raiser{% else %}{{ l.payment }}{% endif %}</td>
+    <td class="num">{{ l.amount }}{% if l.note %}<div class="muted">{{ l.note }}</div>{% endif %}</td>
   </tr>
   {% endfor %}
   <tr>
-    <th colspan="6" class="num">Total Authorised ({{ currency }})</th>
-    <th class="num">{{ total }}</th><th></th>
+    <th colspan="3" class="num">Total Authorised ({{ currency }})</th>
+    <th class="num">{{ total }}</th>
   </tr>
 </table>
 
