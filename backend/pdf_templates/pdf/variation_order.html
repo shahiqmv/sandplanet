@@ -107,9 +107,10 @@
       <td class="amt">{{ signed_total_f }}</td></tr>
 </table>
 <div class="note" style="margin-top:2mm;">
-  This variation is invoiced separately. It is not included in the interim
-  payment claims under the contract, and the contract sum on which those
-  claims are valued is unchanged by it.
+  This variation is claimed and invoiced separately. It is not included in
+  the interim payment claims of the main contract, and the contract sum on
+  which those claims are valued is unchanged by it. The contract's advance
+  and retention terms apply to its value.
 </div>
 {% else %}
 <h2>Effect on the contract sum ({{ currency }})</h2>
@@ -146,8 +147,9 @@
   This variation is priced in accordance with the contract. Rates for work of a
   similar character are those of the contract Bill of Quantities; new items are
   priced at fair market rates. {% if separate %}The amounts above exclude GST, which is charged
-  on the invoice raised for this variation. No work under this variation is
-  invoiced until the Employer's approval is received.{% else %}The amounts above exclude GST, which is charged
+  on the payment application in which this variation is claimed. No work
+  under this variation is valued or claimed until the Employer's approval is
+  received.{% else %}The amounts above exclude GST, which is charged
   on the interim payment application in which this work is valued. No work
   under this variation is valued or claimed until the Employer's approval is
   received.{% endif %}

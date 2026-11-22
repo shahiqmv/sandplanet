@@ -39,6 +39,8 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc,
   // A task ("approve VO-03") opens the project straight on the tab it
   // lives on (owner 2026-08-22).
   const [commTab, setCommTab] = useState(initialTab || "boq");
+  // a claim opened from the Variations tab (a VO claimed on its own)
+  const [openClaimId, setOpenClaimId] = useState(null);
   const [docs, setDocs] = useState(null);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -257,9 +259,12 @@ manpower histogram, on the letterhead — send to the client"
           {commTab === "units" && (
             <UnitsPanel projectId={projectId} me={me} />)}
           {commTab === "variations" && (
-            <VariationsPanel projectId={projectId} me={me} />)}
+            <VariationsPanel projectId={projectId} me={me}
+              onOpenClaims={(id) => { setOpenClaimId(id || null);
+                                      setCommTab("claims"); }} />)}
           {commTab === "claims" && (
-            <ClaimsPanel projectId={projectId} me={me} />)}
+            <ClaimsPanel projectId={projectId} me={me}
+                         initialOpenId={openClaimId} />)}
           {commTab === "bonds" && (
             <BondsInsurancePanel projectId={projectId} me={me} />)}
         </>
@@ -455,8 +460,6 @@ function ContractTermsCard({ project }) {
       ? `${project.client_credit_days} days` : null],
     ["Back charges on IPC", project.ipc_shows_back_charges === false
       ? "No — on the tax invoice only" : null],
-    ["Variations", project.vo_billing === "SEPARATE"
-      ? "Invoiced separately from the claims" : null],
     ["Advance payment", pct(project.advance_payment_pct)],
     ["Advance guarantee", project.advance_guarantee],
     ["Retention", pct(project.retention_pct)],
@@ -509,7 +512,6 @@ function EditProjectModal({ project, onClose, onSaved }) {
     payment_terms: project.payment_terms || "",
     client_credit_days: project.client_credit_days ?? "",
     ipc_shows_back_charges: project.ipc_shows_back_charges ?? true,
-    vo_billing: project.vo_billing || "CLAIM",
     advance_payment_pct: project.advance_payment_pct ?? "",
     advance_guarantee: project.advance_guarantee || "",
     retention_pct: project.retention_pct ?? "",
@@ -548,7 +550,6 @@ function EditProjectModal({ project, onClose, onSaved }) {
         payment_terms: form.payment_terms,
         client_credit_days: num(form.client_credit_days),
         ipc_shows_back_charges: !!form.ipc_shows_back_charges,
-        vo_billing: form.vo_billing,
         advance_payment_pct: num(form.advance_payment_pct),
         advance_guarantee: form.advance_guarantee,
         retention_pct: num(form.retention_pct),
@@ -654,14 +655,6 @@ function EditProjectModal({ project, onClose, onSaved }) {
                      ipc_shows_back_charges: e.target.checked })} />
             Show back charges (after GST) on the payment certificate (IPC)
             — untick to show them on the tax invoice only</label>
-          <label style={field}
-                 title="The default for a new variation on this project — each variation can still be set its own way">
-            Variations are billed
-            <select value={form.vo_billing} onChange={set("vo_billing")}
-                    style={inputStyle}>
-              <option value="CLAIM">With the progress claims</option>
-              <option value="SEPARATE">On separate invoices</option>
-            </select></label>
           <label style={field}>Advance payment %
             <input type="number" min="0" value={form.advance_payment_pct}
                    onChange={set("advance_payment_pct")}

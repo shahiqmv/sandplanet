@@ -45,8 +45,22 @@
       <td>{% if claim.basis == "MEASURED" %}Re-measurement{% else %}% complete{% endif %}</td></tr>
   <tr><td class="k">LOA reference</td><td>{{ loa_ref|default:"—" }}</td>
       <td class="k">Application ref</td><td>{{ claim.ref }}</td></tr>
+  {% if variation %}
+  <tr><td class="k">Variation</td>
+      <td>{{ variation.ref }}{% if variation.title %} — {{ variation.title }}{% endif %}</td>
+      <td class="k">Employer approval</td>
+      <td>{% if variation.employer_approved_on %}{{ variation.employer_approved_on|date:"d M Y" }}{% endif %}{% if variation.employer_ref %} · {{ variation.employer_ref }}{% endif %}</td></tr>
+  {% endif %}
 </table>
 
+{% if variation %}
+<h2>Variation value ({{ currency }})</h2>
+<table class="wf">
+  <tr class="sub"><td>{{ variation.ref }} — approved value of this variation,
+      claimed separately from the main contract</td>
+      <td class="amt">{{ waterfall.original|floatformat:3 }}</td></tr>
+</table>
+{% else %}
 <h2>Contract sum ({{ currency }})</h2>
 <table class="wf">
   <tr><td>C — Original contract sum</td>
@@ -56,6 +70,7 @@
   <tr class="sub"><td>Revised contract sum</td>
       <td class="amt">{{ waterfall.revised|floatformat:3 }}</td></tr>
 </table>
+{% endif %}
 
 <h2>Payment Summary ({{ currency }})</h2>
 {% include "pdf/_payment_summary.html" %}

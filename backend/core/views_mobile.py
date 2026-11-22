@@ -522,8 +522,8 @@ def _vo_mobile_payload(v, request):
                 {"k": "Type", "v": ctx["kind_label"]},
                 {"k": "Project", "v": v.project.title},
                 {"k": "This variation", "v": f"{ccy} {ctx['signed_total_f']}"},
-                {"k": "Billing", "v": "Invoiced separately — outside the "
-                                      "progress claims"},
+                {"k": "Billing", "v": "Claimed separately — outside the "
+                                      "main claims"},
             ] if ctx["separate"] else [
                 {"k": "Type", "v": ctx["kind_label"]},
                 {"k": "Project", "v": v.project.title},

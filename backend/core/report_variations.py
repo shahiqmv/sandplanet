@@ -4,7 +4,7 @@ has waited (owner 2026-11-07).
 from decimal import Decimal
 
 from . import fx
-from .commercial import claim_valuation, contract_summary
+from .commercial import claim_valuation, contract_summary, main_claims
 from .models import AuditLog, ClientReceipt, Project
 from .reports import col, kpi, section, sum_rows
 
@@ -42,7 +42,7 @@ def build(ctx):
         contract.append({
             "site": p.site.code, "project": f"{p.code} — {p.title}",
             "original": _usd(cs["original"], ccy, rate),
-            # the whole job: variations invoiced separately count beside
+            # the whole job: variations claimed separately count beside
             # those billed through the claims (owner 2026-11-22)
             "approved": _usd(cs["approved_all"], ccy, rate),
             "revised": _usd(cs["project_value"], ccy, rate),
@@ -54,7 +54,7 @@ def build(ctx):
             row = {"site": p.site.code, "project": p.code, "vo": v.ref,
                    "title": v.title,
                    "kind": v.get_kind_display() + (
-                       " · invoiced separately"
+                       " · claimed separately"
                        if v.billing == "SEPARATE" else ""),
                    "value": _usd(v.signed_total, ccy, rate),
                    "stage": STAGE.get(v.status, v.status)}
@@ -73,12 +73,19 @@ def build(ctx):
                            ref=v.employer_ref)
                 decided.append(row)
         cache = {}
-        prev = ZERO
-        for c in p.claims.exclude(status="DRAFT").order_by("seq"):
-            w = claim_valuation(c, _cache=cache)["waterfall"]
-            this = w["k_gross"] - prev
-            if c.status in ("CERTIFIED", "PAID"):
-                prev = w["k_gross"]
+        # the main series, then each separately claimed variation's own:
+        # "this claim" is measured against the one before it in its series
+        series = [main_claims(p)] + [
+            v.claims for v in p.variations.filter(billing="SEPARATE")]
+        ordered = []
+        for chain in series:
+            prev = ZERO
+            for c in chain.exclude(status="DRAFT").order_by("seq"):
+                w = claim_valuation(c, _cache=cache)["waterfall"]
+                ordered.append((c, w, w["k_gross"] - prev))
+                if c.status in ("CERTIFIED", "PAID"):
+                    prev = w["k_gross"]
+        for c, w, this in ordered:
             cert = c.certified_at.date() if c.certified_at else None
             sub = _submitted_on(p, c.ref)
             received = (ClientReceipt.objects.filter(claim=c)
@@ -95,8 +102,7 @@ def build(ctx):
                 "submitted_on": sub, "certified_on": cert,
                 "waiting": ((on - sub).days if c.status == "SUBMITTED" and sub
                             else None),
-                "value": _usd(this if c.status != "SUBMITTED"
-                              else w["k_gross"] - prev, ccy, rate),
+                "value": _usd(this, ccy, rate),
                 "net_due": _usd(w["net_to_pay"], ccy, rate),
                 "received_on": received.received_on if received else None,
             })

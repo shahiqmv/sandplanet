@@ -17,6 +17,9 @@ const SITE_FIELDS = [
   ["client_email", "Client email", "text"],
   ["consultant_name", "Consultant", "text"],
   ["consultant_contact", "Consultant contact", "text"],
+  // How this client takes variations — set once here so nobody chooses it
+  // on every VO (owner 2026-11-22).
+  ["vo_billing", "Variations are billed", "vo"],
 ];
 
 const PROJECT_EMPTY = { code: "", title: "", loa_date: "", start_date: "",
@@ -308,11 +311,24 @@ export default function SitesManagePage({ me, onChanged, onSitesChanged }) {
                         gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
             {SITE_FIELDS.map(([key, label, kind]) => (
               <label key={key} style={{ fontSize: 13 }}>{label}
+                {kind === "vo" ? (
+                  <select value={form[key] || "CLAIM"}
+                          disabled={!canEditSite}
+                          title="The default for every new variation on this site's projects"
+                          onChange={(e) => setForm({ ...form,
+                                                     [key]: e.target.value })}
+                          style={inputStyle}>
+                    <option value="CLAIM">With the main claims</option>
+                    <option value="SEPARATE">
+                      Separately — each VO has its own claims</option>
+                  </select>
+                ) : (
                 <input type={kind} value={form[key] || ""}
                        disabled={!canEditSite}
                        onChange={(e) => setForm({ ...form,
                                                   [key]: e.target.value })}
                        style={inputStyle} />
+                )}
               </label>
             ))}
             <label style={{ fontSize: 13 }}>Site PM(s)

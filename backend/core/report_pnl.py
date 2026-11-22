@@ -15,7 +15,8 @@ Not the accounting P&L in the Finance app, which comes from the books.
 from decimal import Decimal
 
 from . import fx
-from .commercial import claim_valuation, contract_summary
+from .commercial import (claim_valuation, contract_summary, main_claims,
+                         vo_claim_revenue)
 from .models import CostPosting, Project
 from .report_cost import (SOURCE_LABEL, site_postings, stock_on_hand,
                           undelivered, usd_sum, work_done_by_source,
@@ -52,7 +53,7 @@ def certified_revenue(site_ids, start, end):
         prev = ZERO
         in_p = to_d = ZERO
         last = None
-        for c in p.claims.filter(status__in=CERTIFIED).order_by("seq"):
+        for c in main_claims(p).filter(status__in=CERTIFIED).order_by("seq"):
             w = claim_valuation(c, _cache=cache)["waterfall"]
             this, prev = w["k_gross"] - prev, w["k_gross"]
             on = c.certified_at.date() if c.certified_at else None
@@ -71,20 +72,24 @@ def certified_revenue(site_ids, start, end):
             out[p.site_id] = (a + fx.to_usd(in_p, ccy, rate),
                               b + fx.to_usd(to_d, ccy, rate))
             per_project[p.id] = fx.to_usd(to_d, ccy, rate)
-    # Variations invoiced separately earn on their own invoices, outside
-    # the claims (owner 2026-11-22): an approved invoice's charges are
-    # revenue on its invoice date. They stay out of `per_project`, which
-    # measures certified work against the contract the claims are valued on.
-    from .commercial import separate_vo_invoices
-    live = {p.id for p in projects}
-    for inv in separate_vo_invoices(site_ids=site_ids).select_related(
-            "project"):
-        if inv.project_id not in live or inv.invoice_date > end:
-            continue
-        usd = fx.to_usd(inv.vo_charges or ZERO, inv.currency, rate)
-        a, b = out.get(inv.project.site_id, (ZERO, ZERO))
-        out[inv.project.site_id] = (
-            a + (usd if inv.invoice_date >= start else ZERO), b + usd)
+    # Variations claimed separately earn on their own certificates, outside
+    # the main claims (owner 2026-11-22). They stay out of `per_project`,
+    # which measures certified work against the contract the main claims
+    # are valued on.
+    for p in projects:
+        for row in vo_claim_revenue(p):
+            if not row["on"] or row["on"] > end:
+                continue
+            usd = fx.to_usd(row["value"], _ccy(p), rate)
+            a, b = out.get(p.site_id, (ZERO, ZERO))
+            out[p.site_id] = (a + (usd if row["on"] >= start else ZERO),
+                              b + usd)
+            if row["last"]:
+                w = row["waterfall"]
+                held = w["advance_received"] - w["advance_recovered"]
+                if held > 0:
+                    advances[p.site_id] = advances.get(p.site_id, ZERO) \
+                        + fx.to_usd(held, _ccy(p), rate)
     certified_revenue.advances = advances
     certified_revenue.per_project = per_project
     return out

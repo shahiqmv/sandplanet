@@ -466,38 +466,34 @@ class VariationSerializer(serializers.ModelSerializer):
         return obj.employer_copy.url if obj.employer_copy else None
 
     def get_separate(self, obj):
-        """The billing position of a variation invoiced on its own: what is
-        billed, what is left, and the invoices raised for it. `billing_lock`
-        (on every variation) says why the choice can no longer change."""
-        from . import manual_invoices as mi_svc
+        """Where a variation claimed on its own stands: what is certified,
+        what is left, and its claims. `billing_lock` (on every variation)
+        says why the choice can no longer change."""
         out = {"billing_lock": commercial.vo_billing_lock(obj)}
         if obj.billing != "SEPARATE":
             return out
-        pos = commercial.vo_billing_position(obj)
-        invs = [m for m in obj.invoices.all() if not m.is_void]
-        out.update(pos)
-        out["can_invoice"] = (obj.status == "APPROVED"
-                              and pos["remaining"] > 0)
-        out["invoices"] = [{
-            "id": m.id, "label": mi_svc.label(m), "invoice_no": m.invoice_no,
-            "status": m.status, "invoice_date": m.invoice_date,
-            "amount": m.amount, "net_amount": m.net_amount,
-            "currency": m.currency,
-            "pdf_url": (f"/api/v1/receivables/manual-invoices/{m.id}.pdf"
-                        if m.origin == "ISSUED" else None),
-        } for m in sorted(invs, key=lambda m: (m.invoice_date, m.id))]
+        out.update(commercial.vo_claim_position(obj))
+        claims = sorted(obj.claims.all(), key=lambda c: c.seq)
+        is_open = any(c.status in ("DRAFT", "SUBMITTED") for c in claims)
+        approved = obj.status == "APPROVED"
+        out["can_claim"] = approved and not is_open
+        out["can_advance"] = (approved and not claims and bool(
+            obj.project.advance_payment_pct))
+        out["claims"] = [{"id": c.id, "ref": c.ref, "status": c.status,
+                          "claim_type": c.claim_type,
+                          "invoice_no": c.invoice_no} for c in claims]
         return out
 
 
 def _variations_payload(project):
-    vs = project.variations.prefetch_related(
-        "items", "invoices", "invoices__project").all()
+    vs = project.variations.select_related("project").prefetch_related(
+        "items", "claims").all()
     return {
         "currency": (getattr(project, "boq", None).currency
                      if getattr(project, "boq", None) else "USD"),
         "contract": {k: v for k, v in commercial.contract_summary(
             project).items()},
-        "vo_billing": project.vo_billing,
+        "vo_billing": project.site.vo_billing,
         "variations": VariationSerializer(vs, many=True).data,
     }
 
@@ -607,9 +603,9 @@ def variation_delete(request, pk):
     if v.status != "DRAFT":
         return Response({"detail": "Only a draft variation can be deleted."},
                         status=400)
-    if v.invoices.exists():
-        return Response({"detail": "Invoices were raised for this variation "
-                                   "— it stays on record."}, status=400)
+    if v.claims.exists():
+        return Response({"detail": "Claims were raised for this variation "
+                                   "— delete them first."}, status=400)
     project = v.project
     v.delete()
     return Response(_variations_payload(project))
@@ -618,7 +614,7 @@ def variation_delete(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def variation_billing(request, pk):
-    """Bill a variation with the progress claims, or on its own invoices."""
+    """Bill a variation with the main claims, or by claims of its own."""
     v, err = _get_variation(request, pk)
     if err:
         return err
@@ -631,29 +627,16 @@ def variation_billing(request, pk):
     return Response(_variations_payload(v.project))
 
 
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def variation_invoice(request, pk):
-    """Draft the invoice for a variation billed outside the claims — all of
-    it, or a part by percent or amount."""
-    from . import manual_invoices as mi_svc
-    v, err = _get_variation(request, pk)
-    if err:
-        return err
-    mi, msg = mi_svc.invoice_variation(v, request.data, request.user)
-    if mi is None:
-        return Response({"detail": msg}, status=400)
-    out = _variations_payload(v.project)
-    out["invoice"] = {"id": mi.id, "label": mi_svc.label(mi),
-                      "status": mi.status, "warning": msg or ""}
-    return Response(out, status=201)
-
-
 # ---- Progress claims (interim payment applications) ---------------------
 
 def _claim_meta(claim):
+    vo = claim.variation if claim.variation_id else None
     return {
         "id": claim.id, "seq": claim.seq, "ref": claim.ref,
+        # a claim for one variation billed outside the main scope
+        "variation_id": claim.variation_id,
+        "variation_ref": vo.ref if vo else None,
+        "variation_title": vo.title if vo else None,
         "claim_type": claim.claim_type, "basis": claim.basis,
         # No longer a hard lock — later claims inherit the basis but the QS
         # may switch it (client demanded site measurements mid-contract,
@@ -706,7 +689,11 @@ def _receipt_json(r):
 def _claims_payload(project):
     """The claims register: each claim's header plus its net-due / total from
     the waterfall, the contract summary, the money-in position and receipts."""
-    claims = list(project.claims.all())
+    # the main series, then each separately claimed variation's own
+    claims = sorted(project.claims.select_related("variation"),
+                    key=lambda c: (bool(c.variation_id),
+                                   c.variation.seq if c.variation_id else 0,
+                                   c.seq))
     rows = []
     # One shared valuation cache: each claim in the register is valued once
     # and the previously-certified chains reuse it — a 1,500-line measured
@@ -727,6 +714,17 @@ def _claims_payload(project):
             project.boq.categories.exists() if project.boq.mode == "UNIT"
             else project.boq.items.exists())),
         "claims": rows,
+        # approved variations that are claimed on their own, and what can be
+        # raised for each now
+        "vo_claimable": [
+            {"id": v.id, "ref": v.ref, "title": v.title,
+             "can_claim": not any(c.status in ("DRAFT", "SUBMITTED")
+                                  for c in v.claims.all()),
+             "can_advance": (not v.claims.all()
+                             and bool(project.advance_payment_pct))}
+            for v in project.variations.filter(
+                billing="SEPARATE", status="APPROVED").prefetch_related(
+                "claims")],
         "revenue": commercial.project_revenue_summary(project, _cache=cache),
         "receipts": [_receipt_json(r) for r in receipts],
     }
@@ -765,10 +763,12 @@ def claim_create(request, pid):
         return err
     if (bad := _require_editor(request)):
         return bad
-    _, msg = commercial.create_claim(p, request.data, request.user)
+    claim, msg = commercial.create_claim(p, request.data, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_claims_payload(p), status=201)
+    out = _claims_payload(p)
+    out["created_id"] = claim.id
+    return Response(out, status=201)
 
 
 @api_view(["GET"])
@@ -907,8 +907,10 @@ def claim_delete(request, pk):
     if c.status != "DRAFT":
         return Response({"detail": "Only a draft claim can be deleted."},
                         status=400)
-    # Only the newest claim can be removed — earlier ones anchor the chain.
-    if c.project.claims.filter(seq__gt=c.seq).exists():
+    # Only the newest claim of its series can be removed — earlier ones
+    # anchor the chain (a variation claimed on its own has its own series).
+    if c.project.claims.filter(variation=c.variation_id,
+                               seq__gt=c.seq).exists():
         return Response({"detail": "Delete the later claim(s) first."},
                         status=400)
     project = c.project
@@ -967,6 +969,8 @@ def _render_pdf(template, context, filename):
     except Exception as e:                       # pragma: no cover - env dep
         return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
     resp = HttpResponse(pdf, content_type="application/pdf")
+    # a variation's own claim is "VO-01/IPA-01": no slashes in a file name
+    filename = str(filename).replace("/", "-")
     resp["Content-Disposition"] = f'inline; filename="{filename}.pdf"'
     return resp
 

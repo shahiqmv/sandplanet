@@ -26,10 +26,10 @@ const TYPE_LABEL = { ADVANCE: "Advance", INTERIM: "Interim",
 // Progress claims (interim payment applications / IPCs) — the QS values work
 // done to date against the BOQ + approved variations and claims the balance,
 // applying advance recovery, retention and output GST (the Soneva IPA layout).
-export default function ClaimsPanel({ projectId, me }) {
+export default function ClaimsPanel({ projectId, me, initialOpenId }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [openId, setOpenId] = useState(null);
+  const [openId, setOpenId] = useState(initialOpenId || null);
   const [busy, setBusy] = useState(false);
   const [receiptForm, setReceiptForm] = useState(null);   // null = closed
   const canEdit = EDIT_ROLES.includes(me.role);
@@ -42,13 +42,17 @@ export default function ClaimsPanel({ projectId, me }) {
   }
   useEffect(load, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function raise(claimType) {
+  // `variationId` raises the next claim of a variation billed outside the
+  // main scope — its own series (owner 2026-11-22).
+  async function raise(claimType, variationId) {
     setError(null); setBusy(true);
     try {
       const d = await api(`/projects/${projectId}/claims/create`,
-        { method: "POST", body: claimType ? { claim_type: claimType } : {} });
+        { method: "POST", body: {
+          ...(claimType ? { claim_type: claimType } : {}),
+          ...(variationId ? { variation_id: variationId } : {}) } });
       setData(d);
-      setOpenId(d.claims[d.claims.length - 1].id);
+      setOpenId(d.created_id);
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
@@ -73,22 +77,46 @@ export default function ClaimsPanel({ projectId, me }) {
   if (!data) return <section style={card}>Loading…</section>;
   const ccy = data.currency;
   const rev = data.revenue || {};
+  const mainCount = data.claims.filter((c) => !c.variation_id).length;
+  const voOptions = (data.vo_claimable || []).flatMap((v) => [
+    ...(v.can_advance ? [[`ADVANCE:${v.id}`, `${v.ref} — advance claim`]]
+                      : []),
+    ...(v.can_claim ? [[`:${v.id}`, `${v.ref} — ${
+      (v.title || "").slice(0, 40) || "claim"}`]] : []),
+  ]);
 
   return (
     <section style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 12,
                     marginBottom: 8 }}>
         <Eyebrow meta={`${data.claims.length}`}>Progress claims</Eyebrow>
-        {canEdit && data.can_raise && (
+        {canEdit && (data.can_raise || voOptions.length > 0) && (
           <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            {data.claims.length === 0 && (
+            {/* variations this client takes outside the main scope are
+                claimed one by one, each in its own series */}
+            {voOptions.length > 0 && (
+              <select value="" disabled={busy}
+                      title="Raise a claim for a variation that is claimed separately from the main scope"
+                      onChange={(e) => {
+                        const [type, id] = e.target.value.split(":");
+                        if (id) raise(type || null, Number(id));
+                      }}
+                      style={{ ...ghostButton, padding: "4px 8px" }}>
+                <option value="">+ Variation claim…</option>
+                {voOptions.map(([val, label]) => (
+                  <option key={val} value={val}>{label}</option>))}
+              </select>
+            )}
+            {data.can_raise && mainCount === 0 && (
               <button style={{ ...ghostButton, padding: "4px 12px" }}
                       disabled={busy} onClick={() => raise("ADVANCE")}>
                 {busy ? "…" : "+ Advance claim"}</button>
             )}
-            <button style={{ ...ghostButton, padding: "4px 12px" }}
-                    disabled={busy} onClick={() => raise()}>
-              {busy ? "…" : "+ New claim"}</button>
+            {data.can_raise && (
+              <button style={{ ...ghostButton, padding: "4px 12px" }}
+                      disabled={busy} onClick={() => raise()}>
+                {busy ? "…" : "+ New claim"}</button>
+            )}
           </span>
         )}
       </div>
@@ -103,7 +131,8 @@ export default function ClaimsPanel({ projectId, me }) {
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13,
                       margin: "4px 0 14px", padding: "10px 12px",
                       background: "var(--sp-tint,#f5f8fb)", borderRadius: 8 }}>
-          <Fig label="Revised contract"
+          <Fig label={Number(rev.separate_vo_value || 0) !== 0
+                 ? "Project value (incl. separate VOs)" : "Revised contract"}
                v={`${ccy} ${fmt(rev.contract_revised)}`} />
           <Fig label="Certified revenue"
                v={`${ccy} ${fmt(rev.certified_revenue)}`}
@@ -138,7 +167,13 @@ export default function ClaimsPanel({ projectId, me }) {
                   <tr style={{ cursor: "pointer" }}
                       onClick={() => setOpenId(openId === c.id ? null : c.id)}>
                     <td style={{ ...td, fontWeight: 600, color: "var(--navy)" }}>
-                      {openId === c.id ? "▾ " : "▸ "}{c.ref}</td>
+                      {openId === c.id ? "▾ " : "▸ "}{c.ref}
+                      {c.variation_id && (
+                        <div style={{ fontWeight: 400, fontSize: 11,
+                                      color: "var(--muted)" }}>
+                          Variation claimed separately
+                          {c.variation_title ? ` · ${c.variation_title}`
+                            : ""}</div>)}</td>
                     <td style={td}>{TYPE_LABEL[c.claim_type] || c.claim_type}</td>
                     <td style={td}>{c.work_done_upto || "—"}</td>
                     <td style={td}>

@@ -145,6 +145,11 @@ def default_working_days():
     return [6, 7, 1, 2, 3, 4]
 
 
+class VoBilling(models.TextChoices):
+    CLAIM = "CLAIM", "With the main claims"
+    SEPARATE = "SEPARATE", "Claimed separately"
+
+
 class Site(models.Model):
     """A site IS a project (spec §2). Opened at tender, closed at completion.
 
@@ -197,6 +202,12 @@ class Site(models.Model):
     client_designation = models.TextField(blank=True)
     client_phone = models.TextField(blank=True)
     client_email = models.TextField(blank=True)
+    # How this client takes variations (owner 2026-11-22): in the main
+    # progress claims, or each variation claimed and invoiced on its own.
+    # Set once for the site so nobody chooses it VO by VO; a new variation
+    # on any of the site's projects starts this way.
+    vo_billing = models.CharField(max_length=8, choices=VoBilling.choices,
+                                  default=VoBilling.CLAIM)
     consultant_name = models.TextField(blank=True)
     consultant_contact = models.TextField(blank=True)
     working_hours_from = models.TimeField(default="07:00")
@@ -3807,11 +3818,6 @@ class Attendance(models.Model):
 # ===== Projects & programmes (DECISIONS.md R4) =====
 
 
-class VoBilling(models.TextChoices):
-    CLAIM = "CLAIM", "With progress claims"
-    SEPARATE = "SEPARATE", "Invoiced separately"
-
-
 class Project(models.Model):
     """A client award within a site. Sites host multiple projects, each
     with its own scope, BOQ, programme and timeline (R4). DPR/TWS/IR/MAR
@@ -3855,11 +3861,6 @@ class Project(models.Model):
     # 2026-10-25, 17POOL IPA-04). Off = the IPC stops at Total with GST; the
     # tax invoice still deducts them.
     ipc_shows_back_charges = models.BooleanField(default=True)
-    # How this client takes variations: in the progress claims, or each one
-    # on its own invoice. The default for a new VO on the project; each VO
-    # can still be set its own way (owner 2026-11-22).
-    vo_billing = models.CharField(max_length=8, choices=VoBilling.choices,
-                                  default=VoBilling.CLAIM)
     advance_payment_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                               null=True, blank=True)
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
@@ -4938,11 +4939,13 @@ class Variation(models.Model):
     status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.DRAFT)
     ref_date = models.DateField(null=True, blank=True)   # client instruction
-    # Some clients keep variations out of the main scope's claims and are
-    # invoiced for each on its own (owner 2026-11-22). CLAIM = today's way:
-    # the approved VO joins the progress claims and the revised contract sum.
-    # SEPARATE = it never enters a claim; it is billed by its own invoices
-    # (ManualInvoice.variation). Omissions are always CLAIM.
+    # Some clients keep variations out of the main scope's claims and
+    # billing (owner 2026-11-22). CLAIM = the approved VO joins the main
+    # progress claims and the revised contract sum. SEPARATE = it never
+    # enters a main claim; it has its own claim series (ProgressClaim.
+    # variation) — application, certificate, invoice — under the contract's
+    # retention and advance terms. Defaults from Site.vo_billing; omissions
+    # are always CLAIM.
     billing = models.CharField(max_length=8, choices=VoBilling.choices,
                                default=VoBilling.CLAIM)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
@@ -5053,7 +5056,14 @@ class ProgressClaim(models.Model):
     project = models.ForeignKey(Project, on_delete=models.CASCADE,
                                 related_name="claims")
     seq = models.IntegerField()
-    ref = models.CharField(max_length=20)          # e.g. IPA-01
+    ref = models.CharField(max_length=40)          # e.g. IPA-01, VO-02/IPA-01
+    # A claim for ONE variation billed outside the main scope (owner
+    # 2026-11-22): its own series (seq and `previous` run within the VO),
+    # its lines are that VO's items, and the contract's advance % and
+    # retention % apply to the VO's value. Blank = a main-contract claim.
+    variation = models.ForeignKey(
+        "Variation", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="claims")
     claim_type = models.CharField(max_length=8, choices=Type.choices,
                                   default=Type.INTERIM)
     basis = models.CharField(max_length=8, choices=Basis.choices,
@@ -5105,7 +5115,11 @@ class ProgressClaim(models.Model):
         ordering = ["seq"]
         constraints = [
             models.UniqueConstraint(fields=["project", "seq"],
-                                    name="uniq_claim_seq_per_project")
+                                    condition=models.Q(variation__isnull=True),
+                                    name="uniq_claim_seq_per_project"),
+            models.UniqueConstraint(fields=["variation", "seq"],
+                                    condition=models.Q(variation__isnull=False),
+                                    name="uniq_claim_seq_per_variation"),
         ]
 
     def __str__(self):
@@ -5125,6 +5139,8 @@ class ProgressClaim(models.Model):
             return r.replace("IPA", "IPC")
         if "ipa" in r:
             return r.replace("ipa", "ipc")
+        if self.variation_id:
+            return f"{self.variation.ref}/IPC-{self.seq:02d}"
         return f"IPC-{self.seq:02d}"
 
 
@@ -5827,12 +5843,6 @@ class ManualInvoice(models.Model):
     bills_claim = models.ForeignKey(
         "ProgressClaim", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="billing_invoices")
-    # The variation this invoice bills, when the VO is invoiced separately
-    # from the progress claims (owner 2026-11-22). Several invoices may bill
-    # one VO in parts; together their charges never exceed its value.
-    variation = models.ForeignKey(
-        "Variation", on_delete=models.PROTECT, null=True, blank=True,
-        related_name="invoices")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

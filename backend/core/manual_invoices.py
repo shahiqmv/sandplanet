@@ -104,24 +104,7 @@ def totals(lines, gst_pct):
             "amount": _q2(net + gst - post)}
 
 
-# a cent or two of slack: a variation priced to three decimals rounds
-VO_SLACK = Decimal("0.05")
-
-
-def _vo_room(vo, charges, mi=None):
-    """An invoice for a separately billed variation cannot take the invoices
-    for it past the variation's value. Returns an error or None."""
-    from .commercial import vo_billing_position
-    pos = vo_billing_position(vo, exclude=mi)
-    if charges > pos["remaining"] + VO_SLACK:
-        return (f"{vo.ref} is worth {_fmt_money(pos['value'], 2)} and "
-                f"{_fmt_money(pos['invoiced'], 2)} of it is already on "
-                f"other invoices — at most {_fmt_money(pos['remaining'], 2)} "
-                "can go on this one.")
-    return None
-
-
-def _clean(data, actor, mi=None, variation=None):
+def _clean(data, actor, mi=None):
     """Validate the editable fields. Returns (fields, lines, error)."""
     project = Project.objects.filter(
         pk=data.get("project_id") or (mi.project_id if mi else None)).first()
@@ -146,11 +129,6 @@ def _clean(data, actor, mi=None, variation=None):
                             "net must be more than zero.")
     if t["amount"] <= ZERO:
         return None, None, "The invoice total must be more than zero."
-    vo = variation or (mi.variation if mi is not None else None)
-    if vo is not None:
-        err = _vo_room(vo, t["charges"], mi)
-        if err:
-            return None, None, err
     fields = {"project": project, "origin": origin,
               "invoice_date": data["invoice_date"],
               "due_date": data.get("due_date") or None,
@@ -192,20 +170,18 @@ def label(mi):
     return mi.invoice_no or f"Draft invoice #{mi.id} ({mi.project.code})"
 
 
-def create_manual_invoice(data, actor, variation=None):
+def create_manual_invoice(data, actor):
     """Draft a manual invoice from its line items (charges and deductions).
     Nothing is owed until a Director approves it; `submit` sends it straight
     on. HISTORICAL carries the client's own number; ISSUED is numbered at
-    approval. `variation` ties it to the VO it bills. Returns (invoice,
-    error)."""
+    approval. Returns (invoice, error)."""
     if actor.role not in CREATE_ROLES:
         return None, "You can't record client invoices."
-    fields, lines, err = _clean(data, actor, variation=variation)
+    fields, lines, err = _clean(data, actor)
     if err:
         return None, err
     with transaction.atomic():
-        mi = ManualInvoice(status="DRAFT", created_by=actor,
-                           variation=variation, **fields)
+        mi = ManualInvoice(status="DRAFT", created_by=actor, **fields)
         att = data.get("attachment")
         if att is not None:
             mi.attachment = att
@@ -299,11 +275,6 @@ def approve(mi, actor):
     if actor.role != "ADMIN" and actor.id in (mi.submitted_by_id,):
         return ("You submitted this invoice — another Director approves "
                 "it.")
-    if mi.variation_id:
-        err = _vo_room(mi.variation, totals(list(mi.lines.all()),
-                                            mi.gst_pct)["charges"], mi)
-        if err:
-            return err
     with transaction.atomic():
         if mi.origin == "ISSUED" and not mi.invoice_no:
             mi.invoice_no = _next_invoice_no()
@@ -441,9 +412,6 @@ def manual_invoice_dict(mi, user=None):
                           else None),
         "superseded_by_id": mi.superseded_by_id,
         "superseded_at": mi.superseded_at,
-        # the variation it bills, when the VO is invoiced separately
-        "variation_id": mi.variation_id,
-        "variation_ref": mi.variation.ref if mi.variation_id else None,
         "project_id": mi.project_id, "project_code": mi.project.code,
         "project_title": mi.project.title, "site_id": mi.project.site_id,
         "invoice_date": mi.invoice_date, "due_date": mi.effective_due_date,
@@ -466,7 +434,7 @@ def manual_invoice_dict(mi, user=None):
 def list_invoices(site_id=None, include_void=False, user=None):
     qs = (ManualInvoice.objects.select_related(
         "project", "project__site", "created_by", "submitted_by",
-        "approved_by", "variation").prefetch_related("lines")
+        "approved_by").prefetch_related("lines")
         .order_by("-invoice_date", "-id"))
     if site_id is not None:
         qs = qs.filter(project__site_id=site_id)
@@ -519,87 +487,6 @@ def manual_invoice_pdf_context(mi):
     }
 
 
-def invoice_variation(variation, data, actor):
-    """Draft the invoice for a variation billed outside the claims (owner
-    2026-11-22): all of it, or a part by `percent` of its value or by
-    `amount`. The whole variation in one invoice lists its priced items; a
-    part is one line saying what share it is. The draft then runs the usual
-    submit → Director approval, and the QS can edit it (deductions, dates)
-    before it goes. Returns (invoice, error)."""
-    from datetime import timedelta
-
-    from django.utils import timezone
-
-    from .commercial import vo_billing_position
-    v = variation
-    if v.billing != "SEPARATE":
-        return None, (f"{v.ref} is billed with the progress claims — set it "
-                      "to be invoiced separately first.")
-    if v.status != "APPROVED":
-        return None, (f"{v.ref} is not approved by the Employer yet — it "
-                      "can be invoiced once it is.")
-    pos = vo_billing_position(v)
-    if pos["remaining"] <= ZERO:
-        return None, f"{v.ref} is already invoiced in full."
-    pct = _dec(data.get("percent"))
-    amt = _dec(data.get("amount"))
-    if pct is not None:
-        if pct <= ZERO or pct > Decimal("100"):
-            return None, "Enter a percentage between 0 and 100."
-        amt = _q2(pos["value"] * pct / Decimal("100"))
-    if amt is None:
-        amt = pos["remaining"]
-    amt = _q2(amt)
-    if amt <= ZERO:
-        return None, "Enter the amount to invoice."
-    if amt > pos["remaining"] + VO_SLACK:
-        return None, (f"Only {_fmt_money(pos['remaining'], 2)} of {v.ref} "
-                      "is left to invoice.")
-    project = v.project
-    boq = getattr(project, "boq", None)
-    ccy = boq.currency if boq else "USD"
-    title = " ".join((v.title or "").split())
-    head = f"Variation Order {v.ref}" + (f" — {title}" if title else "")
-    whole = pos["invoiced"] == ZERO and abs(amt - pos["value"]) <= VO_SLACK
-    lines = []
-    if whole:
-        for it in v.items.all():
-            if it.is_heading or not it.amount:
-                continue
-            desc = " ".join(f"{it.item_code} {it.description}".split())
-            row = {"description": desc[:300] or v.ref,
-                   "amount": _q2(it.amount)}
-            # show qty × rate only where it multiplies out to the amount
-            if it.qty is not None and it.rate_total is not None:
-                unit = _q2(it.rate_total)
-                if _q2(it.qty * unit) == _q2(it.amount):
-                    row.update(quantity=it.qty, unit_price=unit)
-            lines.append(row)
-    if not lines:
-        share = (f"{_plain(pct)}% of the variation value "
-                 f"{ccy} {_fmt_money(pos['value'], 2)}" if pct is not None
-                 else "balance of the variation value"
-                 if abs(amt - pos["remaining"]) <= VO_SLACK
-                 and pos["invoiced"] > ZERO
-                 else f"part of the variation value "
-                      f"{ccy} {_fmt_money(pos['value'], 2)}")
-        lines = [{"description": f"{head} — {share}"[:300], "amount": amt}]
-    today = timezone.localdate()
-    approved = (f"Approved by the Employer on "
-                f"{v.employer_approved_on:%d %b %Y}"
-                if v.employer_approved_on else "Approved by the Employer")
-    if v.employer_ref:
-        approved += f" · ref {v.employer_ref}"
-    return create_manual_invoice({
-        "project_id": project.id, "origin": "ISSUED",
-        "invoice_date": data.get("invoice_date") or today.isoformat(),
-        "due_date": (today + timedelta(days=project.client_credit_days)
-                     ).isoformat() if project.client_credit_days else None,
-        "currency": ccy, "gst_pct": project.output_gst_pct,
-        "description": head[:300], "note": approved, "lines": lines,
-    }, actor, variation=v)
-
-
 def link_to_claim(mi, claim, actor):
     """Tie an invoice to the claim that will take it over.
 
@@ -619,9 +506,6 @@ def link_to_claim(mi, claim, actor):
         return "This invoice is void."
     if mi.status != "APPROVED":
         return "Only an approved invoice can be linked to a claim."
-    if mi.variation_id:
-        return (f"This invoice bills {mi.variation.ref}, a variation "
-                "invoiced separately — no claim takes it over.")
     if claim.project_id != mi.project_id:
         return (f"{claim.ref} is a claim on {claim.project.code}, and this "
                 f"invoice is on {mi.project.code}.")
@@ -685,9 +569,6 @@ def bill_claim_by(claim, invoices, actor, drop_claim_invoice=False):
             return f"{m.invoice_no} is void."
         if m.status != "APPROVED":
             return f"{label(m)} is not approved yet."
-        if m.variation_id:
-            return (f"{m.invoice_no} bills {m.variation.ref}, a variation "
-                    "invoiced separately — it cannot bill a claim.")
         if m.superseded_at:
             return (f"{m.invoice_no} was closed when a claim took it over — "
                     "it cannot also bill one.")
@@ -757,8 +638,7 @@ def billing_options(claim):
                 "received": got, "linked": m.bills_claim_id == claim.id}
     qs = (ManualInvoice.objects.filter(project=claim.project, is_void=False,
                                        status="APPROVED",
-                                       superseded_at__isnull=True,
-                                       variation__isnull=True)
+                                       superseded_at__isnull=True)
           .filter(models_Q(bills_claim__isnull=True) | models_Q(
               bills_claim=claim))
           .order_by("invoice_date", "id"))

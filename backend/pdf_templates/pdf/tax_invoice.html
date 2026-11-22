@@ -120,15 +120,15 @@
 
 {% if is_advance %}
 <p class="narrative">
-  Being advance payment — {{ advance_pct|floatformat:"-2" }}% of the contract
-  value for {{ project.title }}, per Interim Payment Certificate {{ ipc_ref }}.
+  Being advance payment — {{ advance_pct|floatformat:"-2" }}% of the {{ advance_of }}
+  for {{ scope_label }}, per Interim Payment Certificate {{ ipc_ref }}.
 </p>
 <table class="doc">
   <thead>
     <tr><th>Description</th><th class="n">Amount {{ currency }}</th></tr>
   </thead>
   <tbody>
-    <tr><td>Advance payment ({{ advance_pct|floatformat:"-2" }}% of contract value)</td>
+    <tr><td>Advance payment ({{ advance_pct|floatformat:"-2" }}% of {{ advance_of }})</td>
         <td class="n">{{ net_due_f }}</td></tr>
     <tr><td>Output GST @ {{ gst_pct|floatformat:"-2" }}%</td>
         <td class="n">{{ gst_f }}</td></tr>
@@ -139,7 +139,7 @@
 {% else %}
 <p class="narrative">
   Being value of work certified to date under Interim Payment Certificate
-  {{ ipc_ref }} for {{ project.title }}.
+  {{ ipc_ref }} for {{ scope_label }}.
 </p>
 <table class="doc">
   <thead>

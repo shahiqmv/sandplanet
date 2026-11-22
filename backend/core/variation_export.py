@@ -241,9 +241,10 @@ def build_variation_xlsx(v):
         return r - 1
 
     if ctx["separate"]:
-        # invoiced on its own, outside the claims: no contract-sum build-up
-        row("Value of this variation — invoiced separately, not part of "
-            "the interim payment claims",
+        # claimed on its own, outside the main claims: no contract-sum
+        # build-up
+        row("Value of this variation — claimed separately, not part of "
+            "the main contract's payment claims",
             f"={amt_letter}{gross_row}", bold=True, fill=_SECTION)
         return wb
     row("Original contract sum", ctx["original"])

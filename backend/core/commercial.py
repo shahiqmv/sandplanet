@@ -298,7 +298,8 @@ def set_boq_lock(project, locked, actor):
     if boq is None:
         return None, "There's no BOQ to lock yet."
     if not locked:
-        committed = ProgressClaim.objects.filter(project=project).exclude(
+        committed = ProgressClaim.objects.filter(
+            project=project, variation__isnull=True).exclude(
             status="DRAFT").order_by("seq")
         refs = [c.ref for c in committed]
         if refs:
@@ -323,7 +324,7 @@ def delete_boq(project, actor):
     if boq.is_locked:
         return None, ("The BOQ is locked — unlock it first, and only if no "
                       "claim has been certified against it.")
-    if project.claims.exists():
+    if main_claims(project).exists():
         return None, ("A claim already exists on this project — the BOQ can't "
                       "be deleted.")
     mode, total = boq.mode, str(boq.contract_value)
@@ -364,9 +365,9 @@ def create_variation(project, data, actor):
     from .models import Variation
     seq = (project.variations.aggregate(m=Max("seq"))["m"] or 0) + 1
     kind = data.get("kind") or "ADDITION"
-    # the project's way of billing variations, unless this one is set its
-    # own; an omission has nothing to invoice and always rides the claims
-    billing = data.get("billing") or project.vo_billing
+    # the site's way of billing variations (set once for the client), unless
+    # this one is set its own; an omission always rides the main claims
+    billing = data.get("billing") or project.site.vo_billing
     if billing not in ("CLAIM", "SEPARATE") or kind == "OMISSION":
         billing = "CLAIM"
     v = Variation.objects.create(
@@ -403,12 +404,6 @@ def set_variation_items(variation, rows, actor):
                           "value against this variation — raise a correcting "
                           "variation (addition / omission) instead of "
                           "editing it.")
-    if vo_invoices(variation).exists():
-        # same rule for a variation billed by its own invoices: once one is
-        # raised, the figures it was raised on stay put
-        return None, ("Invoices have been raised for this variation — void "
-                      "them first, or raise a correcting variation instead "
-                      "of editing it.")
     items = _variation_items(variation, rows)
     with transaction.atomic():
         variation.items.all().delete()   # cascades draft-claim VO lines only
@@ -444,57 +439,46 @@ def set_variation_meta(variation, data, actor):
     if "ref_date" in data:
         variation.ref_date = data.get("ref_date") or None
     if variation.kind == "OMISSION" and variation.billing != "CLAIM":
-        if vo_invoices(variation).exists():
-            return None, ("This variation has invoices raised against it — "
-                          "it cannot become an omission.")
+        if variation.claims.exists():
+            return None, ("This variation has claims of its own — it cannot "
+                          "become an omission.")
         variation.billing = "CLAIM"
     variation.save(update_fields=["ref", "title", "kind", "ref_date",
                                   "billing"])
     return variation, None
 
 
-# ---- Variations invoiced separately (owner 2026-11-22) -------------------
-# Some clients keep variations out of the main scope: not in the progress
-# claims, not on the claim's invoice. Such a VO (billing=SEPARATE) is billed
-# by its own invoices — ManualInvoice rows that point at it — in one go or
-# in parts, never beyond its value.
+# ---- Variations claimed separately (owner 2026-11-22) --------------------
+# Some clients keep variations out of the main scope: not in the main
+# claims, not on their invoices. Such a VO (billing=SEPARATE) has a claim
+# series of its own — ProgressClaim rows that point at it — which runs the
+# usual application → certificate → tax invoice, with the contract's
+# retention and advance terms applied to the VO's value.
 
-def vo_invoices(variation):
-    """The live (not void) invoices raised for a variation, drafts included."""
-    from .models import ManualInvoice
-    return ManualInvoice.objects.filter(variation=variation, is_void=False)
-
-
-def _vo_charges(variation, approved_only=False, exclude=None):
-    """Value of the variation its invoices bill: their charge lines, before
-    any deduction and before GST."""
-    from .models import ManualInvoiceLine
-    qs = ManualInvoiceLine.objects.filter(
-        invoice__variation=variation, invoice__is_void=False, kind="CHARGE")
-    if approved_only:
-        qs = qs.filter(invoice__status="APPROVED")
-    if exclude is not None:
-        qs = qs.exclude(invoice=exclude)
-    return qs.aggregate(s=Sum("amount"))["s"] or ZERO
+def main_claims(project):
+    """The project's main-contract claims — without the claims of variations
+    billed on their own."""
+    return project.claims.filter(variation__isnull=True)
 
 
-def vo_billing_position(variation, exclude=None):
-    """How much of a separately invoiced variation has been billed: `billed`
-    on approved invoices (owed by the client), `invoiced` on every live
-    invoice including drafts, and what is left to invoice."""
+def vo_claim_position(variation):
+    """Where a separately claimed variation stands: its value, the gross
+    certified on its claims to date, and what is left to certify."""
     value = _q2(variation.gross)
-    invoiced = _q2(_vo_charges(variation, exclude=exclude))
-    return {"value": value,
-            "billed": _q2(_vo_charges(variation, approved_only=True)),
-            "invoiced": invoiced,
-            "remaining": max(value - invoiced, ZERO)}
+    last = (variation.claims.filter(status__in=("CERTIFIED", "PAID"))
+            .order_by("-seq").first())
+    certified = (_q2(claim_valuation(last)["waterfall"]["k4_variations"])
+                 if last else ZERO)
+    return {"value": value, "certified": certified,
+            "remaining": max(value - certified, ZERO)}
 
 
 def _vo_claimed(variation):
-    """The claims (any state but rejected) carrying value against a VO."""
+    """Main-claim lines (any state but rejected) carrying value against a VO."""
     from .models import ProgressClaimItem
     return (ProgressClaimItem.objects
-            .filter(variation_item__variation=variation)
+            .filter(variation_item__variation=variation,
+                    claim__variation__isnull=True)
             .exclude(claim__status="REJECTED")
             .filter(Q(cumulative_pct__gt=0) | Q(cumulative_qty__gt=0)
                     | Q(cumulative_qty_install__gt=0)))
@@ -502,27 +486,27 @@ def _vo_claimed(variation):
 
 def vo_billing_lock(variation):
     """Why the billing choice can no longer change, or "" while it can —
-    work is billed one way or the other, never both."""
+    work is claimed one way or the other, never both."""
     if variation.kind == "OMISSION":
-        return "An omission reduces the contract — it stays with the claims."
+        return ("An omission reduces the contract — it stays with the main "
+                "claims.")
     if variation.billing == "SEPARATE":
-        n = vo_invoices(variation).count()
-        if n:
-            return (f"{n} invoice{'s' if n != 1 else ''} raised for this "
-                    "variation — void or delete "
-                    f"{'them' if n != 1 else 'it'} first.")
+        first = variation.claims.order_by("seq").first()
+        if first is not None:
+            return (f"{first.ref} has been raised for this variation — "
+                    "delete its claims first.")
         return ""
     line = _vo_claimed(variation).select_related("claim").first()
     if line is not None:
         return (f"{line.claim.ref} carries value against this variation — "
-                "it is being billed through the claims.")
+                "it is being billed through the main claims.")
     return ""
 
 
 def _seed_vo_into_drafts(variation):
     """Open draft claims gain an approved VO's lines (idempotent)."""
     from .models import ProgressClaimItem
-    for c in variation.project.claims.filter(status="DRAFT") \
+    for c in main_claims(variation.project).filter(status="DRAFT") \
             .exclude(claim_type="ADVANCE"):
         have = set(c.items.filter(variation_item__variation=variation)
                    .values_list("variation_item_id", flat=True))
@@ -533,8 +517,8 @@ def _seed_vo_into_drafts(variation):
 
 
 def set_variation_billing(variation, billing, actor):
-    """Move a variation between the claims and its own invoices. Allowed at
-    any stage until it has been billed either way."""
+    """Move a variation between the main claims and a claim series of its
+    own. Allowed at any stage until it has been claimed either way."""
     from .models import ProgressClaimItem
     if billing not in ("CLAIM", "SEPARATE"):
         return None, "Choose how this variation is billed."
@@ -547,10 +531,11 @@ def set_variation_billing(variation, billing, actor):
         variation.billing = billing
         variation.save(update_fields=["billing", "updated_at"])
         if billing == "SEPARATE":
-            # its (empty) lines leave the working claims; a submitted or
-            # certified claim keeps its zero lines as printed
+            # its (empty) lines leave the working main claims; a submitted
+            # or certified claim keeps its zero lines as printed
             ProgressClaimItem.objects.filter(
                 variation_item__variation=variation,
+                claim__variation__isnull=True,
                 claim__status="DRAFT").delete()
         elif variation.status == "APPROVED":
             _seed_vo_into_drafts(variation)
@@ -630,8 +615,19 @@ def set_variation_status(variation, to_status, actor, data=None):
         # Open draft claims gain this VO's lines (idempotent) — covers both a
         # first approval and a re-approval after an approved-VO edit, so the
         # QS's working claim doesn't need recreating (owner 2026-08-11). A
-        # variation invoiced separately never enters a claim.
+        # variation claimed separately never enters a main claim.
         _seed_vo_into_drafts(variation)
+    elif to_status == "APPROVED":
+        # ...and a separately claimed one, edited and re-approved while a
+        # claim of its own was in draft, gets its lines back on that claim
+        from .models import ProgressClaimItem
+        for c in variation.claims.filter(status="DRAFT") \
+                .exclude(claim_type="ADVANCE"):
+            have = set(c.items.values_list("variation_item_id", flat=True))
+            ProgressClaimItem.objects.bulk_create([
+                ProgressClaimItem(claim=c, source="VO", variation_item=it)
+                for it in variation.items.all()
+                if not it.is_heading and it.id not in have])
     audit("project", variation.project_id, f"VARIATION_{to_status}",
           actor=actor, detail={"ref": variation.ref,
                                "note": (data.get("comment") or "")[:300]})
@@ -655,7 +651,7 @@ def contract_summary(project):
     approved_net = signed(("APPROVED",), "CLAIM")
     pending_net = signed(("SUBMITTED",), "CLAIM")
     revised = original + approved_net
-    # Variations invoiced separately stand beside the contract sum the
+    # Variations claimed separately stand beside the contract sum the main
     # claims are valued on, not inside it (owner 2026-11-22). The `_all`
     # figures are the whole job — what the company reads its order book by.
     sep_approved = signed(("APPROVED",), "SEPARATE")
@@ -688,6 +684,8 @@ def create_claim(project, data, actor):
     BOQ item and approved-variation item — each seeded from the previous
     claim's cumulative valuation so the QS only bumps the figures that moved."""
     from .models import ProgressClaim, ProgressClaimItem
+    if data.get("variation_id"):
+        return _create_vo_claim(project, data, actor)
     claim_type = data.get("claim_type") or "INTERIM"
     boq = getattr(project, "boq", None)
     is_advance = claim_type == "ADVANCE"
@@ -709,8 +707,8 @@ def create_claim(project, data, actor):
             boq.is_locked = True
             boq.save(update_fields=["is_locked"])
 
-    seq = (project.claims.aggregate(m=Max("seq"))["m"] or 0) + 1
-    previous = project.claims.order_by("-seq").first()
+    seq = (main_claims(project).aggregate(m=Max("seq"))["m"] or 0) + 1
+    previous = main_claims(project).order_by("-seq").first()
     gst = _dec(project.output_gst_pct)
     default_basis = ("MEASURED" if project.contract_type == "REMEASUREMENT"
                      else "PERCENT")
@@ -869,6 +867,84 @@ def set_claim_deductions(claim, rows, actor):
     ClaimDeduction.objects.bulk_create(cleaned)
     audit("project", claim.project_id, "CLAIM_DEDUCTIONS", actor=actor,
           detail={"ref": claim.ref, "lines": len(cleaned)})
+    return claim, None
+
+
+def _create_vo_claim(project, data, actor):
+    """Open the next claim of a variation billed outside the main scope
+    (owner 2026-11-22). The VO is claimed as the contract is, on its own
+    value: an optional advance claim (the contract's advance % of the VO),
+    then interim claims valuing its items, less recovery of that advance and
+    the contract's retention. The series is the VO's own — numbered within
+    it, each claim following the VO's previous one."""
+    from .models import (ClaimDeduction, ProgressClaim, ProgressClaimItem,
+                         Variation)
+    v = (Variation.objects.filter(pk=data.get("variation_id"),
+                                  project=project).first())
+    if v is None:
+        return None, "That variation isn't on this project."
+    if v.billing != "SEPARATE":
+        return None, (f"{v.ref} is billed with the main claims — set it to "
+                      "be claimed separately first.")
+    if v.status != "APPROVED":
+        return None, (f"{v.ref} is not approved by the Employer yet — it "
+                      "can be claimed once it is.")
+    claim_type = data.get("claim_type") or "INTERIM"
+    is_advance = claim_type == "ADVANCE"
+    chain = v.claims.order_by("seq")
+    previous = chain.last()
+    if previous is not None and previous.status in ("DRAFT", "SUBMITTED"):
+        return None, (f"{previous.ref} is still open — finish it before "
+                      f"raising the next claim for {v.ref}.")
+    if is_advance:
+        if not _dec(project.advance_payment_pct):
+            return None, ("Set the advance payment % in the project's contract "
+                          "terms first.")
+        if chain.filter(claim_type="ADVANCE").exists():
+            return None, f"{v.ref} already has its advance claim."
+        if previous is not None:
+            return None, (f"The advance for {v.ref} is claimed before its "
+                          "work — a claim already exists for it.")
+    elif not any(not it.is_heading for it in v.items.all()):
+        return None, f"{v.ref} has no priced items to claim."
+    seq = (previous.seq if previous else 0) + 1
+    gst = _dec(project.output_gst_pct)
+    default_basis = ("MEASURED" if project.contract_type == "REMEASUREMENT"
+                     else "PERCENT")
+    work_prev = chain.exclude(claim_type="ADVANCE").last()
+    claim = ProgressClaim.objects.create(
+        project=project, variation=v, seq=seq,
+        ref=f"{v.ref}/IPA-{seq:02d}"[:40], claim_type=claim_type,
+        basis=(work_prev.basis if work_prev
+               else (data.get("basis") or default_basis)),
+        work_done_upto=data.get("work_done_upto") or None, previous=previous,
+        advance_pct=_dec(project.advance_payment_pct) or ZERO,
+        recovery_pct=(previous.recovery_pct if previous
+                      else _dec(project.advance_payment_pct) or ZERO),
+        retention_pct=_dec(project.retention_pct) or ZERO,
+        gst_pct=gst if gst is not None else Decimal("8"),
+        retention_released=(previous.retention_released if previous
+                            else ZERO),
+        created_by=actor)
+    if not is_advance:
+        prev_map = {}
+        if previous:
+            for pci in previous.items.all():
+                prev_map[pci.variation_item_id] = pci
+        ProgressClaimItem.objects.bulk_create([
+            ProgressClaimItem(claim=claim, source="VO", variation_item=it,
+                              **_carry(prev_map.get(it.id), claim.basis))
+            for it in v.items.all() if not it.is_heading])
+        if previous:
+            ClaimDeduction.objects.bulk_create([
+                ClaimDeduction(claim=claim, label=d.label,
+                               cumulative_amount=d.cumulative_amount,
+                               before_gst=d.before_gst, kind=d.kind,
+                               sort_order=d.sort_order)
+                for d in previous.deductions.all()])
+    audit("project", project.id, "CLAIM_CREATED", actor=actor,
+          detail={"ref": claim.ref, "type": claim.claim_type,
+                  "variation": v.ref})
     return claim, None
 
 
@@ -1126,6 +1202,12 @@ def claim_valuation(claim, _cache=None):
     project = claim.project
     original = Decimal(str(project.contract_value or 0))
     revised = contract_summary(project)["revised"]
+    # A variation claimed on its own is valued as a small contract of its
+    # own: the "contract sum" its advance and its certificate read is the
+    # VO's value (owner 2026-11-22).
+    own_vo = claim.variation if claim.variation_id else None
+    if own_vo is not None:
+        original = revised = Decimal(str(own_vo.gross))
     basis = claim.basis
 
     prev = claim.previous
@@ -1301,12 +1383,16 @@ def claim_valuation(claim, _cache=None):
     # each claim's "now due" comes out right (advance received once, recovery
     # nets it back over the interims).
     has_advance = ProgressClaim.objects.filter(
-        project=project, claim_type=ProgressClaim.Type.ADVANCE,
+        project=project, variation=claim.variation_id,
+        claim_type=ProgressClaim.Type.ADVANCE,
         seq__lte=claim.seq).exists()
     advance_received = advance_total if has_advance else ZERO        # L0
     if claim.advance_recovered_override is not None:                 # L2
         advance_recovered = min(Decimal(str(claim.advance_recovered_override)),
                                 advance_total)
+    elif own_vo is not None and not has_advance:
+        # a variation recovers only the advance paid on it; none was claimed
+        advance_recovered = ZERO
     else:
         advance_recovered = min(
             claim.recovery_pct / Decimal("100") * k_gross, advance_total)
@@ -1484,19 +1570,28 @@ def delete_client_receipt(receipt, actor):
     return None
 
 
-def separate_vo_invoices(project=None, site_ids=None):
-    """The approved invoices billing variations outside the claims, each
-    carrying `vo_charges` — the value of work it bills, ex-GST and before
-    deductions, which is the revenue it earns."""
-    from .models import ManualInvoice
-    qs = ManualInvoice.objects.filter(
-        variation__isnull=False, is_void=False, status="APPROVED")
-    if project is not None:
-        qs = qs.filter(project=project)
-    if site_ids is not None:
-        qs = qs.filter(project__site_id__in=site_ids)
-    return qs.annotate(vo_charges=Sum(
-        "lines__amount", filter=Q(lines__kind="CHARGE")))
+def vo_claim_revenue(project, _cache=None):
+    """The certified claims of variations billed outside the main scope, in
+    order within each VO: [{claim, on, value, waterfall, last}] where `value`
+    is the gross work that claim added (ex-GST, before retention and
+    recovery — the revenue it earns), `on` the day it was certified and
+    `last` marks the VO's latest certificate."""
+    out = []
+    for v in project.variations.filter(billing="SEPARATE"):
+        prev = ZERO
+        rows = []
+        for c in v.claims.filter(
+                status__in=("CERTIFIED", "PAID")).order_by("seq"):
+            w = claim_valuation(c, _cache=_cache)["waterfall"]
+            rows.append({"claim": c, "waterfall": w, "last": False,
+                         "value": w["k_gross"] - prev,
+                         "on": (c.certified_at.date() if c.certified_at
+                                else None)})
+            prev = w["k_gross"]
+        if rows:
+            rows[-1]["last"] = True
+        out += rows
+    return out
 
 
 def project_revenue_summary(project, _cache=None):
@@ -1505,7 +1600,7 @@ def project_revenue_summary(project, _cache=None):
     held, client money received and what's still outstanding."""
     from .models import ClientReceipt
     csum = contract_summary(project)
-    certified = list(project.claims.filter(
+    certified = list(main_claims(project).filter(
         status__in=["CERTIFIED", "PAID"]).order_by("seq"))
     revenue = billed = gst_billed = retention_held = ZERO
     last = None
@@ -1519,14 +1614,16 @@ def project_revenue_summary(project, _cache=None):
         retention_held = last["retention_held"] - last["retention_released"]
     received = (ClientReceipt.objects.filter(project=project)
                 .aggregate(s=Sum("amount"))["s"] or ZERO)
-    # Variations invoiced separately earn their revenue on their own
-    # invoices, outside the claims (owner 2026-11-22): once approved, an
-    # invoice's charges are revenue and its total is billed.
+    # Variations claimed separately earn on their own certificates, outside
+    # the main claims (owner 2026-11-22).
     vo_revenue = ZERO
-    for inv in separate_vo_invoices(project):
-        vo_revenue += inv.vo_charges or ZERO
-        gst_billed += inv.gst_amount or ZERO
-        billed += inv.amount
+    for row in vo_claim_revenue(project, _cache=_cache):
+        w = row["waterfall"]
+        vo_revenue += row["value"]
+        gst_billed += w["gst"]
+        billed += w["net_to_pay"]
+        if row["last"]:
+            retention_held += w["retention_held"] - w["retention_released"]
     revenue += vo_revenue
     revised = csum["project_value"]
     boq = getattr(project, "boq", None)
@@ -1745,6 +1842,9 @@ def claim_pdf_context(claim):
         "claim": claim, "project": project,
         "employer": _employer(project), "currency": ccy,
         "waterfall": w, "approved_vos": w["revised"] - w["original"],
+        # a variation claimed on its own: the certificate is valued on the
+        # VO's value, not the contract sum (owner 2026-11-22)
+        "variation": claim.variation if claim.variation_id else None,
         "lines": val["lines"], "sections": val["section_summary"],
         "detail_sections": detail_sections, "detail_totals": detail_totals,
         "summary": claim_payment_summary(claim, dp=3, for_ipc=True),
@@ -1790,9 +1890,9 @@ def variation_pdf_context(v):
     boq = getattr(project, "boq", None)
     ccy = boq.currency if boq else "USD"
     original = Decimal(str(project.contract_value or 0))
-    # A variation invoiced separately stands outside the contract sum the
-    # claims are valued on: it neither moves that sum nor counts in the
-    # build-up shown on the other variations (owner 2026-11-22).
+    # A variation claimed separately stands outside the contract sum the
+    # main claims are valued on: it neither moves that sum nor counts in
+    # the build-up shown on the other variations (owner 2026-11-22).
     separate = v.billing == "SEPARATE"
     prior = sum((x.signed_total for x in project.variations.filter(
         status="APPROVED", billing="CLAIM").exclude(pk=v.pk)), Decimal("0"))
@@ -1815,7 +1915,7 @@ def variation_pdf_context(v):
         status_note = (
             f"Approved by the Employer{when}"
             + (f" · ref {v.employer_ref}" if v.employer_ref else "")
-            + (" — invoiced separately from the interim payment claims"
+            + (" — claimed and invoiced separately from the main contract"
                if separate else
                " — this variation forms part of the contract"))
         client_status = "Approved by the Employer"
@@ -1900,6 +2000,16 @@ def variation_pdf_context(v):
     }
 
 
+def _claim_scope(claim):
+    """The work a claim is for, as its documents name it."""
+    if not claim.variation_id:
+        return claim.project.title
+    v = claim.variation
+    title = " ".join((v.title or "").split())
+    return (f"Variation Order {v.ref}" + (f" ({title})" if title else "")
+            + f" — {claim.project.title}")
+
+
 def invoice_pdf_context(claim):
     """Context for the client tax invoice PDF (the GST bill for this claim)."""
     from .pdf import company_info, logo_src
@@ -1930,6 +2040,11 @@ def invoice_pdf_context(claim):
         "summary": claim_payment_summary(claim, dp=2),
         "is_advance": claim.claim_type == "ADVANCE",
         "advance_pct": claim.advance_pct,
+        # what the invoice is for: the project, or the one variation a
+        # separately claimed VO's invoice bills (owner 2026-11-22)
+        "scope_label": _claim_scope(claim),
+        "advance_of": ("variation value" if claim.variation_id
+                       else "contract value"),
         "amount_words": amount_in_words(inv_net_to_pay, ccy),
         "subline": f"Invoice {claim.invoice_no or '—'}",
         # The invoice is raised against the certified IPC and cites the contract

@@ -8,8 +8,8 @@ date: k_gross on that claim less k_gross on the claim before it.
 from decimal import Decimal
 
 from . import fx
-from .commercial import (claim_valuation, contract_summary,
-                         project_revenue_summary, separate_vo_invoices)
+from .commercial import (claim_valuation, contract_summary, main_claims,
+                         project_revenue_summary, vo_claim_revenue)
 from .models import Project
 from .reports import col, kpi, section, sum_rows
 
@@ -45,7 +45,8 @@ def build(ctx):
         csum = contract_summary(p)
         in_period = ZERO
         prev = ZERO
-        for c in p.claims.filter(status__in=CERTIFIED).order_by("seq"):
+        for c in main_claims(p).filter(
+                status__in=CERTIFIED).order_by("seq"):
             w = claim_valuation(c, _cache=cache)["waterfall"]
             this = w["k_gross"] - prev
             prev = w["k_gross"]
@@ -58,16 +59,15 @@ def build(ctx):
                     "value": _usd(this, ccy, rate),
                     "net_due": _usd(w["net_due"], ccy, rate),
                 })
-        # a variation invoiced separately is revenue on its own invoice
-        for inv in separate_vo_invoices(p).select_related("variation"):
-            if ctx.start <= inv.invoice_date <= ctx.end:
-                in_period += inv.vo_charges or ZERO
+        # a variation claimed separately earns on its own certificates
+        for row in vo_claim_revenue(p, _cache=cache):
+            if row["on"] and ctx.start <= row["on"] <= ctx.end:
+                in_period += row["value"]
                 period_claims.append({
                     "site": p.site.code, "project": p.code,
-                    "claim": f"{inv.invoice_no} ({inv.variation.ref})",
-                    "certified_on": inv.invoice_date,
-                    "value": _usd(inv.vo_charges or ZERO, ccy, rate),
-                    "net_due": _usd(inv.net_amount or ZERO, ccy, rate),
+                    "claim": row["claim"].ref, "certified_on": row["on"],
+                    "value": _usd(row["value"], ccy, rate),
+                    "net_due": _usd(row["waterfall"]["net_due"], ccy, rate),
                 })
         for v in p.variations.filter(status="SUBMITTED").order_by("seq"):
             pending_vos.append({

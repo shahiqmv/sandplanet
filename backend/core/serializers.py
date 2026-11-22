@@ -33,6 +33,7 @@ class SiteSerializer(serializers.ModelSerializer):
             "planned_completion", "actual_completion", "status",
             "client_name", "client_address", "client_tin", "client_contact",
             "client_designation", "client_phone", "client_email",
+            "vo_billing",
             "consultant_name", "consultant_contact",
             "working_hours_from", "working_hours_to", "working_days",
             "ot_counts_from", "late_after_min",

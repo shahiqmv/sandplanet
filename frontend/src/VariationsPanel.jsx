@@ -17,13 +17,12 @@ const DIRECTOR_ROLES = ["DIRECTOR", "ADMIN"];
 
 // Variation orders (VOs) — additions/omissions to the contract that adjust the
 // revised sum once approved and become claimable alongside the BOQ.
-export default function VariationsPanel({ projectId, me }) {
+export default function VariationsPanel({ projectId, me, onOpenClaims }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [approvingId, setApprovingId] = useState(null);  // employer form
-  const [invoicingId, setInvoicingId] = useState(null);  // separate VO
   const [notice, setNotice] = useState(null);
   const canEdit = EDIT_ROLES.includes(me.role);
   const isDirector = DIRECTOR_ROLES.includes(me.role);
@@ -46,19 +45,25 @@ export default function VariationsPanel({ projectId, me }) {
     if (!comment) return;
     status(id, "DRAFT", { comment });
   }
-  // With the progress claims, or on its own invoices (owner 2026-11-22).
+  // With the main claims, or by claims of its own (owner 2026-11-22).
   async function billing(id, b) {
     setError(null);
     try { setData(await api(`/variations/${id}/billing`,
       { method: "POST", body: { billing: b } })); }
     catch (e) { setError(e.message); }
   }
-  async function submitInvoice(inv) {
-    setError(null);
+  // Raise the next claim (or the advance claim) of a separately claimed VO.
+  async function raiseClaim(v, claimType) {
+    setError(null); setNotice(null);
     try {
-      await api(`/receivables/manual-invoices/${inv.id}/submit`,
-        { method: "POST" });
-      setNotice(`${inv.label} sent to the Director for approval.`);
+      const d = await api(`/projects/${projectId}/claims/create`,
+        { method: "POST", body: { variation_id: v.id,
+                                  ...(claimType ? { claim_type: claimType }
+                                                : {}) } });
+      const made = d.claims.find((c) => c.id === d.created_id);
+      if (onOpenClaims) { onOpenClaims(d.created_id); return; }
+      setNotice(`${made?.ref || "Claim"} raised for ${v.ref} — value and `
+        + "submit it under Claims.");
       load();
     } catch (e) { setError(e.message); }
   }
@@ -107,19 +112,19 @@ export default function VariationsPanel({ projectId, me }) {
                v={`${ccy} ${signed(c.internal_net)}`} />
         )}
       </div>
-      {/* Variations the client is invoiced for on their own stand beside
-          the contract sum the claims are valued on, not inside it. */}
+      {/* Variations claimed on their own stand beside the contract sum
+          the main claims are valued on, not inside it. */}
       {(Number(c.separate_approved || 0) !== 0
         || Number(c.separate_pending || 0) !== 0
         || Number(c.separate_internal || 0) !== 0) && (
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap",
                       fontSize: 13, marginBottom: 12, paddingTop: 8,
                       borderTop: "1px solid var(--line, #e3e8ee)" }}>
-          <Fig label="VOs invoiced separately — approved"
+          <Fig label="VOs claimed separately — approved"
                v={`${ccy} ${signed(c.separate_approved)}`} tone />
-          <Fig label="Billed on them" v={`${ccy} ${fmt(
+          <Fig label="Certified on them" v={`${ccy} ${fmt(
             data.variations.reduce((a, v) =>
-              a + Number(v.separate?.billed || 0), 0))}`} />
+              a + Number(v.separate?.certified || 0), 0))}`} />
           {Number(c.separate_pending || 0) !== 0 && (
             <Fig label="With the Employer"
                  v={`${ccy} ${signed(c.separate_pending)}`} />)}
@@ -178,11 +183,10 @@ export default function VariationsPanel({ projectId, me }) {
                       <Chip tone={STATUS_TONE[v.status] || "info"}>
                         {v.status_label || v.status}</Chip></td>
                     <td style={td}>
-                      <BillingCell v={v} ccy={ccy} canEdit={canEdit}
+                      <BillingCell v={v} canEdit={canEdit}
                         onChange={(b) => billing(v.id, b)}
-                        onInvoice={() => setInvoicingId(
-                          invoicingId === v.id ? null : v.id)}
-                        onSubmit={submitInvoice} />
+                        onRaise={(t) => raiseClaim(v, t)}
+                        onOpenClaims={onOpenClaims} />
                     </td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 600,
                       color: Number(v.signed_total) < 0 ? "#b0402f"
@@ -270,19 +274,6 @@ export default function VariationsPanel({ projectId, me }) {
                         if (d) setData(d); setApprovingId(null); }} />
                     </td></tr>
                   )}
-                  {invoicingId === v.id && (
-                    <tr><td colSpan={7} style={{ padding: 0 }}>
-                      <InvoiceVoForm variation={v} ccy={ccy} onDone={(d) => {
-                        if (d) {
-                          setData(d);
-                          setNotice(`${d.invoice.label} drafted for ${v.ref}`
-                            + " — submit it for the Director's approval here,"
-                            + " or open Receivables → Manual invoices to add"
-                            + " deductions or change the date first.");
-                        }
-                        setInvoicingId(null); }} />
-                    </td></tr>
-                  )}
                 </Fragment>
               ))}
             </tbody>
@@ -294,10 +285,13 @@ export default function VariationsPanel({ projectId, me }) {
 }
 
 // How a variation reaches the client's bill (owner 2026-11-22): in the
-// progress claims with the main scope, or on invoices of its own. The choice
-// stays open until the variation has been billed one way or the other.
-const INV_TONE = { DRAFT: "info", SUBMITTED: "warn", APPROVED: "ok" };
-function BillingCell({ v, ccy, canEdit, onChange, onInvoice, onSubmit }) {
+// main progress claims, or by a claim series of its own — application,
+// certificate, invoice — under the contract's advance and retention terms.
+// The site sets the default; the choice stays open on each variation until
+// it has been claimed one way or the other.
+const CLAIM_TONE = { DRAFT: "info", SUBMITTED: "warn", CERTIFIED: "ok",
+  PAID: "ok", REJECTED: "alert" };
+function BillingCell({ v, canEdit, onChange, onRaise, onOpenClaims }) {
   const sep = v.separate || {};
   const lock = sep.billing_lock || "";
   const small = { fontSize: 11, color: "var(--muted)" };
@@ -307,111 +301,38 @@ function BillingCell({ v, ccy, canEdit, onChange, onInvoice, onSubmit }) {
         <select value={v.billing} onChange={(e) => onChange(e.target.value)}
                 style={{ ...inputStyle, padding: "2px 4px", fontSize: 12,
                          width: 150 }}>
-          <option value="CLAIM">With progress claims</option>
-          <option value="SEPARATE">Invoiced separately</option>
+          <option value="CLAIM">With the main claims</option>
+          <option value="SEPARATE">Claimed separately</option>
         </select>
       ) : (
         <span title={lock} style={{ fontSize: 12 }}>
-          {v.billing === "SEPARATE" ? "Invoiced separately"
-            : "With progress claims"}</span>
+          {v.billing === "SEPARATE" ? "Claimed separately"
+            : "With the main claims"}</span>
       )}
       {v.billing === "SEPARATE" && (<>
         <div style={small}>
-          Billed {fmt(sep.billed)} of {fmt(sep.value)}
-          {Number(sep.invoiced) > Number(sep.billed)
-            ? ` · ${fmt(sep.invoiced - sep.billed)} in draft` : ""}
-        </div>
-        {(sep.invoices || []).map((m) => (
-          <div key={m.id} style={{ ...small, whiteSpace: "nowrap" }}>
-            {m.pdf_url
-              ? <a href={m.pdf_url} target="_blank" rel="noreferrer">
-                  {m.label}</a>
-              : m.label}
-            {" · "}{m.currency || ccy} {fmt(m.amount)}{" "}
-            <Chip tone={INV_TONE[m.status] || "info"}>
-              {m.status === "SUBMITTED" ? "With Director"
-                : m.status === "APPROVED" ? "Approved" : "Draft"}</Chip>
-            {canEdit && m.status === "DRAFT" && (
-              <A onClick={() => onSubmit(m)}>submit</A>)}
+          Certified {fmt(sep.certified)} of {fmt(sep.value)}</div>
+        {(sep.claims || []).map((c) => (
+          <div key={c.id} style={{ ...small, whiteSpace: "nowrap" }}>
+            {onOpenClaims
+              ? <button onClick={() => onOpenClaims(c.id)}
+                        title="Open this claim" style={{ ...ghostButton,
+                  padding: 0, border: "none", fontSize: 11,
+                  color: "var(--navy)", textDecoration: "underline" }}>
+                  {c.ref}</button>
+              : c.ref}
+            {c.claim_type === "ADVANCE" ? " · advance" : ""}{" "}
+            <Chip tone={CLAIM_TONE[c.status] || "info"}>{c.status}</Chip>
+            {c.invoice_no ? ` ${c.invoice_no}` : ""}
           </div>
         ))}
-        {canEdit && sep.can_invoice && (
-          <A onClick={onInvoice}>+ invoice this variation</A>)}
+        {canEdit && sep.can_advance && (
+          <A onClick={() => onRaise("ADVANCE")}>+ advance claim</A>)}
+        {canEdit && sep.can_claim && (
+          <A onClick={() => onRaise()}>+ claim</A>)}
         {v.status !== "APPROVED" && (
-          <div style={small}>Invoiced once the Employer approves it</div>)}
+          <div style={small}>Claimed once the Employer approves it</div>)}
       </>)}
-    </div>
-  );
-}
-
-// Draft the invoice for a separately billed variation: what is left of it,
-// a percentage of its value, or an amount.
-function InvoiceVoForm({ variation, ccy, onDone }) {
-  const sep = variation.separate || {};
-  const [mode, setMode] = useState("REST");
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const amount = mode === "REST" ? Number(sep.remaining || 0)
-    : mode === "PERCENT" ? Number(sep.value || 0) * Number(value || 0) / 100
-    : Number(value || 0);
-
-  async function save() {
-    setBusy(true); setErr(null);
-    try {
-      const body = mode === "PERCENT" ? { percent: value }
-        : mode === "AMOUNT" ? { amount: value } : {};
-      onDone(await api(`/variations/${variation.id}/invoice`,
-        { method: "POST", body }));
-    } catch (e) { setErr(e.message); setBusy(false); }
-  }
-
-  return (
-    <div style={{ padding: "10px 12px", background: "var(--sky-soft)",
-                  display: "flex", gap: 10, flexWrap: "wrap",
-                  alignItems: "flex-end", fontSize: 13 }}>
-      <div>
-        <strong style={{ color: "var(--navy)" }}>
-          Invoice {variation.ref}</strong>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>
-          Value {ccy} {fmt(sep.value)} · left to invoice {ccy}{" "}
-          {fmt(sep.remaining)}</div>
-      </div>
-      <label style={{ fontSize: 12, color: "var(--muted)",
-                      display: "flex", flexDirection: "column", gap: 3 }}>
-        Invoice
-        <select value={mode} style={inputStyle}
-                onChange={(e) => { setMode(e.target.value); setValue(""); }}>
-          <option value="REST">
-            {Number(sep.invoiced) > 0 ? "The balance" : "The whole variation"}
-          </option>
-          <option value="PERCENT">A percentage of its value</option>
-          <option value="AMOUNT">An amount</option>
-        </select>
-      </label>
-      {mode !== "REST" && (
-        <label style={{ fontSize: 12, color: "var(--muted)",
-                        display: "flex", flexDirection: "column", gap: 3 }}>
-          {mode === "PERCENT" ? "Percent" : `Amount (${ccy}, before GST)`}
-          <input type="number" min="0" value={value} autoFocus
-                 onChange={(e) => setValue(e.target.value)}
-                 style={{ ...inputStyle, width: 130 }} />
-        </label>
-      )}
-      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-        Invoice value before GST
-        <div style={{ fontWeight: 700, fontSize: 14, color: "var(--navy)" }}>
-          {ccy} {fmt(amount)}</div>
-      </div>
-      <button style={buttonStyle} disabled={busy || !(amount > 0)}
-              onClick={save}>{busy ? "Drafting…" : "Draft invoice"}</button>
-      <button style={ghostButton} onClick={() => onDone(null)}>Cancel</button>
-      <div style={{ fontSize: 12, color: "var(--muted)", width: "100%" }}>
-        No retention or advance recovery is taken. The draft goes to the
-        Director for approval before it is owed; deductions can be added to
-        it under Receivables → Manual invoices.</div>
-      {err && <div style={{ color: "#c0392b", fontSize: 12.5,
-                            width: "100%" }}>{err}</div>}
     </div>
   );
 }
@@ -559,8 +480,8 @@ function VariationEditor({ projectId, variation, defaultBilling, onDone }) {
           <select value={bill} onChange={(e) => setBill(e.target.value)}
                   title="How the client is billed for this variation"
                   style={{ ...inputStyle, width: 180 }}>
-            <option value="CLAIM">With progress claims</option>
-            <option value="SEPARATE">Invoiced separately</option>
+            <option value="CLAIM">With the main claims</option>
+            <option value="SEPARATE">Claimed separately</option>
           </select>)}
         <button style={{ ...buttonStyle, padding: "4px 14px" }} disabled={busy}
                 onClick={save}>{busy ? "Saving…" : "Save"}</button>
