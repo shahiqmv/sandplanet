@@ -8,7 +8,8 @@ date: k_gross on that claim less k_gross on the claim before it.
 from decimal import Decimal
 
 from . import fx
-from .commercial import claim_valuation, contract_summary, project_revenue_summary
+from .commercial import (claim_valuation, contract_summary,
+                         project_revenue_summary, separate_vo_invoices)
 from .models import Project
 from .reports import col, kpi, section, sum_rows
 
@@ -57,6 +58,17 @@ def build(ctx):
                     "value": _usd(this, ccy, rate),
                     "net_due": _usd(w["net_due"], ccy, rate),
                 })
+        # a variation invoiced separately is revenue on its own invoice
+        for inv in separate_vo_invoices(p).select_related("variation"):
+            if ctx.start <= inv.invoice_date <= ctx.end:
+                in_period += inv.vo_charges or ZERO
+                period_claims.append({
+                    "site": p.site.code, "project": p.code,
+                    "claim": f"{inv.invoice_no} ({inv.variation.ref})",
+                    "certified_on": inv.invoice_date,
+                    "value": _usd(inv.vo_charges or ZERO, ccy, rate),
+                    "net_due": _usd(inv.net_amount or ZERO, ccy, rate),
+                })
         for v in p.variations.filter(status="SUBMITTED").order_by("seq"):
             pending_vos.append({
                 "site": p.site.code, "project": p.code, "vo": v.ref,
@@ -69,9 +81,9 @@ def build(ctx):
             "site": p.site.code, "project": f"{p.code} — {p.title}",
             "status": p.get_status_display(),
             "original": _usd(summ["contract_original"], ccy, rate),
-            "approved_vos": _usd(csum["approved_net"], ccy, rate),
+            "approved_vos": _usd(csum["approved_all"], ccy, rate),
             "revised": _usd(revised, ccy, rate),
-            "pending_vos": _usd(csum["pending_net"], ccy, rate),
+            "pending_vos": _usd(csum["pending_all"], ccy, rate),
             "certified": _usd(summ["certified_revenue"], ccy, rate),
             "pct": (summ["certified_revenue"] / revised * 100
                     if revised else None),

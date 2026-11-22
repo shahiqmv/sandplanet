@@ -3807,6 +3807,11 @@ class Attendance(models.Model):
 # ===== Projects & programmes (DECISIONS.md R4) =====
 
 
+class VoBilling(models.TextChoices):
+    CLAIM = "CLAIM", "With progress claims"
+    SEPARATE = "SEPARATE", "Invoiced separately"
+
+
 class Project(models.Model):
     """A client award within a site. Sites host multiple projects, each
     with its own scope, BOQ, programme and timeline (R4). DPR/TWS/IR/MAR
@@ -3850,6 +3855,11 @@ class Project(models.Model):
     # 2026-10-25, 17POOL IPA-04). Off = the IPC stops at Total with GST; the
     # tax invoice still deducts them.
     ipc_shows_back_charges = models.BooleanField(default=True)
+    # How this client takes variations: in the progress claims, or each one
+    # on its own invoice. The default for a new VO on the project; each VO
+    # can still be set its own way (owner 2026-11-22).
+    vo_billing = models.CharField(max_length=8, choices=VoBilling.choices,
+                                  default=VoBilling.CLAIM)
     advance_payment_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                               null=True, blank=True)
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
@@ -4928,6 +4938,13 @@ class Variation(models.Model):
     status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.DRAFT)
     ref_date = models.DateField(null=True, blank=True)   # client instruction
+    # Some clients keep variations out of the main scope's claims and are
+    # invoiced for each on its own (owner 2026-11-22). CLAIM = today's way:
+    # the approved VO joins the progress claims and the revised contract sum.
+    # SEPARATE = it never enters a claim; it is billed by its own invoices
+    # (ManualInvoice.variation). Omissions are always CLAIM.
+    billing = models.CharField(max_length=8, choices=VoBilling.choices,
+                               default=VoBilling.CLAIM)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     # --- the two approvals ---
@@ -5810,6 +5827,12 @@ class ManualInvoice(models.Model):
     bills_claim = models.ForeignKey(
         "ProgressClaim", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="billing_invoices")
+    # The variation this invoice bills, when the VO is invoiced separately
+    # from the progress claims (owner 2026-11-22). Several invoices may bill
+    # one VO in parts; together their charges never exceed its value.
+    variation = models.ForeignKey(
+        "Variation", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="invoices")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

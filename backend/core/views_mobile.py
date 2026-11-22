@@ -518,14 +518,20 @@ def _vo_mobile_payload(v, request):
             "title": v.title, "line_label": "Variation items",
             "amount": float(abs(v.signed_total)), "currency": ccy,
             "lines": lines,
-            "summary": [
+            "summary": ([
+                {"k": "Type", "v": ctx["kind_label"]},
+                {"k": "Project", "v": v.project.title},
+                {"k": "This variation", "v": f"{ccy} {ctx['signed_total_f']}"},
+                {"k": "Billing", "v": "Invoiced separately — outside the "
+                                      "progress claims"},
+            ] if ctx["separate"] else [
                 {"k": "Type", "v": ctx["kind_label"]},
                 {"k": "Project", "v": v.project.title},
                 {"k": "Contract sum now", "v": f"{ccy} {ctx['sum_before_f']}"},
                 {"k": "This variation", "v": f"{ccy} {ctx['signed_total_f']}"},
                 {"k": "If the Employer approves",
                  "v": f"{ccy} {ctx['sum_after_f']}"},
-            ]}
+            ])}
 
 
 @api_view(["GET"])

@@ -741,6 +741,9 @@ function ManualInvoices({ canManual }) {
                     fontSize: 11 }}> Rev {mi.revision}</span>}
                   <div style={{ color: "var(--muted)", fontSize: 11 }}>
                     {ORIGIN_LABEL[mi.origin]}
+                    {mi.variation_ref
+                      ? ` · bills ${mi.variation_ref} (invoiced separately)`
+                      : ""}
                     {mi.description ? ` · ${mi.description}` : ""}</div>
                 </td>
                 <td style={td}>{mi.project_code}</td>
@@ -812,7 +815,7 @@ function ManualInvoices({ canManual }) {
                       against a signed LOA, say. Linking closes this invoice
                       when that claim is certified, so the same money is not
                       owed twice (owner 2026-09-01). */}
-                  {canManual && owed && (mi.superseded_by ? (
+                  {canManual && owed && !mi.variation_id && (mi.superseded_by ? (
                     <button onClick={() => linkClaim(mi)}
                       title={mi.superseded_at
                         ? `Closed by ${mi.superseded_by}`

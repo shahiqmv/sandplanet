@@ -240,6 +240,12 @@ def build_variation_xlsx(v):
         r += 1
         return r - 1
 
+    if ctx["separate"]:
+        # invoiced on its own, outside the claims: no contract-sum build-up
+        row("Value of this variation — invoiced separately, not part of "
+            "the interim payment claims",
+            f"={amt_letter}{gross_row}", bold=True, fill=_SECTION)
+        return wb
     row("Original contract sum", ctx["original"])
     row("Variations already approved", ctx["prior_approved"])
     before_row = row("Contract sum before this variation",

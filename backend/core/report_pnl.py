@@ -71,6 +71,20 @@ def certified_revenue(site_ids, start, end):
             out[p.site_id] = (a + fx.to_usd(in_p, ccy, rate),
                               b + fx.to_usd(to_d, ccy, rate))
             per_project[p.id] = fx.to_usd(to_d, ccy, rate)
+    # Variations invoiced separately earn on their own invoices, outside
+    # the claims (owner 2026-11-22): an approved invoice's charges are
+    # revenue on its invoice date. They stay out of `per_project`, which
+    # measures certified work against the contract the claims are valued on.
+    from .commercial import separate_vo_invoices
+    live = {p.id for p in projects}
+    for inv in separate_vo_invoices(site_ids=site_ids).select_related(
+            "project"):
+        if inv.project_id not in live or inv.invoice_date > end:
+            continue
+        usd = fx.to_usd(inv.vo_charges or ZERO, inv.currency, rate)
+        a, b = out.get(inv.project.site_id, (ZERO, ZERO))
+        out[inv.project.site_id] = (
+            a + (usd if inv.invoice_date >= start else ZERO), b + usd)
     certified_revenue.advances = advances
     certified_revenue.per_project = per_project
     return out

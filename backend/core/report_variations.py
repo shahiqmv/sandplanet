@@ -42,15 +42,20 @@ def build(ctx):
         contract.append({
             "site": p.site.code, "project": f"{p.code} — {p.title}",
             "original": _usd(cs["original"], ccy, rate),
-            "approved": _usd(cs["approved_net"], ccy, rate),
-            "revised": _usd(cs["revised"], ccy, rate),
-            "with_client": _usd(cs["pending_net"], ccy, rate),
-            "internal": _usd(cs["internal_net"], ccy, rate),
-            "forecast": _usd(cs["forecast"], ccy, rate),
+            # the whole job: variations invoiced separately count beside
+            # those billed through the claims (owner 2026-11-22)
+            "approved": _usd(cs["approved_all"], ccy, rate),
+            "revised": _usd(cs["project_value"], ccy, rate),
+            "with_client": _usd(cs["pending_all"], ccy, rate),
+            "internal": _usd(cs["internal_all"], ccy, rate),
+            "forecast": _usd(cs["forecast_all"], ccy, rate),
         })
         for v in p.variations.exclude(status="DRAFT").order_by("seq"):
             row = {"site": p.site.code, "project": p.code, "vo": v.ref,
-                   "title": v.title, "kind": v.get_kind_display(),
+                   "title": v.title,
+                   "kind": v.get_kind_display() + (
+                       " · invoiced separately"
+                       if v.billing == "SEPARATE" else ""),
                    "value": _usd(v.signed_total, ccy, rate),
                    "stage": STAGE.get(v.status, v.status)}
             if v.status == "SUBMITTED":

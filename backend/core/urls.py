@@ -635,6 +635,10 @@ urlpatterns = [
          name="variation-meta"),
     path("variations/<int:pk>/status", commercial.variation_status,
          name="variation-status"),
+    path("variations/<int:pk>/billing", commercial.variation_billing,
+         name="variation-billing"),
+    path("variations/<int:pk>/invoice", commercial.variation_invoice,
+         name="variation-invoice"),
     # The client-facing variation order (P5-style PDF)
     path("variations/<int:pk>/vo.pdf", commercial.variation_pdf,
          name="variation-pdf"),

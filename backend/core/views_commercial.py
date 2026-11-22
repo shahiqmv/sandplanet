@@ -449,6 +449,9 @@ class VariationSerializer(serializers.ModelSerializer):
     pd_approved_by_name = serializers.CharField(
         source="pd_approved_by.full_name", read_only=True, default=None)
     employer_copy_url = serializers.SerializerMethodField()
+    billing_label = serializers.CharField(source="get_billing_display",
+                                          read_only=True)
+    separate = serializers.SerializerMethodField()
 
     class Meta:
         model = Variation
@@ -456,19 +459,45 @@ class VariationSerializer(serializers.ModelSerializer):
                   "status_label", "ref_date", "gross", "signed_total",
                   "pd_approved_by_name", "pd_approved_at", "sent_at",
                   "employer_approved_on", "employer_ref", "employer_copy_url",
+                  "billing", "billing_label", "separate",
                   "items"]
 
     def get_employer_copy_url(self, obj):
         return obj.employer_copy.url if obj.employer_copy else None
 
+    def get_separate(self, obj):
+        """The billing position of a variation invoiced on its own: what is
+        billed, what is left, and the invoices raised for it. `billing_lock`
+        (on every variation) says why the choice can no longer change."""
+        from . import manual_invoices as mi_svc
+        out = {"billing_lock": commercial.vo_billing_lock(obj)}
+        if obj.billing != "SEPARATE":
+            return out
+        pos = commercial.vo_billing_position(obj)
+        invs = [m for m in obj.invoices.all() if not m.is_void]
+        out.update(pos)
+        out["can_invoice"] = (obj.status == "APPROVED"
+                              and pos["remaining"] > 0)
+        out["invoices"] = [{
+            "id": m.id, "label": mi_svc.label(m), "invoice_no": m.invoice_no,
+            "status": m.status, "invoice_date": m.invoice_date,
+            "amount": m.amount, "net_amount": m.net_amount,
+            "currency": m.currency,
+            "pdf_url": (f"/api/v1/receivables/manual-invoices/{m.id}.pdf"
+                        if m.origin == "ISSUED" else None),
+        } for m in sorted(invs, key=lambda m: (m.invoice_date, m.id))]
+        return out
+
 
 def _variations_payload(project):
-    vs = project.variations.prefetch_related("items").all()
+    vs = project.variations.prefetch_related(
+        "items", "invoices", "invoices__project").all()
     return {
         "currency": (getattr(project, "boq", None).currency
                      if getattr(project, "boq", None) else "USD"),
         "contract": {k: v for k, v in commercial.contract_summary(
             project).items()},
+        "vo_billing": project.vo_billing,
         "variations": VariationSerializer(vs, many=True).data,
     }
 
@@ -578,9 +607,46 @@ def variation_delete(request, pk):
     if v.status != "DRAFT":
         return Response({"detail": "Only a draft variation can be deleted."},
                         status=400)
+    if v.invoices.exists():
+        return Response({"detail": "Invoices were raised for this variation "
+                                   "— it stays on record."}, status=400)
     project = v.project
     v.delete()
     return Response(_variations_payload(project))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def variation_billing(request, pk):
+    """Bill a variation with the progress claims, or on its own invoices."""
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_variation_billing(
+        v, request.data.get("billing"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_variations_payload(v.project))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def variation_invoice(request, pk):
+    """Draft the invoice for a variation billed outside the claims — all of
+    it, or a part by percent or amount."""
+    from . import manual_invoices as mi_svc
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    mi, msg = mi_svc.invoice_variation(v, request.data, request.user)
+    if mi is None:
+        return Response({"detail": msg}, status=400)
+    out = _variations_payload(v.project)
+    out["invoice"] = {"id": mi.id, "label": mi_svc.label(mi),
+                      "status": mi.status, "warning": msg or ""}
+    return Response(out, status=201)
 
 
 # ---- Progress claims (interim payment applications) ---------------------

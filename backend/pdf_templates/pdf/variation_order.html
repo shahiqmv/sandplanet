@@ -100,6 +100,18 @@
   </tbody>
 </table>
 
+{% if separate %}
+<h2>Billing ({{ currency }})</h2>
+<table class="wf">
+  <tr class="grand"><td>{{ v.ref }} — value of this variation</td>
+      <td class="amt">{{ signed_total_f }}</td></tr>
+</table>
+<div class="note" style="margin-top:2mm;">
+  This variation is invoiced separately. It is not included in the interim
+  payment claims under the contract, and the contract sum on which those
+  claims are valued is unchanged by it.
+</div>
+{% else %}
 <h2>Effect on the contract sum ({{ currency }})</h2>
 <table class="wf">
   <tr><td>Original contract sum</td>
@@ -126,16 +138,19 @@
   and approved on its own; the anticipated sum above assumes all are approved.
 </div>
 {% endif %}
+{% endif %}
 <div class="words">{{ amount_words }}
   {% if is_omission %}(omitted from the contract){% endif %}</div>
 
 <div class="note">
   This variation is priced in accordance with the contract. Rates for work of a
   similar character are those of the contract Bill of Quantities; new items are
-  priced at fair market rates. The amounts above exclude GST, which is charged
+  priced at fair market rates. {% if separate %}The amounts above exclude GST, which is charged
+  on the invoice raised for this variation. No work under this variation is
+  invoiced until the Employer's approval is received.{% else %}The amounts above exclude GST, which is charged
   on the interim payment application in which this work is valued. No work
   under this variation is valued or claimed until the Employer's approval is
-  received.
+  received.{% endif %}
 </div>
 
 <table class="sig">
