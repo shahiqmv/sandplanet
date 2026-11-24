@@ -4,7 +4,7 @@ The wall: Sales roles see only /api/trading; site roles get nothing there;
 the ledger book keeps trading money out of every project figure; the
 trading numbering series is company-wide.
 """
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -512,8 +512,11 @@ class WonLostTests(SalesFrontBase):
 class ChaseListTests(SalesFrontBase):
     def test_home_carries_the_chase_list_and_the_managers_queue(self):
         d = self.new_order(next_action="Call back", next_action_date="2026-09-01")
+        # Well beyond the seven days the chase list looks ahead: a fixed date
+        # here came inside that window on 2026-11-24 and failed the run.
+        later = date.today() + timedelta(days=60)
         d2 = self.new_order(user=self.sales2, title="Other", next_action="Send sample",
-                            next_action_date="2026-12-01")
+                            next_action_date=later.isoformat())
         self.put_lines(d["id"], [self.TILE])
         self.client.post(f"/api/v1/trading/orders/{d['id']}/quotations")
         self.login(self.sales)
