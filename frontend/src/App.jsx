@@ -1604,12 +1604,17 @@ export default function App() {
             hoPage === "receivables" && (
             <ReceivablesPage me={me} />
           )}
+          {/* Whoever the menu offers Fleet to gets the page: the Rental
+              roles, and Rental held as extra access on another role. The
+              gate here used to be the Cost Heads one — a QS given Rental
+              access saw Fleet in the menu and an empty page (2026-11-24). */}
           {!docView && !openSite &&
-            ["FINANCE", "ADMIN", "DIRECTOR", "SIGNATORY"].includes(me.role) &&
+            groups.some((g) => g.key === "fleet") &&
             hoPage === "fleet" && (
               <FleetPage />
             )}
           {!docView && !openSite &&
+            ["FINANCE", "ADMIN", "DIRECTOR", "SIGNATORY"].includes(me.role) &&
             hoPage === "cost-heads" && (
             <CostHeadsPage me={me} />
           )}
