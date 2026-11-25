@@ -898,12 +898,12 @@ def snapshot(t):
     return {
         "rev_label": rev.rev_label if rev else None,
         "offer_value": value, "bill_total": bill_total,
-        # A rufiyaa total built from converted rates rarely lands on a
-        # whole laari, so there it is compared to the laari.
+        # Compared to the cent: the offer is entered to two decimals and a
+        # bill of three-decimal quantities and rates rarely totals to a whole
+        # cent, so an exact comparison flagged offers that were the bill's
+        # own total (seen on a sample offer, 78,415.54 against 78,415.536).
         "bill_matches_offer": (value is None or bill_total == 0
-                               or value == bill_total
-                               or (rate is not None
-                                   and abs(value - bill_total) < CENT)),
+                               or abs(value - bill_total) < CENT),
         # An MVR offer priced in USD: the rate, and the dollar side.
         "dual": rate is not None, "offer_rate": rate,
         "offer_value_usd": value_usd,

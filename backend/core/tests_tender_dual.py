@@ -341,3 +341,17 @@ class SplitRateBillPrintTests(DualOfferBase):
         html = render_to_string("pdf/tender_submission.html", ctx)
         self.assertIn("Labour (MVR)", html)
         self.assertIn("6,600.00", html)
+
+
+class OfferMatchesBillTests(DualOfferBase):
+    def test_an_offer_at_the_bills_total_is_not_flagged_for_a_fraction_of_a_cent(self):
+        t = self.open(currency="USD")
+        self.price(t["id"])                      # the bill totals 503.668
+        self.clear(t["id"], "503.67")
+        self.assertTrue(svc.snapshot(self.tender(t["id"]))["bill_matches_offer"])
+
+    def test_a_real_difference_is_still_flagged(self):
+        t = self.open(currency="USD")
+        self.price(t["id"])
+        self.clear(t["id"], "500")
+        self.assertFalse(svc.snapshot(self.tender(t["id"]))["bill_matches_offer"])

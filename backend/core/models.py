@@ -6542,6 +6542,12 @@ class PaymentVoucherLine(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        # The order the lines were put on the voucher. Without it the
+        # database returns them in whatever order it likes, so the line
+        # numbers on a voucher — and which payee a voucher of two spellings
+        # is named by — could differ from one reading to the next; it showed
+        # as a test that failed one run in several (2026-11-25).
+        ordering = ["id"]
         constraints = [
             models.UniqueConstraint(fields=["voucher", "source_document"],
                                     name="uniq_voucher_source"),
