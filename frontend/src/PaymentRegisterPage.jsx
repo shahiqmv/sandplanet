@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { Btn, RefStamp, StatusChip, card, ghostButton, td, th } from "./ui.jsx";
+import { Btn, Pager, RefStamp, StatusChip, card, ghostButton, td, th }
+  from "./ui.jsx";
 
 // Full Payment Request register for a site (§5.9). All PYRs, filterable;
-// the dashboard card shows only the pending ones and links here.
+// the dashboard card shows only the pending ones and links here. Drawn a
+// page at a time: the list used to stop at the newest 200, which left a
+// busy site's older requests off the register (owner 2026-11-25).
+const PAGE = 50;
 
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -12,19 +16,29 @@ const PENDING = ["PM_APPROVED", "DIRECTOR_APPROVED", "AUTHORISED"];
 
 export default function PaymentRegisterPage({ site, me, onOpenDoc, onNewPyr,
                                              onClose }) {
-  const [pyrs, setPyrs] = useState([]);
-  const [tab, setTab] = useState("all");
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [at, setAt] = useState({ tab: "all", offset: 0 });
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const { tab, offset } = at;
+  const setTab = (t) => setAt({ tab: t, offset: 0 });
 
   useEffect(() => {
-    api(`/documents/list?site=${site.id}&doc_type=PYR`).then(setPyrs)
-      .catch((e) => setError(e.message));
-  }, [site.id]);
+    let stale = false;
+    const p = new URLSearchParams({ site: site.id, doc_type: "PYR",
+                                    limit: PAGE, offset });
+    if (tab === "pending") p.set("statuses", PENDING.join(","));
+    if (tab === "paid") p.set("statuses", "PAID");
+    setBusy(true);
+    api(`/documents/list?${p}`).then((d) => {
+      if (stale) return;
+      setRows(d.rows); setTotal(d.total); setError(null);
+    }).catch((e) => { if (!stale) setError(e.message); })
+      .finally(() => { if (!stale) setBusy(false); });
+    return () => { stale = true; };
+  }, [site.id, tab, offset]);
 
-  const rows = pyrs.filter((p) =>
-    tab === "all" ? true
-    : tab === "pending" ? PENDING.includes(p.status)
-    : p.status === "PAID");
   const canRaise = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"]
     .includes(me.role);
 
@@ -58,7 +72,9 @@ export default function PaymentRegisterPage({ site, me, onOpenDoc, onNewPyr,
 
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
 
-      <div style={{ overflowX: "auto" }}>
+      <Pager offset={offset} total={total} count={rows.length} busy={busy}
+             page={PAGE} onPage={(o) => setAt({ tab, offset: o })} />
+      <div style={{ overflowX: "auto", opacity: busy ? 0.6 : 1 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>
             <th style={th}>Ref</th><th style={th}>Date</th>
@@ -100,7 +116,7 @@ export default function PaymentRegisterPage({ site, me, onOpenDoc, onNewPyr,
                 </tr>
               );
             })}
-            {rows.length === 0 && (
+            {rows.length === 0 && !busy && (
               <tr><td style={td} colSpan={9}>
                 No payment requests{tab !== "all" ? ` (${tab})` : ""} yet.
               </td></tr>

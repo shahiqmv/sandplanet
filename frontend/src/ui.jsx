@@ -210,6 +210,37 @@ const CHIP_TONES = {
   alert: { background: "var(--red-bg)", color: "var(--red-fg)" },
   info: { background: "var(--sky-soft)", color: "var(--navy)" },
 };
+// A long list is drawn a page at a time, newest first (owner 2026-11-25).
+// `offset` is where the page starts, `count` the rows on it, `page` its size.
+export function Pager({ offset, total, count, busy, onPage, page = 50 }) {
+  if (total <= page && offset === 0) {
+    return total ? (
+      <div style={{ fontSize: 12.5, color: "var(--muted)", margin: "8px 0" }}>
+        {total} {total === 1 ? "row" : "rows"}</div>) : null;
+  }
+  const to = offset + count;
+  const small = { ...ghostButton, padding: "2px 10px" };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10,
+                  flexWrap: "wrap", margin: "8px 0", fontSize: 12.5,
+                  color: "var(--muted)" }}>
+      <span>{total === 0 ? 0 : offset + 1}–{to} of {total}</span>
+      <button style={small} disabled={busy || offset === 0}
+              onClick={() => onPage(Math.max(0, offset - page))}>
+        ← Newer</button>
+      <span>page {Math.floor(offset / page) + 1} of{" "}
+        {Math.ceil(total / page)}</span>
+      <button style={small} disabled={busy || to >= total}
+              onClick={() => onPage(offset + page)}>
+        Older →</button>
+      {offset > 0 && (
+        <button style={small} disabled={busy} onClick={() => onPage(0)}>
+          Newest</button>
+      )}
+    </div>
+  );
+}
+
 export function Chip({ tone = "info", children }) {
   return (
     <span style={{ ...CHIP_TONES[tone], fontSize: 11.5, fontWeight: 600,

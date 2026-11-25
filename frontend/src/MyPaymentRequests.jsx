@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { RefStamp, StatusChip, card, ghostButton, td, th } from "./ui.jsx";
+import { Pager, RefStamp, StatusChip, card, ghostButton, td, th }
+  from "./ui.jsx";
 
 // A requester's own payment requests, across sites — so a Head-Office raiser
 // (Purchasing, HR, QS…) can follow a PYR after it leaves their queue, instead
-// of it vanishing on submit. Read-only; uses documents/list?mine=1.
+// of it vanishing on submit. Read-only; uses documents/list?mine=1, a page at
+// a time — the list used to stop at the newest 200, so a busy requester
+// never saw their older requests (owner 2026-11-25).
+const PAGE = 50;
 
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -26,18 +30,29 @@ const WHERE = {
 
 export default function MyPaymentRequests({ me, onOpenDoc }) {
   const [pyrs, setPyrs] = useState(null);
-  const [tab, setTab] = useState("open");
+  const [total, setTotal] = useState(0);
+  const [at, setAt] = useState({ tab: "open", offset: 0 });
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const { tab, offset } = at;
+  const setTab = (t) => setAt({ tab: t, offset: 0 });
 
   useEffect(() => {
-    api("/documents/list?doc_type=PYR&mine=1").then(setPyrs)
-      .catch((e) => setError(e.message));
-  }, []);
+    let stale = false;
+    const p = new URLSearchParams({ doc_type: "PYR", mine: 1, limit: PAGE,
+                                    offset });
+    if (tab === "open") { p.set("statuses", OPEN.join(",")); p.set("live", 1); }
+    if (tab === "paid") p.set("statuses", "PAID");
+    setBusy(true);
+    api(`/documents/list?${p}`).then((d) => {
+      if (stale) return;
+      setPyrs(d.rows); setTotal(d.total); setError(null);
+    }).catch((e) => { if (!stale) setError(e.message); })
+      .finally(() => { if (!stale) setBusy(false); });
+    return () => { stale = true; };
+  }, [tab, offset]);
 
-  const rows = (pyrs || []).filter((p) =>
-    tab === "all" ? true
-    : tab === "open" ? (OPEN.includes(p.status) && !p.is_void)
-    : p.status === "PAID");
+  const rows = pyrs || [];
 
   return (
     <section style={card}>
@@ -63,7 +78,9 @@ export default function MyPaymentRequests({ me, onOpenDoc }) {
 
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
 
-      <div style={{ overflowX: "auto" }}>
+      <Pager offset={offset} total={total} count={rows.length} busy={busy}
+             page={PAGE} onPage={(o) => setAt({ tab, offset: o })} />
+      <div style={{ overflowX: "auto", opacity: busy ? 0.6 : 1 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>
             <th style={th}>Ref</th><th style={th}>Date</th>

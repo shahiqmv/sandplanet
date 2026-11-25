@@ -2216,6 +2216,27 @@ def documents_list(request):
         open_ids = [mr.id for mr in candidates
                     if remaining_mr_lines(mr, claimed)]
         qs = qs.filter(id__in=open_ids)
+    if request.GET.get("statuses"):
+        # the tabs of a paged list ("in progress", "pending", "paid") are
+        # chosen here — the browser no longer holds every row to filter
+        qs = qs.filter(status__in=[
+            x for x in request.GET["statuses"].upper().split(",") if x])
+    if request.GET.get("live"):
+        qs = qs.filter(is_void=False)
+    if "limit" in request.GET:
+        # A page at a time, with the count. Without `limit` the list is the
+        # newest 200 as before — which is what pickers and dashboard cards
+        # want, but cut a long register short: a requester with 383 payment
+        # requests saw 200 of them (owner 2026-11-25).
+        try:
+            limit = min(max(int(request.GET["limit"]), 1), 200)
+            offset = max(int(request.GET.get("offset", 0)), 0)
+        except ValueError:
+            return Response({"detail": "Bad paging."}, status=400)
+        return Response({
+            "rows": DocumentSerializer(qs[offset:offset + limit], many=True,
+                                       context={"request": request}).data,
+            "total": qs.count(), "offset": offset, "limit": limit})
     return Response(
         DocumentSerializer(qs[:200], many=True,
                            context={"request": request}).data
@@ -2311,6 +2332,52 @@ def _pr_payment_summary(revision, last_paid_at):
                             if last_paid_at else None)}
 
 
+def _register_search(qs, doc_type, q):
+    """Narrow a register to the rows matching every word typed.
+
+    The search runs here, not in the browser: the register is drawn a page
+    at a time, and a search that only looked through the page on screen
+    missed every older document — as the 300-row list it replaces did for
+    anything before PR-191 (owner 2026-11-25). A word matches the reference,
+    site, status, date, who raised it, anything in the document's own
+    details (supplier, vessel, delivery dates…) or a linked reference;
+    on the PR register "paid" and "part" also find PRs by how far their
+    suppliers are paid."""
+    from django.db.models import Exists, OuterRef
+
+    from .models import DocumentLine, DocumentLink
+
+    words = q.lower().split()
+    if not words:
+        return qs
+    qs = qs.annotate(_hay=Cast("current_revision__payload", TextField()),
+                     _day=Cast("doc_date", TextField()))
+    cash = DocumentLine.objects.filter(
+        revision_id=OuterRef("current_revision_id"), amount_cash__gt=0)
+    unpaid = cash.filter(action_taken__regex=r"^\s*$")
+    paid = cash.exclude(action_taken__regex=r"^\s*$")
+    for w in words[:8]:
+        cond = (Q(ref__icontains=w) | Q(site__code__icontains=w)
+                | Q(status__icontains=w, is_void=False)
+                | Q(created_by__full_name__icontains=w)
+                | Q(_day__icontains=w) | Q(_hay__icontains=w)
+                | Exists(DocumentLink.objects.filter(
+                    from_document_id=OuterRef("pk"),
+                    to_document__ref__icontains=w))
+                | Exists(DocumentLink.objects.filter(
+                    to_document_id=OuterRef("pk"),
+                    from_document__ref__icontains=w)))
+        if w in "void":
+            cond |= Q(is_void=True)
+        if doc_type == "PR":
+            if w in "paid":                       # paid in full or in part
+                cond |= Q(Exists(paid), is_void=False)
+            elif w in "part-paid":
+                cond |= Q(Exists(paid), Exists(unpaid), is_void=False)
+        qs = qs.filter(cond)
+    return qs
+
+
 @api_view(["GET"])
 def register_generic(request, doc_type):
     """Registers are views over document data (spec §6) — one row per
@@ -2320,8 +2387,10 @@ def register_generic(request, doc_type):
     if doc_type not in Document.TRANSITIONS:
         return Response({"detail": "Unknown register."}, status=404)
     qs = Document.objects.filter(doc_type=doc_type).select_related(
-        "site", "current_revision", "created_by"
-    ).prefetch_related("revisions").order_by("-id")
+        "site", "current_revision", "created_by", "previous_ir"
+    ).prefetch_related(
+        "revisions", "links_from__to_document", "links_to__from_document"
+    ).order_by("-id")
     if doc_type in ("PO", "PR"):
         # The order value is summed from the lines, so fetch them with the
         # revisions rather than one query per order — 105 orders would
@@ -2336,6 +2405,19 @@ def register_generic(request, doc_type):
         qs = qs.filter(site_id=request.GET["site"])
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
+    qs = _register_search(qs, doc_type, request.GET.get("q") or "")
+
+    # A page at a time. The register used to send its newest 300 rows and
+    # stop: with 490 PRs everything before PR-191 was simply not there, and
+    # the search box looked only through what had been sent (owner
+    # 2026-11-25).
+    try:
+        limit = min(max(int(request.GET.get("limit", 50)), 1), 200)
+        offset = max(int(request.GET.get("offset", 0)), 0)
+    except ValueError:
+        return Response({"detail": "Bad paging."}, status=400)
+    total = qs.count()
+    page = list(qs[offset:offset + limit])
 
     rows = []
     # A purchase order is read by who it is with and what it is worth, and
@@ -2352,18 +2434,18 @@ def register_generic(request, doc_type):
 
         from .models import Approval
         paid_on = dict(Approval.objects.filter(
-            document__in=[d.id for d in qs[:300]],
+            document__in=[d.id for d in page],
             action="PAYMENT_RECORDED").values("document_id")
             .annotate(last=Max("acted_at")).values_list("document_id", "last"))
-    for doc in qs[:300]:
+    for doc in page:
         # the current revision (prefer the is_current flag; fall back to the FK)
         current = next((r for r in doc.revisions.all() if r.is_current),
                        doc.current_revision)
         revisions = [current]
         links = {}
-        for link in doc.links_from.select_related("to_document"):
+        for link in doc.links_from.all():
             links.setdefault(link.link_type, []).append(link.to_document.ref)
-        for link in doc.links_to.select_related("from_document"):
+        for link in doc.links_to.all():
             links.setdefault(link.link_type, []).append(link.from_document.ref)
         for revision in revisions:
             payload = (revision.payload if revision else {}) or {}
@@ -2391,7 +2473,8 @@ def register_generic(request, doc_type):
                 **(_pr_payment_summary(revision, paid_on.get(doc.id))
                    if doc_type == "PR" else {}),
             })
-    return Response({"doc_type": doc_type, "rows": rows})
+    return Response({"doc_type": doc_type, "rows": rows, "total": total,
+                     "offset": offset, "limit": limit})
 
 
 @api_view(["GET", "PATCH"])

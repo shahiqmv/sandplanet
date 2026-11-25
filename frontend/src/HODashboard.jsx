@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
-import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
+import { Chip, Eyebrow, Pager, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, inputStyle, td, th } from "./ui.jsx";
 const money = (v) => Number(v || 0).toLocaleString("en-US",
   { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -20,6 +20,15 @@ const prPaidStyle = (row) => ({
 }[prPaidState(row)] || {});
 const shortDay = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB",
   { day: "numeric", month: "short" }) : "");
+
+// The registers are drawn a page at a time (owner 2026-11-25): sending the
+// newest 300 rows was slow and silently dropped everything older — with 490
+// PRs the list stopped at PR-191. The search runs on the server, across the
+// whole register.
+const PAGE = 50;
+// Opening a document unmounts the dashboard; the search and the page each
+// register was on are kept here so closing it returns to the same place.
+const kept = { q: "", offsets: {} };
 
 function PrPaid({ row }) {
   const state = prPaidState(row);
@@ -57,33 +66,57 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
   const [pending, setPending] = useState([]);
   // Lengthy registers need finding, not scrolling: one box matches the
   // reference, site, status, supplier, linked refs and who raised it
-  // (owner 2026-09-15). Words are ANDed, so "VKR PO-14" narrows twice.
-  const [q, setQ] = useState("");
-  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const hay = (row) => [
-    row.ref, row.site_code, row.status, row.created_by, row.date,
-    row.supplier, row.supplier_contact, row.source_ref, row.payment_terms,
-    ...Object.values(row.links || {}).flat(),
-    ...Object.values(row.payload_summary || {}),
-    // "paid" finds PRs with a payment, "part" the half-paid ones
-    // (owner 2026-11-17)
-    { PAID: "paid", PART: "part-paid" }[prPaidState(row)],
-  ].filter(Boolean).join(" ").toLowerCase().replace(/_/g, " ");
-  const shown = words.length
-    ? rows.filter((row) => { const h = hay(row);
-                             return words.every((w) => h.includes(w)); })
-    : rows;
+  // (owner 2026-09-15). Words are ANDed, so "VKR PO-14" narrows twice;
+  // on the PR register "paid" finds PRs with a payment and "part" the
+  // half-paid ones (owner 2026-11-17). The server does the matching, over
+  // the whole register and not only the page on screen.
+  const [q, setQ] = useState(kept.q);
+  const [query, setQuery] = useState(kept.q.trim());
+  useEffect(() => {
+    kept.q = q;
+    const t = setTimeout(() => setQuery(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+  const [total, setTotal] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [offsets, setOffsets] = useState(kept.offsets);
+  const at = `${tab}|${query}`;
+  const offset = offsets[at] || 0;
+  const setOffset = (o) => setOffsets((m) => {
+    kept.offsets = { ...m, [at]: o };
+    return kept.offsets;
+  });
+  const asked = useRef(0);
 
-  const load = useCallback(() => {
+  useEffect(() => {
     api("/dashboards/ho").then(setStats).catch(() => setStats(null));
+  }, [tab, refresh]);
+
+  useEffect(() => {
     if (tab === "PENDING") {
       api("/pending-items").then(setPending);
-    } else {
-      api(`/registers/${tab.toLowerCase()}`).then((d) => setRows(d.rows));
+      return;
     }
-  }, [tab]);
-
-  useEffect(load, [load, refresh]);
+    const mine = ++asked.current;       // a slower, older answer is dropped
+    const p = new URLSearchParams({ limit: PAGE, offset });
+    if (query) p.set("q", query);
+    setBusy(true);
+    api(`/registers/${tab.toLowerCase()}?${p}`).then((d) => {
+      if (mine !== asked.current) return;
+      setRows(d.rows);
+      setTotal(d.total);
+      // a remembered page beyond the end of a register that has since
+      // shrunk falls back to the newest
+      if (d.rows.length === 0 && d.total > 0 && offset > 0) {
+        setOffsets((m) => {
+          kept.offsets = { ...m, [`${tab}|${query}`]: 0 };
+          return kept.offsets;
+        });
+      }
+    }).catch(() => {}).finally(() => {
+      if (mine === asked.current) setBusy(false);
+    });
+  }, [tab, query, offset, refresh]);
 
   const canPurchase = ["HO_PURCHASING", "ADMIN"].includes(me.role);
 
@@ -200,7 +233,11 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
             </tbody>
           </table>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <>
+          <Pager offset={offset} total={total} count={rows.length}
+                 busy={busy} onPage={setOffset} page={PAGE} />
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          opacity: busy ? 0.6 : 1 }}>
             <thead><tr>
               <th style={th}>Ref</th><th style={th}>Rev</th>
               <th style={th}>Date</th><th style={th}>Site</th>
@@ -219,7 +256,7 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
               <th style={th}>By</th>
             </tr></thead>
             <tbody>
-              {shown.map((row, i) => (
+              {rows.map((row, i) => (
                 <tr key={`${row.ref}-${row.rev}-${i}`}
                     style={{ ...(row.is_current_rev ? {} : { opacity: 0.55 }),
                              ...(isPr ? prPaidStyle(row) : {}) }}>
@@ -295,17 +332,21 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
                   <td style={td}>{row.created_by}</td>
                 </tr>
               ))}
-              {rows.length === 0 && (
+              {rows.length === 0 && !busy && !query && (
                 <tr><td style={td} colSpan={isPo ? 10 : isPr ? 9 : 8}>
                   No {DOC_LABELS[tab]}s yet.</td></tr>
               )}
-              {rows.length > 0 && shown.length === 0 && (
+              {rows.length === 0 && !busy && query && (
                 <tr><td style={td} colSpan={isPo ? 10 : isPr ? 9 : 8}>
-                  Nothing matches “{q.trim()}” in the last {rows.length}{" "}
-                  {DOC_LABELS[tab]} rows.</td></tr>
+                  Nothing matches “{query}” in the {DOC_LABELS[tab]}{" "}
+                  register.</td></tr>
               )}
             </tbody>
           </table>
+          {rows.length > 15 && (
+            <Pager offset={offset} total={total} count={rows.length}
+                   busy={busy} onPage={setOffset} page={PAGE} />)}
+          </>
         )}
       </section>
     </>
