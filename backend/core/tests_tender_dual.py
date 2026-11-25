@@ -274,3 +274,70 @@ class DualOfferAwardTests(DualOfferBase):
         official = D(str(fx.usd_rate()))
         self.assertEqual(_contract_value(self.site).quantize(D("0.01")),
                          (D("11080.69") / official).quantize(D("0.01")))
+
+
+class SplitRateBillPrintTests(DualOfferBase):
+    """A bill priced material and labour apart prints both rates.
+
+    It printed one Rate column holding the material rate alone, beside an
+    amount that included the labour: qty × rate was not the amount, and a
+    labour-only line showed an amount against no rate (owner 2026-11-26)."""
+
+    ROWS = [
+        {"description": "Bill 1"},
+        {"description": "Tiling", "unit": "m2", "qty": "10",
+         "unit_cost": "5", "rate_supply": "12.50", "rate_install": "7.50"},
+        {"description": "Fix only", "unit": "Nos", "qty": "4",
+         "labour_cost": "5", "rate_install": "25"},
+    ]
+
+    def split_bill(self, tid):
+        self.price(tid, self.ROWS)
+        # rows that carry a labour rate make the bill a split one
+        self.assertTrue(Boq.objects.get(tender_id=tid).split_rates)
+        return svc.submission_context(self.tender(tid))
+
+    def test_a_split_bill_prints_material_and_labour(self):
+        t = self.open(currency="USD")
+        ctx = self.split_bill(t["id"])
+        self.assertEqual([h["label"] for h in ctx["bill_heads"]],
+                         ["Material", "Labour", "Amount"])
+        _, tiling, fix = ctx["boq_rows"]
+        self.assertEqual(tiling["cells"], ["12.50", "7.50", "200.00"])
+        self.assertEqual(fix["cells"], ["", "25.00", "100.00"])
+        self.assertEqual(ctx["bill_tot_cells"], ["", "300.00"])
+        html = render_to_string("pdf/tender_submission.html", ctx)
+        for text in ("Material", "Labour", "12.50", "7.50", "300.00"):
+            self.assertIn(text, html)
+
+    def test_a_combined_bill_prints_one_rate_that_makes_the_amount(self):
+        t = self.open(currency="USD")
+        self.price(t["id"], self.ROWS)
+        # saving labour rates marks the bill split; one that is not, but
+        # still carries a labour rate on a line, prints the whole rate
+        Boq.objects.filter(tender_id=t["id"]).update(split_rates=False)
+        ctx = svc.submission_context(self.tender(t["id"]))
+        self.assertEqual([h["label"] for h in ctx["bill_heads"]],
+                         ["Rate", "Amount"])
+        _, tiling, fix = ctx["boq_rows"]
+        # the rate is the whole rate, so 10 × 20.00 is the 200.00 beside it
+        self.assertEqual(tiling["cells"], ["20.00", "200.00"])
+        self.assertEqual(fix["cells"], ["25.00", "100.00"])
+        self.assertEqual(ctx["bill_tot_cells"], ["300.00"])
+
+    def test_a_split_bill_in_two_currencies_prints_both_legs_of_each(self):
+        ctx = self.split_bill(self.t["id"])       # MVR with USD shown, at 22
+        self.assertEqual(
+            [h["label"] for h in ctx["bill_heads"]],
+            ["Material (MVR)", "Labour (MVR)", "Amount (MVR)",
+             "Material (USD)", "Labour (USD)", "Amount (USD)"])
+        _, tiling, fix = ctx["boq_rows"]
+        self.assertEqual(tiling["cells"], ["275.00", "165.00", "4,400.00",
+                                           "12.50", "7.50", "200.00"])
+        self.assertEqual(fix["cells"], ["", "550.00", "2,200.00",
+                                        "", "25.00", "100.00"])
+        self.assertEqual(ctx["bill_tot_cells"],
+                         ["", "6,600.00", "", "", "300.00"])
+        html = render_to_string("pdf/tender_submission.html", ctx)
+        self.assertIn("Labour (MVR)", html)
+        self.assertIn("6,600.00", html)

@@ -95,6 +95,9 @@
   .bill tr.head td { background: #F6F2E9; font-weight: 600; color: {% brand "primary" %}; }
   .bill tr.tot td { border-top: 1.5pt solid {% brand "primary" %}; font-weight: 700;
                     background: {% brand "soft3" %}; }
+  /* six money columns: material, labour and amount in two currencies */
+  .bill.compact th { font-size: 6.4pt; padding: 3pt 3pt; letter-spacing: .2pt; }
+  .bill.compact td { font-size: 7pt; padding: 2pt 3pt; }
 </style>
 </head>
 <body>
@@ -238,40 +241,31 @@
   <div class="sect-rule"></div>
   <div class="strap"><span class="mono">{{ ref }}</span> &nbsp;|&nbsp;
     {{ rev_label }} &nbsp;|&nbsp; {% if dual %}offered in MVR, with the USD amounts beside them{% else %}all amounts in {{ tender.currency }}{% endif %}</div>
-  <table class="bill">
+  <table class="bill{% if bill_compact %} compact{% endif %}">
     <thead><tr>
-      <th style="width:30pt;">Item</th><th>Description</th>
-      <th style="width:34pt;">Unit</th><th class="n" style="width:44pt;">Qty</th>
-      {% if dual %}
-      <th class="n" style="width:54pt;">Rate (MVR)</th>
-      <th class="n" style="width:62pt;">Amount (MVR)</th>
-      <th class="n" style="width:50pt;">Rate (USD)</th>
-      <th class="n" style="width:56pt;">Amount (USD)</th>
-      {% else %}
-      <th class="n" style="width:56pt;">Rate</th>
-      <th class="n" style="width:64pt;">Amount</th>
-      {% endif %}
+      <th style="width:{% if bill_compact %}24{% else %}30{% endif %}pt;">Item</th><th>Description</th>
+      <th style="width:{% if bill_compact %}26{% else %}34{% endif %}pt;">Unit</th>
+      <th class="n" style="width:{% if bill_compact %}36{% else %}44{% endif %}pt;">Qty</th>
+      {% for h in bill_heads %}
+      <th class="n" style="width:{{ h.width }}pt;">{{ h.label }}</th>
+      {% endfor %}
     </tr></thead>
     <tbody>
       {% for it in boq_rows %}
         {% if it.is_heading %}
-          <tr class="head"><td></td><td colspan="{% if dual %}7{% else %}5{% endif %}">{{ it.section }}</td></tr>
+          <tr class="head"><td></td><td colspan="{{ bill_head_span }}">{{ it.section }}</td></tr>
         {% else %}
           <tr>
             <td class="mono">{{ it.item_code }}</td>
             <td>{{ it.description }}</td>
             <td>{{ it.unit }}</td>
             <td class="n">{{ it.qty }}</td>
-            <td class="n">{{ it.rate }}</td>
-            <td class="n">{{ it.amount }}</td>
-            {% if dual %}<td class="n">{{ it.rate_usd }}</td>
-            <td class="n">{{ it.amount_usd }}</td>{% endif %}
+            {% for c in it.cells %}<td class="n">{{ c }}</td>{% endfor %}
           </tr>
         {% endif %}
       {% endfor %}
       <tr class="tot"><td></td><td colspan="4">Total</td>
-          <td class="n">{{ bill_total_fmt }}</td>
-          {% if dual %}<td></td><td class="n">{{ bill_total_usd_fmt }}</td>{% endif %}</tr>
+          {% for c in bill_tot_cells %}<td class="n">{{ c }}</td>{% endfor %}</tr>
     </tbody>
   </table>
 </div>

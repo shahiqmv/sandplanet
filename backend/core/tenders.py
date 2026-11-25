@@ -639,7 +639,12 @@ def line_money(it, rate):
         mvr_rate = to_mvr(it.rate_supply, rate) + to_mvr(it.rate_install, rate)
         mvr_amount = (it.qty or Decimal("0")) * mvr_rate
     return {"rate": mvr_rate, "amount": mvr_amount,
-            "rate_usd": usd_rate, "amount_usd": usd_amount}
+            "rate_usd": usd_rate, "amount_usd": usd_amount,
+            # the two legs, for a bill priced material and labour apart
+            "material": (to_mvr(it.rate_supply, rate)
+                         if it.rate_supply is not None else None),
+            "labour": (to_mvr(it.rate_install, rate)
+                       if it.rate_install is not None else None)}
 
 
 def _set_currency(t, data):
@@ -933,19 +938,55 @@ def _money(v):
     return f"{Decimal(v or 0).quantize(Decimal('0.01')):,}"
 
 
-def _line_fmt(it, rate):
-    """A bill line's money, grouped for print."""
-    if rate is None:
-        return {"rate": (_money(it.rate_supply)
-                         if it.rate_supply is not None else ""),
-                "amount": _money(it.amount)}
-    m = line_money(it, rate)
+def _bill_heads(split, dual):
+    """The money columns of the printed bill, as (label, width in points).
+
+    A bill priced material and labour apart prints both rates. It used to
+    print one Rate column holding the material rate alone, beside an amount
+    that included the labour — so qty × rate was not the amount, and a
+    labour-only line showed an amount against no rate at all (owner
+    2026-11-26)."""
+    if dual and split:
+        return [("Material (MVR)", 45), ("Labour (MVR)", 45),
+                ("Amount (MVR)", 56), ("Material (USD)", 42),
+                ("Labour (USD)", 42), ("Amount (USD)", 50)]
+    if dual:
+        return [("Rate (MVR)", 54), ("Amount (MVR)", 62),
+                ("Rate (USD)", 50), ("Amount (USD)", 56)]
+    if split:
+        return [("Material", 54), ("Labour", 54), ("Amount", 64)]
+    return [("Rate", 56), ("Amount", 64)]
+
+
+def _line_fmt(it, rate, split=False):
+    """A bill line's money, grouped for print: the named figures, and
+    `cells` — the same figures in the order of `_bill_heads`."""
+    def f(v):
+        return _money(v) if v is not None else ""
     priced = (it.rate_supply is not None or it.rate_install is not None)
+    if rate is None:
+        out = {"rate": f(it.rate_total) if priced else "",
+               "amount": _money(it.amount)}
+        out["cells"] = ([f(it.rate_supply), f(it.rate_install), out["amount"]]
+                        if split else [out["rate"], out["amount"]])
+        return out
+    m = line_money(it, rate)
     plain = priced and not it.is_discount
-    return {"rate": _money(m["rate"]) if plain else "",
-            "amount": _money(m["amount"]),
-            "rate_usd": _money(m["rate_usd"]) if plain else "",
-            "amount_usd": _money(m["amount_usd"])}
+    out = {"rate": _money(m["rate"]) if plain else "",
+           "amount": _money(m["amount"]),
+           "rate_usd": _money(m["rate_usd"]) if plain else "",
+           "amount_usd": _money(m["amount_usd"])}
+    if split:
+        legs = plain and not it.is_heading
+        out["cells"] = [
+            f(m["material"]) if legs else "", f(m["labour"]) if legs else "",
+            out["amount"],
+            f(it.rate_supply) if legs else "", f(it.rate_install) if legs else "",
+            out["amount_usd"]]
+    else:
+        out["cells"] = [out["rate"], out["amount"],
+                        out["rate_usd"], out["amount_usd"]]
+    return out
 
 
 def submission_context(t):
@@ -961,6 +1002,13 @@ def submission_context(t):
     bill_usd = (sum((b["amount_usd"] for b in bills), Decimal("0"))
                 if rate is not None else None)
     stack = money_stack(t, bill_total, bill_usd)
+    split = bool(boq is not None and boq.split_rates)
+    heads = _bill_heads(split, rate is not None)
+    n_rate = 2 if split else 1          # rate columns before each amount
+    # The total row: blank under the rates, the total under each amount.
+    tot_cells = [""] * (n_rate - 1) + [_money(bill_total)]
+    if rate is not None:
+        tot_cells += [""] * n_rate + [_money(bill_usd)]
 
     def fdate(d):
         return d.strftime("%d %B %Y") if d else ""
@@ -1021,9 +1069,14 @@ def submission_context(t):
             "item_code": it.item_code, "description": it.description,
             "unit": it.unit,
             "qty": (f"{it.qty:,}" if it.qty is not None else ""),
-            **_line_fmt(it, rate),
+            **_line_fmt(it, rate, split),
         } for it in boq.items.all().order_by("sort_order", "id")]
             if boq is not None else []),
+        # The bill's money columns and how its rows span them.
+        "bill_heads": [{"label": h, "width": w} for h, w in heads],
+        "bill_head_span": 3 + len(heads),
+        "bill_tot_cells": tot_cells,
+        "bill_compact": split and rate is not None,
         "offered": stack["subtotal"],
         "diverges": (t.value_submitted is not None
                      and abs(t.value_submitted - bill_total)
