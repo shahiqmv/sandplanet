@@ -216,7 +216,30 @@ def _call_claude(content, model):
     raise ExtractionError("The model returned no structured rows.")
 
 
-def structure(pages, model=None):
+def pricing_currency(owner):
+    """The currency a bill's RATES are in. An MVR offer that shows USD is
+    priced in USD — its rufiyaa figures are worked from the dollar ones at the
+    offer's rate — so that is what a capture must read (owner 2026-11-25)."""
+    if hasattr(owner, "is_dual"):                           # a tender
+        return "USD" if owner.is_dual else (owner.currency or "USD")
+    boq = getattr(owner, "boq", None)                       # a project
+    return (boq.currency if boq is not None else "USD") or "USD"
+
+
+def _currency_note(currency):
+    """Which columns to read when a client's bill prices every line twice.
+    Without it the model takes whichever rate column comes first — on a bill
+    with Rate (MVR) before Rate (USD), the rufiyaa one."""
+    if not currency:
+        return ""
+    return (f"This bill is priced in {currency}. If the document shows rates "
+            f"or amounts in more than one currency (for example columns "
+            f"'Rate (MVR)' and 'Rate (USD)'), take ONLY the {currency} rates, "
+            f"report ONLY {currency} totals in printed_totals, and ignore the "
+            f"other currency's columns entirely.\n\n")
+
+
+def structure(pages, model=None, currency=None):
     """Run the (possibly batched) model extraction over the document pages.
     Returns {rate_mode, rows, printed_totals}.
 
@@ -231,7 +254,7 @@ def structure(pages, model=None):
 
     def run(batch):
         header = ("Extract the BOQ from this document text. Page markers are "
-                  "shown as [PAGE n].\n\n")
+                  "shown as [PAGE n].\n\n") + _currency_note(currency)
         body = "\n\n".join(f"[PAGE {n}]\n{text}" for n, text in batch)
         return _call_claude(header + body, model) or {}
 
@@ -399,7 +422,8 @@ def run_import(owner, upload, actor, background=True):
     imp = BoqImport.objects.create(
         **_owner_key(owner), source=source, status=BoqImport.Status.RUNNING,
         filename=getattr(upload, "name", "") or "",
-        meta={"page_count": len(pages)}, created_by=actor)
+        meta={"page_count": len(pages),
+              "currency": pricing_currency(owner)}, created_by=actor)
     if background and not getattr(settings, "TESTING", False):
         threading.Thread(target=_extract_into, args=(imp.id, pages, True),
                          daemon=True).start()
@@ -425,7 +449,7 @@ def _extract_into(import_id, pages, own_thread):
         close_old_connections()
     imp = BoqImport.objects.get(pk=import_id)
     try:
-        result = structure(pages)
+        result = structure(pages, currency=(imp.meta or {}).get("currency"))
         rows = normalise_rows(result["rows"])
         if not rows:
             raise ExtractionError("No BOQ lines were found in that document — "

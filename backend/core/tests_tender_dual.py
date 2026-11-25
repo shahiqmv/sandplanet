@@ -355,3 +355,63 @@ class OfferMatchesBillTests(DualOfferBase):
         self.price(t["id"])
         self.clear(t["id"], "500")
         self.assertFalse(svc.snapshot(self.tender(t["id"]))["bill_matches_offer"])
+
+
+class TwoCurrencyBillCaptureTests(DualOfferBase):
+    """A client's bill that prices every line in MVR and in USD is captured
+    on its dollar columns when the offer is an MVR one priced in USD —
+    otherwise the reader takes whichever rate column comes first."""
+
+    OUT = {"rate_mode": "SINGLE", "printed_totals": ["172.82"], "rows": [
+        {"description": "Remove louvres", "unit": "Nos", "qty": "2",
+         "rate_combined": "86.41"}]}
+
+    def workbook(self):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["#", "Description", "Unit", "Qty", "Rate (MVR)",
+                   "Total Amount (MVR)", "Rate (USD)", "Total Amount (USD)"])
+        ws.append(["1.1", "Remove louvres", "Nos", 2, 1901.04, 3802.08,
+                   86.41, 172.82])
+        buf = io.BytesIO()
+        wb.save(buf)
+        return SimpleUploadedFile("their bill.xlsx", buf.getvalue())
+
+    def test_the_bill_is_read_in_the_currency_it_is_priced_in(self):
+        from . import boq_extract
+        self.assertEqual(boq_extract.pricing_currency(self.tender()), "USD")
+        mvr = self.open(currency="MVR")
+        self.assertEqual(
+            boq_extract.pricing_currency(self.tender(mvr["id"])), "MVR")
+        usd = self.open(currency="USD")
+        self.assertEqual(
+            boq_extract.pricing_currency(self.tender(usd["id"])), "USD")
+
+    def test_the_reader_is_told_which_columns_to_take(self):
+        from unittest.mock import patch
+
+        from . import boq_extract
+        with patch("core.boq_extract._call_claude",
+                   return_value=self.OUT) as call:
+            imp, err = boq_extract.run_import(self.tender(), self.workbook(),
+                                              self.qs, background=False)
+        self.assertIsNone(err)
+        self.assertEqual(imp.meta["currency"], "USD")
+        said = call.call_args[0][0]
+        self.assertIn("priced in USD", said)
+        self.assertIn("take ONLY the USD rates", said)
+        self.assertIn("Rate (MVR)", said)            # the sheet itself is sent
+        self.assertEqual(imp.rows[0]["rate_combined"], "86.41")
+
+    def test_a_reading_with_no_currency_carries_no_such_note(self):
+        from unittest.mock import patch
+
+        from . import boq_extract
+        with patch("core.boq_extract._call_claude",
+                   return_value=self.OUT) as call:
+            boq_extract.structure([(1, "a bill")])
+        self.assertNotIn("priced in", call.call_args[0][0])
