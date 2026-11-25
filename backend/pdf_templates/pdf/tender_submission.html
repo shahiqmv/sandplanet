@@ -150,33 +150,42 @@
   <table class="sum">
     <thead><tr><th style="width:52pt;">Bill no.</th><th>Description</th>
       <th class="n" style="width:104pt;">Amount ({{ tender.currency }})</th>
+      {% if dual %}<th class="n" style="width:92pt;">Amount (USD)</th>{% endif %}
     </tr></thead>
     <tbody>
       {% for b in bills %}
         <tr><td>{{ b.no }}.00</td><td>{{ b.name }}</td>
-            <td class="n">{{ b.amount_fmt }}</td></tr>
+            <td class="n">{{ b.amount_fmt }}</td>
+            {% if dual %}<td class="n">{{ b.usd_fmt }}</td>{% endif %}</tr>
       {% empty %}
         <tr><td></td><td>Priced bill attached</td>
-            <td class="n">{{ stack_fmt.subtotal }}</td></tr>
+            <td class="n">{{ stack_fmt.subtotal }}</td>
+            {% if dual %}<td class="n">{{ stack_usd_fmt.subtotal }}</td>{% endif %}</tr>
       {% endfor %}
       <tr class="sub"><td></td><td>Sub total</td>
-          <td class="n">{{ stack_fmt.subtotal }}</td></tr>
+          <td class="n">{{ stack_fmt.subtotal }}</td>
+          {% if dual %}<td class="n">{{ stack_usd_fmt.subtotal }}</td>{% endif %}</tr>
       {% if stack.discount %}
         <tr><td></td><td>Less: {{ stack.discount_label }}</td>
-            <td class="n">({{ stack_fmt.discount }})</td></tr>
+            <td class="n">({{ stack_fmt.discount }})</td>
+            {% if dual %}<td class="n">({{ stack_usd_fmt.discount }})</td>{% endif %}</tr>
         <tr class="sub"><td></td><td>Sub total after discount</td>
-            <td class="n">{{ stack_fmt.after_discount }}</td></tr>
+            <td class="n">{{ stack_fmt.after_discount }}</td>
+            {% if dual %}<td class="n">{{ stack_usd_fmt.after_discount }}</td>{% endif %}</tr>
       {% endif %}
       {% for p in prov_rows %}
         <tr><td></td><td>Provisional sum — {{ p.label }}</td>
-            <td class="n">{{ p.amount_fmt }}</td></tr>
+            <td class="n">{{ p.amount_fmt }}</td>
+            {% if dual %}<td class="n">{{ p.usd_fmt }}</td>{% endif %}</tr>
       {% endfor %}
       {% if stack.gst %}
         <tr><td></td><td>GST at {{ stack.gst_percent|floatformat:"-2" }}%</td>
-            <td class="n">{{ stack_fmt.gst }}</td></tr>
+            <td class="n">{{ stack_fmt.gst }}</td>
+            {% if dual %}<td class="n">{{ stack_usd_fmt.gst }}</td>{% endif %}</tr>
       {% endif %}
-      <tr class="tot"><td></td><td>Grand total ({{ tender.currency }})</td>
-          <td class="n">{{ stack_fmt.grand_total }}</td></tr>
+      <tr class="tot"><td></td><td>Grand total{% if not dual %} ({{ tender.currency }}){% endif %}</td>
+          <td class="n">{{ stack_fmt.grand_total }}</td>
+          {% if dual %}<td class="n">{{ stack_usd_fmt.grand_total }}</td>{% endif %}</tr>
     </tbody>
   </table>
   <div class="words">{{ value_words }}</div>
@@ -228,18 +237,25 @@
   <div class="secttitle">Bill of Quantities</div>
   <div class="sect-rule"></div>
   <div class="strap"><span class="mono">{{ ref }}</span> &nbsp;|&nbsp;
-    {{ rev_label }} &nbsp;|&nbsp; all amounts in {{ tender.currency }}</div>
+    {{ rev_label }} &nbsp;|&nbsp; {% if dual %}offered in MVR, with the USD amounts beside them{% else %}all amounts in {{ tender.currency }}{% endif %}</div>
   <table class="bill">
     <thead><tr>
       <th style="width:30pt;">Item</th><th>Description</th>
       <th style="width:34pt;">Unit</th><th class="n" style="width:44pt;">Qty</th>
+      {% if dual %}
+      <th class="n" style="width:54pt;">Rate (MVR)</th>
+      <th class="n" style="width:62pt;">Amount (MVR)</th>
+      <th class="n" style="width:50pt;">Rate (USD)</th>
+      <th class="n" style="width:56pt;">Amount (USD)</th>
+      {% else %}
       <th class="n" style="width:56pt;">Rate</th>
       <th class="n" style="width:64pt;">Amount</th>
+      {% endif %}
     </tr></thead>
     <tbody>
       {% for it in boq_rows %}
         {% if it.is_heading %}
-          <tr class="head"><td></td><td colspan="5">{{ it.section }}</td></tr>
+          <tr class="head"><td></td><td colspan="{% if dual %}7{% else %}5{% endif %}">{{ it.section }}</td></tr>
         {% else %}
           <tr>
             <td class="mono">{{ it.item_code }}</td>
@@ -248,11 +264,14 @@
             <td class="n">{{ it.qty }}</td>
             <td class="n">{{ it.rate }}</td>
             <td class="n">{{ it.amount }}</td>
+            {% if dual %}<td class="n">{{ it.rate_usd }}</td>
+            <td class="n">{{ it.amount_usd }}</td>{% endif %}
           </tr>
         {% endif %}
       {% endfor %}
       <tr class="tot"><td></td><td colspan="4">Total</td>
-          <td class="n">{{ bill_total_fmt }}</td></tr>
+          <td class="n">{{ bill_total_fmt }}</td>
+          {% if dual %}<td></td><td class="n">{{ bill_total_usd_fmt }}</td>{% endif %}</tr>
     </tbody>
   </table>
 </div>

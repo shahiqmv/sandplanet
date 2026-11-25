@@ -13,7 +13,7 @@ submission**. Once issued it is immutable, and a further price is a further
 revision — the first submission stays on the record either way.
 """
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.db import transaction
 
@@ -101,6 +101,13 @@ def create_tender(data, actor):
                       "enquiry came from.")
     if not title:
         return None, "Give the tender a title."
+    # checked before the reference is drawn, so a bad rate wastes no number
+    probe = Tender(currency="USD")
+    msg = _set_currency(probe, {"currency": data.get("currency"),
+                                "usd_shown": data.get("usd_shown"),
+                                "offer_rate": data.get("offer_rate")})
+    if msg:
+        return None, msg
     doc = Document.objects.create(
         doc_type="TDR", ref=next_ref("TDR", site), site=site,
         doc_date=data.get("enquiry_date") or date.today(),
@@ -128,9 +135,12 @@ def create_tender(data, actor):
         enquiry_date=data.get("enquiry_date") or None,
         due_date=data.get("due_date") or None,
         submit_our_format=bool(data.get("submit_our_format", True)),
-        currency=(data.get("currency") or "USD").upper()[:3])
+        currency=probe.currency, usd_shown=probe.usd_shown,
+        offer_rate=probe.offer_rate)
     audit("tender", t.id, "TENDER_OPENED", actor=actor,
-          detail={"ref": doc.ref, "site": site.code, "client": t.client_name})
+          detail={"ref": doc.ref, "site": site.code, "client": t.client_name,
+                  "currency": t.currency,
+                  **({"offer_rate": str(t.offer_rate)} if t.is_dual else {})})
     return t, None
 
 
@@ -154,8 +164,10 @@ def edit_tender(t, data, actor):
         t.due_date = data.get("due_date") or None
     if "submit_our_format" in data:
         t.submit_our_format = bool(data.get("submit_our_format"))
-    if "currency" in data:
-        t.currency = (data.get("currency") or "USD").upper()[:3]
+    was = (t.currency, t.usd_shown, t.offer_rate)
+    msg = _set_currency(t, data)
+    if msg:
+        return msg
     # What the commercial proposal prints.
     for f in ("doc_ref", "payment_terms", "client_provides", "exclusions",
               "variations", "warranty_terms", "prepared_by", "reviewed_by",
@@ -193,6 +205,12 @@ def edit_tender(t, data, actor):
     t.save()
     audit("tender", t.id, "TENDER_EDITED", actor=actor,
           detail={"ref": t.document.ref})
+    if was != (t.currency, t.usd_shown, t.offer_rate):
+        audit("tender", t.id, "TENDER_CURRENCY_SET", actor=actor,
+              detail={"ref": t.document.ref, "currency": t.currency,
+                      "usd_shown": t.usd_shown,
+                      "offer_rate": str(t.offer_rate or ""),
+                      "was": [was[0], was[1], str(was[2] or "")]})
     return None
 
 
@@ -301,7 +319,13 @@ def send_for_approval(t, data, actor):
             kind="TENDER_BILL").exists():
         return ("This offer is submitted on the client's own bill — upload "
                 "that file under Documents first.")
-    rev.payload = {**(rev.payload or {}), "value": str(value)}
+    if t.usd_shown and not t.is_dual:
+        return ("Enter the exchange rate for this offer before sending it "
+                "up — the rufiyaa figures are worked from it.")
+    rev.payload = {**(rev.payload or {}), "value": str(value),
+                   "currency": t.currency,
+                   # the rate the approvers see, kept with the revision
+                   "offer_rate": str(t.offer_rate) if t.is_dual else ""}
     rev.save(update_fields=["payload"])
     t.value_submitted = value
     t.save(update_fields=["value_submitted"])
@@ -310,7 +334,8 @@ def send_for_approval(t, data, actor):
     _tell(doc, actor)
     audit("tender", t.id, "TENDER_SENT_FOR_APPROVAL", actor=actor,
           detail={"ref": doc.ref, "rev": rev.rev_label,
-                  "currency": t.currency})
+                  "currency": t.currency,
+                  **({"offer_rate": str(t.offer_rate)} if t.is_dual else {})})
     return None
 
 
@@ -490,10 +515,19 @@ def award_to_project(t, data, actor):
         loa_ref=t.outcome_ref or "",
     )
     boq = boq_for(t)
+    converted = None
     if boq is not None:
+        rate = offer_rate(t)
+        if rate is not None:
+            # The contract is in rufiyaa: the bill the project claims against
+            # must carry the rufiyaa rates the client was shown.
+            converted = _bill_to_mvr(boq, rate)
+        # The bill is in the currency the offer was made in. It always said
+        # USD before, whatever the offer's currency was.
+        boq.currency = t.currency
         boq.tender = None
         boq.project = project
-        boq.save(update_fields=["tender", "project"])
+        boq.save(update_fields=["tender", "project", "currency"])
     t.awarded_project = project
     t.save(update_fields=["awarded_project"])
     # The supplier quotes behind the price go with the bill: they are the
@@ -501,8 +535,148 @@ def award_to_project(t, data, actor):
     quotes_moved = t.quotes.update(project=project)
     audit("tender", t.id, "TENDER_BECAME_PROJECT", actor=actor,
           detail={"ref": t.document.ref, "project": project.code,
-                  "boq_moved": boq is not None, "quotes": quotes_moved})
+                  "boq_moved": boq is not None, "quotes": quotes_moved,
+                  "currency": t.currency, **(converted or {})})
     return project, None
+
+
+def _bill_to_mvr(boq, rate):
+    """Turn a bill priced in USD into the rufiyaa bill that was offered.
+
+    The RATES go over at the offer's rate, each rounded to the laari exactly
+    as the offer printed them, so the project's bill totals what the client
+    was told. The COST side — the estimate and its build-up — goes over at
+    the official rate, because that is what a dollar of cost is in the books
+    and what every report converts at (owner 2026-11-25); the markup is then
+    restated so cost × (1 + markup) is still the rate. A build-up cell that
+    held a formula holds the converted figure afterwards: the formula was in
+    dollars.
+    """
+    from . import fx
+    from .models import BoqItemWorking
+
+    official = Decimal(str(fx.usd_rate()))
+    q3 = Decimal("0.001")
+
+    def cost(v):
+        return None if v is None else (v * official).quantize(q3,
+                                                               ROUND_HALF_UP)
+
+    def markup(r, c):
+        if r is None or not c:
+            return None
+        return ((r / c - 1) * 100).quantize(CENT, ROUND_HALF_UP)
+
+    lines = 0
+    for it in boq.items.all():
+        if it.is_heading:
+            continue
+        if it.rate_supply is not None:
+            it.rate_supply = to_mvr(it.rate_supply, rate)
+        if it.rate_install is not None:
+            it.rate_install = to_mvr(it.rate_install, rate)
+        it.unit_cost, it.labour_cost = cost(it.unit_cost), cost(it.labour_cost)
+        if it.unit_cost is not None and not it.is_discount:
+            it.markup_percent = markup(it.rate_supply, it.unit_cost)
+        if it.labour_cost is not None and not it.is_discount:
+            it.labour_markup_percent = markup(it.rate_install, it.labour_cost)
+        it.save(update_fields=["rate_supply", "rate_install", "unit_cost",
+                               "labour_cost", "markup_percent",
+                               "labour_markup_percent"])
+        lines += 1
+    for w in BoqItemWorking.objects.filter(item__boq=boq):
+        if w.rate is not None:
+            w.rate = cost(w.rate)
+            w.rate_expr = f"{w.rate.normalize():f}"
+        w.amount = cost(w.amount)
+        w.save(update_fields=["rate", "rate_expr", "amount"])
+    for c in boq.categories.all():          # unit-mode bills
+        for f in ("lump_amount", "unit_amount", "unit_amount_supply",
+                  "unit_amount_install"):
+            v = getattr(c, f)
+            if v is not None:
+                setattr(c, f, to_mvr(v, rate))
+        c.save()
+    return {"offer_rate": str(rate), "official_rate": str(official),
+            "lines_converted": lines}
+
+
+# ---- an MVR offer priced in USD ---------------------------------------
+#
+# Some clients are offered rufiyaa but want the dollar figure beside every
+# rate and amount (owner 2026-11-25). USD stays the cost basis and the bill
+# is priced in it; the rufiyaa face is the dollar one at a rate the company
+# sets for that offer — the market rate moves, so it is decided offer by
+# offer and approved with the price. It is NOT the official rate
+# (`fx.usd_rate`) the books and reports convert at. Rufiyaa is what the
+# client is offered and pays, so a change of rate moves the rufiyaa figures
+# and leaves the dollar ones alone.
+CENT = Decimal("0.01")
+
+
+def offer_rate(t):
+    """MVR per USD on an MVR offer that shows USD too; None on any other."""
+    return t.offer_rate if t.is_dual else None
+
+
+def to_mvr(v, rate):
+    """A dollar rate at the offer's rate, to the laari. Rates are converted
+    and rounded ONE BY ONE and amounts built from the rounded rate, so qty ×
+    the printed rufiyaa rate is the printed rufiyaa amount on every line."""
+    return (Decimal(v or 0) * rate).quantize(CENT, ROUND_HALF_UP)
+
+
+def line_money(it, rate):
+    """What one line of an MVR offer priced in USD prints: the rufiyaa rate
+    and amount, and the dollar pair they were worked from."""
+    usd_rate, usd_amount = it.rate_total, it.amount
+    if it.is_heading:
+        mvr_rate = mvr_amount = Decimal("0")
+    elif it.is_discount:
+        mvr_rate = to_mvr(it.rate_supply, rate)
+        mvr_amount = -mvr_rate
+    else:
+        mvr_rate = to_mvr(it.rate_supply, rate) + to_mvr(it.rate_install, rate)
+        mvr_amount = (it.qty or Decimal("0")) * mvr_rate
+    return {"rate": mvr_rate, "amount": mvr_amount,
+            "rate_usd": usd_rate, "amount_usd": usd_amount}
+
+
+def _set_currency(t, data):
+    """The offer's currency, whether USD is shown beside MVR, and the rate.
+    None if fine, else why not. The rate is part of the price, so it changes
+    only while the offer is being priced."""
+    keys = [k for k in ("currency", "usd_shown", "offer_rate") if k in data]
+    if not keys:
+        return None
+    currency = ((data.get("currency") or "USD").upper()[:3]
+                if "currency" in data else t.currency)
+    shown = bool(data.get("usd_shown")) if "usd_shown" in data else t.usd_shown
+    rate = t.offer_rate
+    if "offer_rate" in data:
+        raw = data.get("offer_rate")
+        try:
+            rate = (Decimal(str(raw)).quantize(Decimal("0.0001"))
+                    if raw not in (None, "") else None)
+        except (InvalidOperation, ValueError, TypeError):
+            return "The exchange rate must be a number — rufiyaa per dollar."
+    if shown:
+        currency = "MVR"        # the dollar figures sit beside a rufiyaa offer
+        if rate is None or rate <= 0:
+            return ("Enter the exchange rate for this offer — rufiyaa per "
+                    "US dollar, for example 22.")
+        if rate > 1000:
+            return "That exchange rate does not look right."
+    else:
+        rate = None
+    changed = (currency != t.currency or shown != t.usd_shown
+               or rate != t.offer_rate)
+    if changed and t.pk and t.document.status != "DRAFT":
+        return ("The currency and the exchange rate are part of the price "
+                "that went up for approval — they change only while the "
+                "offer is being priced.")
+    t.currency, t.usd_shown, t.offer_rate = currency, shown, rate
+    return None
 
 
 @transaction.atomic
@@ -573,7 +747,7 @@ DEFAULT_TERMS = {
 }
 
 
-def _bills(boq):
+def _bills(boq, rate=None):
     """The priced bills, in order, for the summary page.
 
     A client reads a summary before a bill. The owner's workbook lists them as
@@ -592,19 +766,39 @@ def _bills(boq):
         if it.is_heading:
             heading = (it.section or it.description or "").strip()
             continue
-        amount = it.amount or Decimal("0")
+        # `rate` set = an MVR offer priced in USD: the amounts are rufiyaa
+        # and each bill carries its dollar total beside it.
+        money = line_money(it, rate) if rate is not None else None
+        amount = (money["amount"] if money else it.amount) or Decimal("0")
         total += amount
         name = (it.section or "").strip() or heading or "Works"
         if current is None or current["name"] != name:
             current = {"no": len(rows) + 1, "name": name,
-                       "amount": Decimal("0"), "lines": 0}
+                       "amount": Decimal("0"), "amount_usd": Decimal("0"),
+                       "lines": 0}
             rows.append(current)
         current["amount"] += amount
+        current["amount_usd"] += (money["amount_usd"] if money
+                                  else Decimal("0")) or Decimal("0")
         current["lines"] += 1
     return rows, total
 
 
-def money_stack(t, bill_total):
+def bill_totals(t, boq=None):
+    """(total in the offer's currency, dollar total or None). On an MVR offer
+    priced in USD the first is rufiyaa — the sum of the lines as they print,
+    not the dollar total times the rate."""
+    boq = boq if boq is not None else boq_for(t)
+    rate = offer_rate(t)
+    if boq is None:
+        return Decimal("0"), (Decimal("0") if rate is not None else None)
+    if rate is None:
+        return boq.total, None
+    rows, total = _bills(boq, rate)
+    return total, sum((r["amount_usd"] for r in rows), Decimal("0"))
+
+
+def money_stack(t, bill_total, bill_total_usd=None):
     """Subtotal, discount, provisional sums, GST, grand total.
 
     Built on the OFFERED figure, because that is what the client was told; the
@@ -627,13 +821,39 @@ def money_stack(t, bill_total):
     net = after_discount + prov
     pct = t.gst_percent or Decimal("0")
     gst = (net * pct / Decimal("100")).quantize(Decimal("0.01"))
-    return {"subtotal": sub,
-            "discount": discount,
-            "discount_label": t.discount_label or "Discount",
-            "after_discount": after_discount,
-            "provisional_items": items,
-            "provisional": prov, "net": net,
-            "gst_percent": pct, "gst": gst, "grand_total": net + gst}
+    out = {"subtotal": sub,
+           "discount": discount,
+           "discount_label": t.discount_label or "Discount",
+           "after_discount": after_discount,
+           "provisional_items": items,
+           "provisional": prov, "net": net,
+           "gst_percent": pct, "gst": gst, "grand_total": net + gst}
+    rate = offer_rate(t)
+    if rate is not None:
+        # The dollar column of an MVR offer. The discount and the provisional
+        # sums are entered in rufiyaa — that is what the client pays — and
+        # shown in dollars at the offer's rate; the subtotal is the bill's own
+        # dollar total while the offer is the bill, so the column agrees with
+        # the bill behind it. Each row is rounded and the column then added
+        # up, so it foots.
+        def usd(v):
+            return (Decimal(v or 0) / rate).quantize(CENT, ROUND_HALF_UP)
+        billed = (bill_total_usd is not None
+                  and abs(sub - Decimal(bill_total or 0)) < CENT)
+        u_sub = (Decimal(bill_total_usd).quantize(CENT, ROUND_HALF_UP)
+                 if billed else usd(sub))
+        u_disc = usd(discount)
+        u_items = [usd(i["amount"]) for i in items]
+        u_net = u_sub - u_disc + sum(u_items, Decimal("0"))
+        u_gst = (u_net * pct / Decimal("100")).quantize(CENT, ROUND_HALF_UP)
+        for i, u in zip(items, u_items):
+            i["amount_usd"] = u
+        out["usd"] = {"subtotal": u_sub, "discount": u_disc,
+                      "after_discount": u_sub - u_disc,
+                      "provisional": sum(u_items, Decimal("0")),
+                      "net": u_net, "gst": u_gst,
+                      "grand_total": u_net + u_gst}
+    return out
 
 
 def snapshot(t):
@@ -643,8 +863,9 @@ def snapshot(t):
     — the cost side never prints (owner 2026-09-17)."""
     doc = t.document
     boq = boq_for(t)
-    bill_total = (boq.total if boq is not None
-                  else Decimal("0")).quantize(Decimal("0.001"))
+    rate = offer_rate(t)
+    bill_total, bill_usd = bill_totals(t, boq)
+    bill_total = Decimal(bill_total).quantize(Decimal("0.001"))
     rev = doc.current_revision
     value = _dec((rev.payload or {}).get("value")) if rev else None
     if value is None:
@@ -653,19 +874,39 @@ def snapshot(t):
     cs = cost_summary(list(boq.items.all())) if boq is not None else {
         "estimated_cost": Decimal("0"), "priced_lines": 0, "costed_lines": 0}
     cost = cs["estimated_cost"]
+    # The markup is read on the dollar figures: the bill is priced and
+    # costed in USD, and the rufiyaa offer is that price at the offer's rate.
+    value_usd = None
+    if rate is not None and value is not None:
+        value_usd = (Decimal(bill_usd).quantize(CENT, ROUND_HALF_UP)
+                     if abs(value - bill_total) < CENT
+                     else (value / rate).quantize(CENT, ROUND_HALF_UP))
+    priced = value_usd if rate is not None else value
     markup = markup_pct = margin_pct = None
-    if value is not None and cost > 0:
-        markup = (value - cost).quantize(Decimal("0.001"))
+    if priced is not None and cost > 0:
+        markup = (priced - cost).quantize(Decimal("0.001"))
         markup_pct = (markup / cost * 100).quantize(Decimal("0.1"))
-        margin_pct = ((markup / value * 100).quantize(Decimal("0.1"))
-                      if value else None)
-    stack = money_stack(t, bill_total)
+        margin_pct = ((markup / priced * 100).quantize(Decimal("0.1"))
+                      if priced else None)
+    stack = money_stack(t, bill_total, bill_usd)
     items = TenderQueryItem.objects.filter(query__tender=t)
     return {
         "rev_label": rev.rev_label if rev else None,
         "offer_value": value, "bill_total": bill_total,
+        # A rufiyaa total built from converted rates rarely lands on a
+        # whole laari, so there it is compared to the laari.
         "bill_matches_offer": (value is None or bill_total == 0
-                               or value == bill_total),
+                               or value == bill_total
+                               or (rate is not None
+                                   and abs(value - bill_total) < CENT)),
+        # An MVR offer priced in USD: the rate, and the dollar side.
+        "dual": rate is not None, "offer_rate": rate,
+        "offer_value_usd": value_usd,
+        "bill_total_usd": (Decimal(bill_usd).quantize(CENT, ROUND_HALF_UP)
+                           if rate is not None else None),
+        "grand_total_usd": (stack["usd"]["grand_total"]
+                            if rate is not None else None),
+        "cost_currency": (boq.currency if boq is not None else "USD"),
         "estimated_cost": cost, "cost_note": t.cost_note,
         "priced_lines": cs["priced_lines"], "costed_lines": cs["costed_lines"],
         "manpower": manpower_summary(list(boq.items.all()) if boq is not None
@@ -692,6 +933,21 @@ def _money(v):
     return f"{Decimal(v or 0).quantize(Decimal('0.01')):,}"
 
 
+def _line_fmt(it, rate):
+    """A bill line's money, grouped for print."""
+    if rate is None:
+        return {"rate": (_money(it.rate_supply)
+                         if it.rate_supply is not None else ""),
+                "amount": _money(it.amount)}
+    m = line_money(it, rate)
+    priced = (it.rate_supply is not None or it.rate_install is not None)
+    plain = priced and not it.is_discount
+    return {"rate": _money(m["rate"]) if plain else "",
+            "amount": _money(m["amount"]),
+            "rate_usd": _money(m["rate_usd"]) if plain else "",
+            "amount_usd": _money(m["amount_usd"])}
+
+
 def submission_context(t):
     """Everything the cover, the summary and the bill print."""
     from .commercial import amount_in_words
@@ -700,8 +956,11 @@ def submission_context(t):
     doc = t.document
     rev = doc.current_revision
     boq = boq_for(t)
-    bills, bill_total = _bills(boq)
-    stack = money_stack(t, bill_total)
+    rate = offer_rate(t)
+    bills, bill_total = _bills(boq, rate)
+    bill_usd = (sum((b["amount_usd"] for b in bills), Decimal("0"))
+                if rate is not None else None)
+    stack = money_stack(t, bill_total, bill_usd)
 
     def fdate(d):
         return d.strftime("%d %B %Y") if d else ""
@@ -713,6 +972,9 @@ def submission_context(t):
          "advance payment" if t.duration_days else ""),
         ("Payment terms", t.payment_terms or DEFAULT_TERMS["payment_terms"]),
         ("Currency",
+         (f"This offer is made in Maldivian Rufiyaa (MVR). The US Dollar "
+          f"amounts are shown beside them for reference. GST at "
+          f"{t.gst_percent:g}% shown separately") if rate is not None else
          f"{t.currency}. GST at {t.gst_percent:g}% shown separately"),
         ("By client", t.client_provides or DEFAULT_TERMS["client_provides"]),
         ("Exclusions", t.exclusions or DEFAULT_TERMS["exclusions"]),
@@ -733,16 +995,24 @@ def submission_context(t):
         "due_date": fdate(t.due_date),
         "enquiry_date": fdate(t.enquiry_date),
         "tender": t, "doc": doc, "rev": rev, "site": doc.site,
-        "boq": boq, "bills": [{**b, "amount_fmt": _money(b["amount"])}
+        "boq": boq, "bills": [{**b, "amount_fmt": _money(b["amount"]),
+                               "usd_fmt": _money(b["amount_usd"])}
                               for b in bills],
         "bill_total": bill_total, "bill_total_fmt": _money(bill_total),
+        # An MVR offer priced in USD prints a dollar column beside every
+        # rufiyaa one (owner 2026-11-25).
+        "dual": rate is not None,
+        "bill_total_usd_fmt": _money(bill_usd) if rate is not None else "",
+        "stack_usd_fmt": ({k: _money(v) for k, v in stack["usd"].items()}
+                          if rate is not None else {}),
         # Pre-formatted so the document does not print a raw decimal at a
         # client. Only the money — the rate, the label and the provisional
         # rows are not amounts and must not go through the formatter.
         "stack_fmt": {k: _money(v) for k, v in stack.items()
                       if k not in ("gst_percent", "discount_label",
-                                   "provisional_items")},
-        "prov_rows": [{**p, "amount_fmt": _money(p["amount"])}
+                                   "provisional_items", "usd")},
+        "prov_rows": [{**p, "amount_fmt": _money(p["amount"]),
+                       "usd_fmt": _money(p.get("amount_usd"))}
                       for p in stack["provisional_items"]],
         # The bill itself, with its money already grouped.
         "boq_rows": ([{
@@ -751,9 +1021,7 @@ def submission_context(t):
             "item_code": it.item_code, "description": it.description,
             "unit": it.unit,
             "qty": (f"{it.qty:,}" if it.qty is not None else ""),
-            "rate": _money(it.rate_supply) if it.rate_supply is not None
-            else "",
-            "amount": _money(it.amount),
+            **_line_fmt(it, rate),
         } for it in boq.items.all().order_by("sort_order", "id")]
             if boq is not None else []),
         "offered": stack["subtotal"],

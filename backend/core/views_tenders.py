@@ -76,6 +76,8 @@ def _row(t, full=False):
         "client_name": t.client_name, "title": t.title,
         "enquiry_date": t.enquiry_date, "due_date": t.due_date,
         "submit_our_format": t.submit_our_format, "currency": t.currency,
+        # offered in MVR, priced in USD, both shown — and at what rate
+        "usd_shown": t.usd_shown, "offer_rate": t.offer_rate,
         "value_submitted": t.value_submitted,
         "value_awarded": t.value_awarded,
         "submitted_at": t.submitted_at,

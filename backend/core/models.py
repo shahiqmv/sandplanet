@@ -4129,6 +4129,16 @@ class Tender(models.Model):
     # still in here (owner 2026-09-08).
     submit_our_format = models.BooleanField(default=True)
     currency = models.CharField(max_length=3, default="USD")
+    # An offer made in rufiyaa with the dollar figures beside it (owner
+    # 2026-11-25, Adaaran Club Rannalhi's bill has Rate and Amount columns
+    # for both). The bill is still PRICED in USD — that is the cost basis —
+    # and every rufiyaa figure is the dollar one at `offer_rate`, a rate the
+    # company sets offer by offer because the market rate moves; it is not
+    # the official rate the books and reports convert at. MVR is what the
+    # client is offered and pays. Only meaningful with currency = MVR.
+    usd_shown = models.BooleanField(default=False)
+    offer_rate = models.DecimalField(max_digits=9, decimal_places=4,
+                                     null=True, blank=True)   # MVR per USD
     # What the issued revision was worth. Stamped at issue so a later revision
     # cannot quietly restate what the client was already sent.
     value_submitted = models.DecimalField(max_digits=14, decimal_places=2,
@@ -4190,6 +4200,12 @@ class Tender(models.Model):
 
     def __str__(self):
         return f"{self.document.ref} — {self.client_name}"
+
+    @property
+    def is_dual(self):
+        """Offered in MVR, priced in USD, both printed."""
+        return bool(self.usd_shown and self.currency == "MVR"
+                    and self.offer_rate)
 
 
 class TenderProvisionalItem(models.Model):

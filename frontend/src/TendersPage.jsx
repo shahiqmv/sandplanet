@@ -190,12 +190,44 @@ export default function TendersPage({ me, sites }) {
   );
 }
 
+/* The currency an offer is made in. The third kind is for a client who is
+ * offered rufiyaa but wants the dollar figures beside them: the bill is still
+ * priced in USD and every rufiyaa figure is worked from it at a rate set for
+ * that offer (owner 2026-11-25). */
+const KIND_OF = (t) => (t.usd_shown ? "MVR_USD" : t.currency || "USD");
+const kindBody = (kind, rate) => (kind === "MVR_USD"
+  ? { currency: "MVR", usd_shown: true, offer_rate: rate }
+  : { currency: kind, usd_shown: false, offer_rate: "" });
+
+function CurrencyKind({ kind, rate, onKind, onRate, disabled, lab }) {
+  return (
+    <>
+      <label style={{ flex: "0 0 190px" }}>
+        <span style={lab}>Currency</span>
+        <select value={kind} onChange={(e) => onKind(e.target.value)}
+                disabled={disabled} style={{ ...inputStyle, width: "100%" }}>
+          <option value="USD">USD</option>
+          <option value="MVR">MVR</option>
+          <option value="MVR_USD">MVR, with USD shown</option>
+        </select>
+      </label>
+      {kind === "MVR_USD" && (
+        <label style={{ flex: "0 0 170px" }}>
+          <span style={lab}>Exchange rate — MVR per USD</span>
+          <input type="number" step="0.01" value={rate} disabled={disabled}
+                 onChange={(e) => onRate(e.target.value)} placeholder="22.00"
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>)}
+    </>
+  );
+}
+
 function NewTender({ sites, onDone }) {
   const [f, setF] = useState({ site_id: "", client_name: "",
                                client_contact: "", title: "",
                                enquiry_date: "", due_date: "",
                                submit_our_format: true, currency: "USD",
-                               scope: "" });
+                               offer_rate: "", scope: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k) => (e) => setF({ ...f,
@@ -203,7 +235,11 @@ function NewTender({ sites, onDone }) {
 
   async function save() {
     setBusy(true); setErr(null);
-    try { await api("/tenders", { method: "POST", body: f }); onDone(true); }
+    try {
+      await api("/tenders", { method: "POST", body: {
+        ...f, ...kindBody(f.currency, f.offer_rate) } });
+      onDone(true);
+    }
     catch (e) { setErr(e.message); setBusy(false); }
   }
   // Laid out in rows rather than one long line of boxes: a tender title is a
@@ -268,13 +304,9 @@ function NewTender({ sites, onDone }) {
           <input type="date" value={f.due_date} onChange={set("due_date")}
                  style={{ ...inputStyle, width: "100%" }} />
         </label>
-        <label style={{ flex: "0 0 110px" }}>
-          <span style={lab}>Currency</span>
-          <select value={f.currency} onChange={set("currency")}
-                  style={{ ...inputStyle, width: "100%" }}>
-            <option>USD</option><option>MVR</option>
-          </select>
-        </label>
+        <CurrencyKind kind={f.currency} rate={f.offer_rate} lab={lab}
+                      onKind={(v) => setF({ ...f, currency: v })}
+                      onRate={(v) => setF({ ...f, offer_rate: v })} />
         {/* Only the document that goes out. The priced lines are captured
             either way — this picks whether the client receives our rendered
             bill or the file they issued. */}
@@ -446,6 +478,16 @@ function TenderDetail({ id, me, onClose }) {
 
       {tab === "boq" && (
         <div style={{ marginTop: 12 }}>
+          {t.usd_shown && (
+            <p style={{ fontSize: 12.5, margin: "0 0 8px", padding: "6px 10px",
+                        background: "#f3f7fa", borderRadius: 6 }}>
+              Price this bill in <b>USD</b>, as usual. The offer goes out in
+              MVR at {Number(t.offer_rate || 0).toFixed(2)} per dollar, with
+              the USD rate and amount beside each line
+              {t.snapshot?.dual ? <> — the bill comes to{" "}
+                <b>{money(t.snapshot.bill_total, "MVR")}</b>{" "}
+                ({money(t.snapshot.bill_total_usd, "USD")}).</> : "."}
+            </p>)}
           <BoqPanel base={`/tenders/${t.id}`} me={me} />
         </div>)}
       {t?.ref && <Discussion threadKey={`ref:${t.ref}`} me={me} />}
@@ -575,6 +617,11 @@ function Snapshot({ t, can, act, busy }) {
   if (!s) return null;
   const cur = t.currency;
   const m = (v) => (v == null ? "—" : money(v, cur));
+  // An MVR offer priced in USD: the offer and what the client pays are
+  // rufiyaa; the cost, the markup and the labour are the dollar side.
+  const dual = !!s.dual;
+  const c = (v) => (v == null ? "—" : money(v, dual ? "USD" : cur));
+  const rateText = dual ? `at ${Number(s.offer_rate).toFixed(2)} MVR per USD` : "";
   const cell = (label, value, extra) => (
     <div style={{ minWidth: 130 }}>
       <div style={{ fontSize: 11, color: "var(--muted)",
@@ -603,9 +650,12 @@ function Snapshot({ t, can, act, busy }) {
       </div>
       <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginTop: 10 }}>
         {cell("Offer value", m(s.offer_value),
-              s.bill_matches_offer ? null : `bill total ${m(s.bill_total)}`)}
+              [dual && s.offer_value_usd != null
+                 ? `${c(s.offer_value_usd)} ${rateText}` : null,
+               s.bill_matches_offer ? null : `bill total ${m(s.bill_total)}`]
+                .filter(Boolean).join(" · ") || null)}
         {cell("Estimated cost", s.estimated_cost > 0 || s.costed_lines
-              ? m(s.estimated_cost) : "—")}
+              ? c(s.estimated_cost) : "—")}
         <div style={{ minWidth: 150 }}>
           <div style={{ fontSize: 11, color: "var(--muted)",
                         textTransform: "uppercase", letterSpacing: 0.3 }}>Markup</div>
@@ -614,12 +664,14 @@ function Snapshot({ t, can, act, busy }) {
             {s.markup_percent == null ? "—"
               : `${Number(s.markup_percent).toFixed(1)}% on cost`}</div>
           <div style={{ fontSize: 11, color: "var(--muted)" }}>
-            {s.markup == null ? "" : `${m(s.markup)} · ${Number(s.margin_percent).toFixed(1)}% margin on offer`}</div>
+            {s.markup == null ? "" : `${c(s.markup)} · ${Number(s.margin_percent).toFixed(1)}% margin on offer`}
+            {dual && s.markup != null ? " · on the USD price" : ""}</div>
         </div>
         {cell("Client pays", m(s.grand_total),
               `${Number(s.discount) ? `less ${s.discount_label} ${m(s.discount)} · ` : ""}`
               + `${Number(s.provisional) ? `provisional ${m(s.provisional)} · ` : ""}`
-              + `GST ${Number(s.gst_percent)}% ${m(s.gst)}`)}
+              + `GST ${Number(s.gst_percent)}% ${m(s.gst)}`
+              + `${dual && s.grand_total_usd != null ? ` · ${c(s.grand_total_usd)}` : ""}`)}
         {cell("Programme", s.duration_days ? `${s.duration_days} days` : "—",
               `validity ${s.validity_days || 30} days${s.due_date ? ` · due ${day(s.due_date)}` : ""}`)}
         {s.manpower && cell("Manpower",
@@ -628,7 +680,7 @@ function Snapshot({ t, can, act, busy }) {
                 : Number(s.manpower.man_days) > 0 ? `${Number(s.manpower.man_days).toFixed(0)} man-days` : "—",
               `${Number(s.manpower.man_days).toFixed(0)} man-days at ${s.manpower.hours_per_day} h`
               + `${s.manpower.duration_days ? ` over ${s.manpower.duration_days} days` : " · set the programme"}`
-              + ` · labour ${m(s.manpower.labour_cost)}`
+              + ` · labour ${c(s.manpower.labour_cost)}`
               + `${s.estimated_cost > 0 && Number(s.manpower.labour_cost) > 0
                   ? ` (${(Number(s.manpower.labour_cost) / Number(s.estimated_cost) * 100).toFixed(0)}% of cost)` : ""}`
               + `${s.manpower.unmeasured_rows ? ` · ${s.manpower.unmeasured_rows} labour row(s) not in h/day` : ""}`)}
@@ -1422,6 +1474,11 @@ function Proposal({ t, can, busy, save }) {
     prepared_by: t.prepared_by || "", reviewed_by: t.reviewed_by || "",
     approved_by: t.approved_by || "",
   });
+  // The currency and the rate are part of the price: they change while the
+  // offer is being priced, not once it has gone up for approval.
+  const [kind, setKind] = useState(KIND_OF(t));
+  const [rate, setRate] = useState(t.offer_rate ?? "");
+  const pricing = t.status === "DRAFT";
   // A client asking for allowances against three separate items used to get
   // them added together under one unexplained line (owner 2026-09-10).
   const [prov, setProv] = useState(
@@ -1444,6 +1501,21 @@ function Proposal({ t, can, busy, save }) {
         issue: sub total, less any discount, plus the provisional sums, GST,
         grand total.
       </p>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
+                    alignItems: "flex-end" }}>
+        <CurrencyKind kind={kind} rate={rate} lab={lab}
+                      disabled={!can || !pricing}
+                      onKind={setKind} onRate={setRate} />
+        {kind === "MVR_USD" && (
+          <span style={{ fontSize: 12, color: "var(--muted)", flex: "1 1 260px",
+                         paddingBottom: 6 }}>
+            The bill is priced in USD. The offer prints MVR — each rate at this
+            exchange rate — with the USD rate and amount beside it. The
+            discount and the provisional sums below are entered in MVR.
+            {!pricing && " Fixed with the price once it went up for approval."}
+          </span>)}
+      </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <label style={{ flex: "1 1 220px" }}>
@@ -1547,7 +1619,8 @@ function Proposal({ t, can, busy, save }) {
       {can && (
         <div>
           <Btn disabled={busy}
-               onClick={() => save({ ...f, provisional_items: prov })}>
+               onClick={() => save({ ...f, provisional_items: prov,
+                                     ...(pricing ? kindBody(kind, rate) : {}) })}>
             Save these terms</Btn>
         </div>)}
     </div>
@@ -1595,6 +1668,18 @@ function Gate({ t, me, busy, act, value, setValue, note, setNote }) {
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             The Director and a signatory approve this figure before it goes
             out.</span>
+          {t.snapshot?.dual && Number(t.snapshot.bill_total) > 0 && (
+            <span style={{ fontSize: 12, flexBasis: "100%" }}>
+              The bill comes to{" "}
+              <button style={{ background: "none", border: 0, padding: 0,
+                               color: "var(--sp-navy)", fontWeight: 700,
+                               cursor: "pointer", textDecoration: "underline" }}
+                      onClick={() => setValue(
+                        Number(t.snapshot.bill_total).toFixed(2))}>
+                {money(Number(t.snapshot.bill_total).toFixed(2), "MVR")}</button>
+              {" "}— {money(t.snapshot.bill_total_usd, "USD")} at{" "}
+              {Number(t.snapshot.offer_rate).toFixed(2)} MVR per USD. The
+              rate is approved with the value.</span>)}
         </div>)}
 
       {t.status === "PD_REVIEW" && (

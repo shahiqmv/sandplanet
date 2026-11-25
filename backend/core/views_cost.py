@@ -79,9 +79,16 @@ def _contract_value(site):
     itself carries none."""
     if site.contract_value:
         return site.contract_value
-    total = Project.objects.filter(site=site).aggregate(
-        t=Sum("contract_value"))["t"]
-    return total or Decimal("0")
+    # A project's contract is in its bill's currency. Almost all are USD; one
+    # won on a rufiyaa offer is read here at the official rate, as every cost
+    # beside it is (owner 2026-11-25).
+    rate = fx.usd_rate()
+    total = Decimal("0")
+    for p in Project.objects.filter(site=site).select_related("boq"):
+        boq = getattr(p, "boq", None)
+        total += fx.to_usd(p.contract_value or Decimal("0"),
+                           boq.currency if boq is not None else "USD", rate)
+    return total
 
 
 def _site_cost(site):
