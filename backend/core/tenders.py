@@ -322,8 +322,14 @@ def send_for_approval(t, data, actor):
     if t.usd_shown and not t.is_dual:
         return ("Enter the exchange rate for this offer before sending it "
                 "up — the rufiyaa figures are worked from it.")
+    from django.utils import timezone
     rev.payload = {**(rev.payload or {}), "value": str(value),
                    "currency": t.currency,
+                   # The date the offer carries. It is fixed here, with the
+                   # value: the document the Director and the signatory
+                   # approve is the document that goes out, date included
+                   # (owner 2026-11-26).
+                   "sent_for_approval_on": timezone.localdate().isoformat(),
                    # the rate the approvers see, kept with the revision
                    "offer_rate": str(t.offer_rate) if t.is_dual else ""}
     rev.save(update_fields=["payload"])
@@ -958,6 +964,43 @@ def _bill_heads(split, dual):
     return [("Rate", 56), ("Amount", 64)]
 
 
+def offer_date(t):
+    """The date printed on the offer: the day it was sent for approval.
+
+    It used to print the day the enquiry was opened until the offer was
+    issued, then the day of issue — so the document the approvers signed off
+    was dated weeks before it was priced, and changed its date when it went
+    out. The date is now fixed with the value when the offer goes up, and
+    stays that for the life of the revision. While an offer is still being
+    priced it has no such date yet and a preview carries today's; one sent
+    back for rework is being priced again (owner 2026-11-26)."""
+    from django.utils import timezone
+
+    from .models import AuditLog
+    doc = t.document
+    rev = doc.current_revision
+    if rev is None:
+        return doc.doc_date
+    if doc.status == "DRAFT" and rev.issued_at is None:
+        return timezone.localdate()
+    stamp = (rev.payload or {}).get("sent_for_approval_on")
+    if stamp:
+        try:
+            return date.fromisoformat(stamp)
+        except ValueError:
+            pass
+    # Revisions sent up before the date was kept. One already issued keeps
+    # the date its document went out under; one still with an approver takes
+    # the day the trail says it was sent.
+    if rev.issued_at is not None:
+        return timezone.localtime(rev.issued_at).date()
+    sent = (AuditLog.objects.filter(entity="tender", entity_id=t.id,
+                                    event="TENDER_SENT_FOR_APPROVAL",
+                                    detail__rev=rev.rev_label)
+            .order_by("-id").first())
+    return timezone.localtime(sent.at).date() if sent else doc.doc_date
+
+
 def _line_fmt(it, rate, split=False):
     """A bill line's money, grouped for print: the named figures, and
     `cells` — the same figures in the order of `_bill_heads`."""
@@ -1037,8 +1080,7 @@ def submission_context(t):
         "ref": t.doc_ref or doc.ref,
         "system_ref": doc.ref,
         "rev_label": rev.rev_label if rev else "R0",
-        "issue_date": fdate((rev.issued_at.date() if rev and rev.issued_at
-                             else doc.doc_date)),
+        "issue_date": fdate(offer_date(t)),
         "value_words": amount_in_words(stack["grand_total"], t.currency),
         "due_date": fdate(t.due_date),
         "enquiry_date": fdate(t.enquiry_date),
