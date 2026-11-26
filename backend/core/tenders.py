@@ -1003,22 +1003,26 @@ def offer_date(t):
 
 def _line_fmt(it, rate, split=False):
     """A bill line's money, grouped for print: the named figures, and
-    `cells` — the same figures in the order of `_bill_heads`."""
+    `cells` — the same figures in the order of `_bill_heads`.
+
+    A line with nothing to pay prints blank, not 0.00: a bill carries
+    preamble notes and "by client" items among its priced lines, and a column
+    of zeros against them read as prices (owner 2026-11-26, TDR-BVR-001)."""
     def f(v):
-        return _money(v) if v is not None else ""
+        return _money(v) if v else ""
     priced = (it.rate_supply is not None or it.rate_install is not None)
     if rate is None:
         out = {"rate": f(it.rate_total) if priced else "",
-               "amount": _money(it.amount)}
+               "amount": f(it.amount)}
         out["cells"] = ([f(it.rate_supply), f(it.rate_install), out["amount"]]
                         if split else [out["rate"], out["amount"]])
         return out
     m = line_money(it, rate)
     plain = priced and not it.is_discount
-    out = {"rate": _money(m["rate"]) if plain else "",
-           "amount": _money(m["amount"]),
-           "rate_usd": _money(m["rate_usd"]) if plain else "",
-           "amount_usd": _money(m["amount_usd"])}
+    out = {"rate": f(m["rate"]) if plain else "",
+           "amount": f(m["amount"]),
+           "rate_usd": f(m["rate_usd"]) if plain else "",
+           "amount_usd": f(m["amount_usd"])}
     if split:
         legs = plain and not it.is_heading
         out["cells"] = [

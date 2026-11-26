@@ -415,3 +415,46 @@ class TwoCurrencyBillCaptureTests(DualOfferBase):
                    return_value=self.OUT) as call:
             boq_extract.structure([(1, "a bill")])
         self.assertNotIn("priced in", call.call_args[0][0])
+
+
+class UnpricedLinePrintTests(DualOfferBase):
+    """A note or a "by client" item among the priced lines prints no figure.
+    It printed 0.00 in the amount column, which read as a price."""
+
+    ROWS = [
+        {"description": "Bill 1"},
+        {"description": "Electricity for works (By Client)", "unit": "Item",
+         "qty": "1"},
+        {"description": "The structural works are by others.", "unit": "Note"},
+        {"description": "Deck boards", "unit": "m2", "qty": "10",
+         "unit_cost": "5", "rate_combined": "12.5"},
+    ]
+
+    def test_an_unpriced_line_prints_blank_in_a_single_currency(self):
+        t = self.open(currency="USD")
+        self.price(t["id"], self.ROWS)
+        ctx = svc.submission_context(self.tender(t["id"]))
+        _, by_client, note, deck = ctx["boq_rows"]
+        self.assertEqual(by_client["cells"], ["", ""])
+        self.assertEqual(note["cells"], ["", ""])
+        self.assertEqual(deck["cells"], ["12.50", "125.00"])
+        self.assertEqual(ctx["bill_tot_cells"], ["125.00"])       # total stands
+        html = render_to_string("pdf/tender_submission.html", ctx)
+        self.assertNotIn(">0.00<", html)
+
+    def test_and_in_two_currencies(self):
+        self.price(rows=self.ROWS)                 # MVR with USD shown, at 22
+        ctx = svc.submission_context(self.tender())
+        _, by_client, note, deck = ctx["boq_rows"]
+        self.assertEqual(by_client["cells"], ["", "", "", ""])
+        self.assertEqual(note["cells"], ["", "", "", ""])
+        self.assertEqual(deck["cells"],
+                         ["275.00", "2,750.00", "12.50", "125.00"])
+
+    def test_a_discount_line_still_prints_its_credit(self):
+        t = self.open(currency="USD")
+        self.price(t["id"], self.ROWS + [
+            {"description": "Goodwill discount", "is_discount": True,
+             "rate_supply": "25"}])
+        ctx = svc.submission_context(self.tender(t["id"]))
+        self.assertEqual(ctx["boq_rows"][-1]["amount"], "-25.00")
