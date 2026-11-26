@@ -95,6 +95,7 @@
   .bill tr.head td { background: #F6F2E9; font-weight: 600; color: {% brand "primary" %}; }
   .bill tr.tot td { border-top: 1.5pt solid {% brand "primary" %}; font-weight: 700;
                     background: {% brand "soft3" %}; }
+  .bill tr.note td { color: #44505c; }
   /* six money columns: material, labour and amount in two currencies */
   .bill.compact th { font-size: 6.4pt; padding: 3pt 3pt; letter-spacing: .2pt; }
   .bill.compact td { font-size: 7pt; padding: 2pt 3pt; }
@@ -255,9 +256,9 @@
         {% if it.is_heading %}
           <tr class="head"><td></td><td colspan="{{ bill_head_span }}">{{ it.section }}</td></tr>
         {% else %}
-          <tr>
+          <tr{% if it.is_note %} class="note"{% endif %}>
             <td class="mono">{{ it.item_code }}</td>
-            <td>{{ it.description }}</td>
+            <td>{{ it.description|linebreaksbr }}</td>
             <td>{{ it.unit }}</td>
             <td class="n">{{ it.qty }}</td>
             {% for c in it.cells %}<td class="n">{{ c }}</td>{% endfor %}

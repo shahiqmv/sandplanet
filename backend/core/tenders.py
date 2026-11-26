@@ -1001,6 +1001,34 @@ def offer_date(t):
     return timezone.localtime(sent.at).date() if sent else doc.doc_date
 
 
+def _heading_text(it):
+    """What a heading row prints. A trade heading inside a bill — "3.1 Earth
+    Works" — prints its own title. It used to print the name of the bill it
+    sits in, because every row carries its bill in `section`: three trades of
+    one bill printed as the bill's name three times (TDR-BVR-001, owner
+    2026-11-26). The row that opens a bill, whose title is part of the bill's
+    name, still prints the name in full ("Bill No. 01 - Preliminaries")."""
+    own = (it.description or "").strip()
+    bill = (it.section or "").strip()
+    if not own or own.lower() in bill.lower():
+        return bill or own
+    return f"{it.item_code.strip()}  {own}" if (it.item_code or "").strip() else own
+
+
+def _is_note(it):
+    """A heading row that is really a preamble note — a sentence or a
+    paragraph, not a title. A captured bill files every unpriced row as a
+    heading, general notes included; a note prints as a plain line of the
+    bill, in full, and a title as a heading band."""
+    if not it.is_heading:
+        return False
+    own = (it.description or "").strip()
+    bill = (it.section or "").strip()
+    if not own or own.lower() in bill.lower():
+        return False
+    return len(own) > 90 or "\n" in own
+
+
 def _line_fmt(it, rate, split=False):
     """A bill line's money, grouped for print: the named figures, and
     `cells` — the same figures in the order of `_bill_heads`.
@@ -1110,8 +1138,9 @@ def submission_context(t):
                       for p in stack["provisional_items"]],
         # The bill itself, with its money already grouped.
         "boq_rows": ([{
-            "is_heading": it.is_heading,
-            "section": it.section or it.description,
+            "is_heading": it.is_heading and not _is_note(it),
+            "is_note": _is_note(it),
+            "section": _heading_text(it),
             "item_code": it.item_code, "description": it.description,
             "unit": it.unit,
             "qty": (f"{it.qty:,}" if it.qty is not None else ""),

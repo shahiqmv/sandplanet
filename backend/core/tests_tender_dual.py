@@ -458,3 +458,57 @@ class UnpricedLinePrintTests(DualOfferBase):
              "rate_supply": "25"}])
         ctx = svc.submission_context(self.tender(t["id"]))
         self.assertEqual(ctx["boq_rows"][-1]["amount"], "-25.00")
+
+
+class HeadingPrintTests(DualOfferBase):
+    def test_a_trade_heading_prints_its_own_title_not_its_bills(self):
+        from .models import BoqItem
+        t = self.open(currency="USD")
+        self.price(t["id"], [
+            {"description": "Lobby deck"},
+            {"description": "Earth Works"},
+            {"description": "Fill", "unit": "m3", "qty": "2",
+             "unit_cost": "1", "rate_combined": "50"}])
+        boq = Boq.objects.get(tender_id=t["id"])
+        bill = "Bill No 03 - Lobby deck"
+        BoqItem.objects.filter(boq=boq).update(section=bill)
+        BoqItem.objects.filter(boq=boq, description="Earth Works").update(
+            item_code="3.1")
+        ctx = svc.submission_context(self.tender(t["id"]))
+        opens, trade, _ = ctx["boq_rows"]
+        self.assertEqual(opens["section"], bill)             # the bill's name
+        self.assertEqual(trade["section"], "3.1  Earth Works")
+        self.assertEqual(ctx["bills"][0]["name"], bill)      # summary unchanged
+
+    def test_a_heading_with_no_bill_named_prints_what_it_says(self):
+        t = self.open(currency="USD")
+        self.price(t["id"])
+        head = svc.submission_context(self.tender(t["id"]))["boq_rows"][0]
+        self.assertEqual(head["section"], "Bill 2 — Works")
+
+    def test_a_preamble_note_prints_in_full_as_a_plain_line(self):
+        from .models import BoqItem
+        note = ("The Contractor shall carry out the works in accordance with "
+                "the drawings and the specification, and shall visit the site "
+                "before pricing.")
+        t = self.open(currency="USD")
+        self.price(t["id"], [
+            {"description": "Preliminaries"},
+            {"description": note},
+            {"description": "Site setup", "unit": "item", "qty": "1",
+             "unit_cost": "1", "rate_combined": "100"}])
+        boq = Boq.objects.get(tender_id=t["id"])
+        BoqItem.objects.filter(boq=boq).update(
+            section="Bill No. 01 - Preliminaries")
+        ctx = svc.submission_context(self.tender(t["id"]))
+        opens, pre, item = ctx["boq_rows"]
+        self.assertTrue(opens["is_heading"])
+        self.assertEqual((pre["is_heading"], pre["is_note"]), (False, True))
+        self.assertEqual(pre["cells"], ["", ""])
+        self.assertFalse(item["is_note"])
+        html = render_to_string("pdf/tender_submission.html", ctx)
+        self.assertIn("shall visit the site before pricing", html)
+        # the bill's name heads the bill once, not once per note (the
+        # summary page names it once more)
+        bill_pages = html[html.index('"secttitle">Bill of Quantities'):]
+        self.assertEqual(bill_pages.count("Bill No. 01 - Preliminaries"), 1)
